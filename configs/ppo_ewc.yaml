@@ -1,0 +1,11 @@
+# Online EWC PPO baseline (regularization-based continual learning).
+# Inherits everything in default.yaml.
+
+agent: "ewc"
+
+# Single undivided critic V(s) — same as vanilla.
+lr_critic: 0.0003
+
+# EWC-specific hyperparameters
+ewc_lambda: 50.0    # penalty strength
+ewc_gamma: 0.95     # Fisher consolidation decay factor

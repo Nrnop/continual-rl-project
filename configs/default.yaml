@@ -1,0 +1,33 @@
+# Shared defaults for both agents. CLI flags override these (see train.py).
+
+# --- environment ---
+env_id: "HalfCheetah-v5"        # falls back to v4 automatically if v5 is unavailable
+tasks: [1, -1]                  # directional: +1 = forward, -1 = backward
+switch: 1000000                 # env steps between task flips (cyclic)
+total_steps: 3000000            # total env steps
+max_episode_steps: 1000
+
+# --- PPO core ---
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+n_steps: 2048                   # rollout length per update
+epochs: 10                      # PPO epochs per update
+minibatch_size: 64
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null                 # set a float (e.g. 0.03) to enable early-stop; null disables
+normalize_advantage: true
+anneal_lr: false
+
+# --- actor ---
+lr_actor: 0.0003
+hidden_sizes: [256, 256]
+
+# --- logging / bookkeeping ---
+log_interval_updates: 1         # how often (in updates) to flush scalar logs
+probe_states: 256              # # of states sampled to measure value drift at boundaries
+eval_ema: 0.99                  # smoothing for the running episodic-return curve
+results_dir: "src_continuous_control/results"
+runs_dir: "src_continuous_control/runs"
+wandb_project: "pt-continuous-control"

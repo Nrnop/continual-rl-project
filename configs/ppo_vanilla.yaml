@@ -1,0 +1,7 @@
+# Vanilla single-critic PPO baseline (the comparison point).
+# Inherits everything in default.yaml.
+
+agent: "vanilla"
+
+# Single undivided critic V(s).
+lr_critic: 0.0003

@@ -1,0 +1,20 @@
+# Dual-timescale Permanent-Transient PPO.
+# Inherits everything in default.yaml; only PT-specific knobs live here.
+
+agent: "pt"
+
+# Transient critic (theta_T): aggressive, every update. alpha_T.
+lr_trans: 0.0003
+
+# Permanent critic (theta_P): conservative, every k updates. alpha_P << alpha_T (SGD).
+lr_perm: 0.00001
+perm_optimizer: "sgd"           # sgd mirrors the paper's P_Net; "adam" also supported
+
+# Consolidation cadence and transient decay (mirrors --update / --decay in PT_DQN_half.py).
+k: 10                           # consolidate permanent critic every k PPO updates
+consolidate_on_switch: true     # also consolidate + decay right at each task boundary
+decay: 0.5                      # theta_T <- decay * theta_T after consolidation (0 ~= reset)
+
+# Consolidation buffer (on-policy analog of exp_replay_PM).
+consolidation_buffer_size: 20480
+consolidation_epochs: 1         # passes over the consolidation buffer per permanent update

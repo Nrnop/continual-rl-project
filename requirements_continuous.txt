@@ -1,0 +1,12 @@
+# Isolated requirements for the continuous-control PT extension.
+# Do NOT install these over the baseline's requirements.txt — use a separate venv.
+# The baseline pins gymnasium==0.28.1; HalfCheetah-v5 needs a newer gymnasium.
+
+gymnasium>=0.29.0
+mujoco>=3.1.0
+torch>=2.0.0
+numpy>=1.24.0
+pyyaml>=6.0
+tensorboard>=2.13.0
+wandb>=0.15.0
+matplotlib>=3.7.0
