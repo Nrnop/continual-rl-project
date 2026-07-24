@@ -1,0 +1,43 @@
+# CleanRL ppo_continuous_action.py exact-match overlay for single-task validation.
+#
+# Purpose: confirm the batch-PPO core reaches CleanRL's HalfCheetah benchmark
+# (~+1500-3000 return) before trusting any continual-learning results.
+#
+# Run:
+#   python -m src_continuous_control.train --agent vanilla --seed 0 \
+#       --config cleanrl_match --no-wandb
+#
+# Overlay precedence: default.yaml <- ppo_vanilla.yaml <- THIS FILE <- CLI flags.
+
+agent: "vanilla"
+
+# --- turn OFF the continual-learning / online machinery for a clean baseline ---
+step_by_step: false        # use real batch PPO (the update() loop), not 1-step TD
+switch: 2000000            # > total_steps, so no task flip fires within the run
+disable_task_switch: true  # single-task: fixed forward direction throughout
+
+# --- CleanRL normalization (the missing ingredient for MuJoCo PPO) ---
+normalize_obs: true        # NormalizeObservation + clip(+/-10)
+normalize_reward: true     # NormalizeReward(gamma) + clip(+/-10)
+clip_obs: 10.0
+clip_reward: 10.0
+
+# --- PPO core (CleanRL defaults) ---
+total_steps: 1000000       # CleanRL's HalfCheetah budget
+n_steps: 2048              # rollout length (batch_size = 2048)
+minibatch_size: 64         # 2048 / 32 minibatches
+epochs: 10                 # update_epochs
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true  # per-minibatch advantage normalization
+anneal_lr: true            # linear LR decay to 0
+
+# --- network + optimizer (CleanRL: 64x64 tanh, Adam eps=1e-5) ---
+hidden_sizes: [64, 64]
+lr_actor: 0.0003
+lr_critic: 0.0003
+adam_eps: 0.00001

@@ -16,6 +16,9 @@ def run_job(args):
         sys.executable, "-m", "src_continuous_control.train",
         "--agent", agent_name,
         "--seed", str(seed),
+        "--total-steps", "3072000",
+        "--switch", "614400",
+        "--step-by-step", "true",
         "--eval-interval-updates", "50",
         "--save-checkpoints",
         "--no-wandb", "--no-tb"

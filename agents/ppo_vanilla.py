@@ -3,6 +3,7 @@
 The comparison point for the PT agent — same actor, same env, same seeds, but a single undivided
 V(s) critic. This is the continuous-control analogue of the baseline DQN in PT_DQN_half.py.
 """
+import numpy as np
 import torch
 
 from .ppo_base import PPOBase
@@ -18,17 +19,22 @@ class PPOVanilla(PPOBase):
         hidden = list(cfg.get("hidden_sizes", [256, 256]))
         self.critic = VanillaCritic(obs_dim, hidden_sizes=hidden).to(device)
         lr_critic = cfg.get("lr_critic", cfg["lr_actor"])
-        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=lr_critic)
+        self.critic_optim = torch.optim.Adam(
+            self.critic.parameters(), lr=lr_critic, eps=cfg.get("adam_eps", 1e-8)
+        )
 
     # ------------------------------------------------------------------
     # Hook implementations
     # ------------------------------------------------------------------
-    def get_value(self, obs_np):
-        """Return (V, 0.0) — perm slot carries the full value, trans is zero."""
-        obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=self.device).unsqueeze(0)
+    def get_value(self, obs_batch_np):
+        """Return (V, 0) for a batch — perm slot carries the full value, trans is zero.
+
+        obs_batch_np: (num_envs, obs_dim) -> arrays (num_envs,).
+        """
+        obs_t = torch.as_tensor(obs_batch_np, dtype=torch.float32, device=self.device)
         with torch.no_grad():
-            v = self.critic(obs_t).item()
-        return v, 0.0
+            v = self.critic(obs_t).cpu().numpy()
+        return v, np.zeros_like(v)
 
     def critic_loss(self, batch, advantages, returns):
         """MSE between predicted V and GAE returns."""

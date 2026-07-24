@@ -14,12 +14,16 @@ cost is kept task-invariant (shared physics), only the forward term flips sign.
 The wrapper does NOT switch tasks on its own; the training loop calls `set_task(direction)` at the
 fixed `--switch` boundary, exactly like the baseline cycles its env list.
 """
+import functools
+
 import gymnasium as gym
 import numpy as np
 
 
 def make_base_env(env_id="HalfCheetah-v5", max_episode_steps=1000, render_mode=None):
     """Create the underlying gymnasium HalfCheetah, falling back v5 -> v4."""
+    if isinstance(env_id, gym.Env):
+        return env_id
     for candidate in (env_id, "HalfCheetah-v4", "HalfCheetah-v3"):
         try:
             return gym.make(candidate, max_episode_steps=max_episode_steps, render_mode=render_mode)
@@ -82,3 +86,95 @@ class DirectionalHalfCheetah(gym.Wrapper):
 
     def reset(self, **kwargs):
         return self.env.reset(**kwargs)
+
+
+def make_directional_env(
+    env_id="HalfCheetah-v5",
+    direction=1,
+    max_episode_steps=1000,
+    render_mode=None,
+    normalize_obs=False,
+    normalize_reward=False,
+    gamma=0.99,
+    clip_obs=10.0,
+    clip_reward=10.0,
+):
+    """DirectionalHalfCheetah optionally wrapped with CleanRL-style normalization.
+
+    CleanRL's ppo_continuous_action reaches its HalfCheetah benchmark only with a
+    running-mean/std observation normalizer and a discounted-return reward
+    normalizer, both clipped to +/-10. The true (un-normalized) reward is still
+    exposed via info["directional_reward"] so episodic-return logging stays honest.
+
+    Wrapper order (inner -> outer): Directional -> NormalizeObservation ->
+    clip obs -> NormalizeReward -> clip reward.
+    """
+    env = DirectionalHalfCheetah(
+        env_id=env_id,
+        direction=direction,
+        max_episode_steps=max_episode_steps,
+        render_mode=render_mode,
+    )
+    if normalize_obs:
+        env = gym.wrappers.NormalizeObservation(env)
+        env = gym.wrappers.TransformObservation(
+            env,
+            lambda o: np.clip(o, -clip_obs, clip_obs),
+            env.observation_space,
+        )
+    if normalize_reward:
+        env = gym.wrappers.NormalizeReward(env, gamma=gamma)
+        env = gym.wrappers.ClipReward(env, -clip_reward, clip_reward)
+    return env
+
+
+def _make_single_directional(env_id, direction, max_episode_steps, render_mode=None):
+    """Module-level single-env factory so functools.partial is picklable for AsyncVectorEnv
+    (Windows spawn requires picklable env_fns — a local closure would fail)."""
+    return DirectionalHalfCheetah(
+        env_id=env_id, direction=direction,
+        max_episode_steps=max_episode_steps, render_mode=render_mode,
+    )
+
+
+def make_vector_env(
+    env_id="HalfCheetah-v5",
+    num_envs=1,
+    direction=1,
+    max_episode_steps=1000,
+    gamma=0.99,
+    normalize_obs=False,
+    normalize_reward=False,
+    clip_obs=10.0,
+    clip_reward=10.0,
+    asynchronous=True,
+):
+    """Vectorized DirectionalHalfCheetah with CleanRL-style normalization applied at the
+    vector level (in the main process). Returns a gymnasium VectorEnv.
+
+    Wrapper order (inner -> outer): [Async|Sync]VectorEnv -> RecordEpisodeStatistics
+    (records the TRUE directional return, before normalization) -> NormalizeObservation ->
+    clip obs -> NormalizeReward -> clip reward.
+
+    Task switching: call `env.unwrapped.call("set_task", direction)` (reaches every sub-env,
+    including across processes with AsyncVectorEnv).
+    """
+    fns = [
+        functools.partial(_make_single_directional, env_id, direction, max_episode_steps)
+        for _ in range(num_envs)
+    ]
+    if asynchronous and num_envs > 1:
+        base = gym.vector.AsyncVectorEnv(fns)
+    else:
+        base = gym.vector.SyncVectorEnv(fns)
+
+    envs = gym.wrappers.vector.RecordEpisodeStatistics(base)
+    if normalize_obs:
+        envs = gym.wrappers.vector.NormalizeObservation(envs)
+        envs = gym.wrappers.vector.TransformObservation(
+            envs, functools.partial(np.clip, a_min=-clip_obs, a_max=clip_obs)
+        )
+    if normalize_reward:
+        envs = gym.wrappers.vector.NormalizeReward(envs, gamma=gamma)
+        envs = gym.wrappers.vector.ClipReward(envs, -clip_reward, clip_reward)
+    return envs

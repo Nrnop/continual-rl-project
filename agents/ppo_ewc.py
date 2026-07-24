@@ -58,6 +58,12 @@ class PPOEWC(PPOVanilla):
 
         return (self.ewc_lambda / 2.0) * penalty
 
+    def _extra_loss(self):
+        """EWC quadratic penalty for per-step online updates."""
+        if len(self.past_tasks) > 0:
+            return self._ewc_penalty()
+        return torch.tensor(0.0, device=self.device)
+
     # ------------------------------------------------------------------
     # Overridden update  (injects Fisher accumulation + EWC penalty)
     # ------------------------------------------------------------------
@@ -79,7 +85,7 @@ class PPOEWC(PPOVanilla):
         adv_t = torch.as_tensor(advantages, device=self.device)
         ret_t = torch.as_tensor(returns, device=self.device)
         batch = self.buffer.get_tensors()
-        n = self.cfg["n_steps"]
+        n = batch["obs"].shape[0]          # flattened batch = n_steps * num_envs
         mb = self.minibatch_size
 
         total_actor_loss = 0.0

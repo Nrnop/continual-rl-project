@@ -31,10 +31,14 @@ class PPOBase(ABC):
         # --- actor (shared by both agents) ---
         hidden = list(cfg.get("hidden_sizes", [256, 256]))
         self.actor = GaussianActor(obs_dim, act_dim, hidden_sizes=hidden).to(device)
-        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=cfg["lr_actor"])
+        # CleanRL sets Adam eps=1e-5 for MuJoCo PPO; default keeps torch's 1e-8.
+        self.actor_optim = torch.optim.Adam(
+            self.actor.parameters(), lr=cfg["lr_actor"], eps=cfg.get("adam_eps", 1e-8)
+        )
 
-        # --- rollout buffer ---
-        self.buffer = RolloutBuffer(cfg["n_steps"], obs_dim, act_dim, device)
+        # --- rollout buffer (vectorized over num_envs) ---
+        self.num_envs = int(cfg.get("num_envs", 1))
+        self.buffer = RolloutBuffer(cfg["n_steps"], self.num_envs, obs_dim, act_dim, device)
 
         # hyper-params cached for convenience
         self.gamma = cfg["gamma"]
@@ -51,8 +55,12 @@ class PPOBase(ABC):
     # Abstract hooks
     # ------------------------------------------------------------------
     @abstractmethod
-    def get_value(self, obs_np):
-        """Return (v_perm, v_trans) as python floats for a SINGLE observation (numpy)."""
+    def get_value(self, obs_batch_np):
+        """Return (v_perm, v_trans) for a BATCH of observations.
+
+        obs_batch_np has shape (num_envs, obs_dim); the returns are numpy arrays of
+        shape (num_envs,). Vanilla puts the full value in v_perm and zeros in v_trans.
+        """
 
     @abstractmethod
     def critic_loss(self, batch, advantages, returns):
@@ -64,6 +72,31 @@ class PPOBase(ABC):
 
     def on_task_switch(self, step):
         """Called when the training loop detects a task boundary. Override in PT."""
+
+    def _extra_loss(self):
+        """Hook for additional per-step loss terms (e.g. EWC penalty). Override in subclass."""
+        return torch.tensor(0.0, device=self.device)
+
+    def _all_optimizers(self):
+        """Every torch optimizer held by this agent (actor + any critic optims).
+
+        Discovered by scanning instance attributes so subclasses (vanilla critic,
+        split perm/trans critics, EWC) are all covered without extra plumbing.
+        """
+        return [v for v in self.__dict__.values()
+                if isinstance(v, torch.optim.Optimizer)]
+
+    def anneal_lr(self, frac):
+        """Scale every optimizer's LR to `frac` of its initial value (CleanRL-style).
+
+        `frac` goes 1.0 -> 0.0 over training. The base LR is captured lazily on
+        first call so this is a no-op-safe wrapper around each param group.
+        """
+        for opt in self._all_optimizers():
+            for pg in opt.param_groups:
+                if "initial_lr" not in pg:
+                    pg["initial_lr"] = pg["lr"]
+                pg["lr"] = frac * pg["initial_lr"]
 
     def state_dict(self):
         """Return dict of network state dicts for saving checkpoints."""
@@ -82,40 +115,122 @@ class PPOBase(ABC):
     # ------------------------------------------------------------------
     # Rollout collection
     # ------------------------------------------------------------------
-    def collect_rollout(self, env, obs, done):
-        """Fill the RolloutBuffer for n_steps.
+    def collect_rollout(self, envs, obs, done):
+        """Fill the RolloutBuffer for n_steps from a vectorized env.
 
-        Returns (last_obs, last_done, episode_returns) where episode_returns is a list of
-        cumulative returns for each episode that completed during this rollout.
+        Args:
+            envs: a gymnasium VectorEnv (num_envs sub-envs, auto-resetting).
+            obs:  current observations, shape (num_envs, obs_dim).
+            done: current done flags, shape (num_envs,).
+
+        Returns (last_obs, last_done, episode_returns), where episode_returns is a
+        list of TRUE (un-normalized) episodic returns for every episode that
+        finished during this rollout — read from RecordEpisodeStatistics, which
+        wraps the env BEFORE reward normalization.
+
+        Side effect: self._velocities (list[float]) — mean x_velocity per step.
         """
         self.buffer.reset()
         episode_returns = []
-        if not hasattr(self, '_epi_return'):
-            self._epi_return = 0.0
+        velocities = []
 
         for _ in range(self.cfg["n_steps"]):
-            obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+            v_perm, v_trans = self.get_value(obs)                 # (num_envs,)
+            obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
             with torch.no_grad():
                 action, logprob = self.actor.act(obs_t)
-            action_np = action.squeeze(0).cpu().numpy()
-            v_perm, v_trans = self.get_value(obs)
+            action_np = action.cpu().numpy()                      # (num_envs, act_dim)
+            logprob_np = logprob.cpu().numpy()                    # (num_envs,)
 
-            next_obs, reward, terminated, truncated, info = env.step(action_np)
-            done_flag = float(terminated or truncated)
+            next_obs, reward, terminated, truncated, infos = envs.step(action_np)
+            next_done = np.logical_or(terminated, truncated).astype(np.float32)
 
-            self.buffer.add(obs, action_np, logprob.item(), reward, done_flag, v_perm, v_trans)
-            self._epi_return += reward
+            # Store obs with ITS done flag (dones[t] marks a post-reset obs) and
+            # the reward for the action just taken (CleanRL convention).
+            self.buffer.add(obs, action_np, logprob_np, reward, done, v_perm, v_trans)
+
+            xv = infos.get("x_velocity")
+            if xv is not None:
+                velocities.append(float(np.mean(xv)))
+
+            # True episodic returns for completed episodes this step.
+            if "episode" in infos:
+                mask = np.asarray(infos["_episode"], dtype=bool)
+                episode_returns.extend(np.asarray(infos["episode"]["r"])[mask].tolist())
 
             obs = next_obs
-            done = done_flag
+            done = next_done
 
-            if terminated or truncated:
-                episode_returns.append(self._epi_return)
-                self._epi_return = 0.0
-                obs, _ = env.reset()
-                done = 0.0
-
+        self._velocities = velocities
+        self._step_metrics = None
         return obs, done, episode_returns
+
+    # ------------------------------------------------------------------
+    # Per-step online update (for step_by_step mode)
+    # ------------------------------------------------------------------
+    def _online_step_update(self, obs_np, action_np, old_logprob_val,
+                            reward, next_obs_np, done_flag):
+        """One-step online actor-critic update with PPO clipping.
+
+        Computes a 1-step TD advantage δ = r + γ(1−d)V(s') − V(s) and runs
+        a single gradient step on actor + critic.  The PPO clip safeguard is
+        retained, though the ratio will be ≈1 for freshly-sampled actions.
+
+        Returns (actor_loss, critic_loss, entropy, approx_kl, extra_loss).
+        """
+        obs_t = torch.as_tensor(
+            obs_np, dtype=torch.float32, device=self.device).unsqueeze(0)
+        action_t = torch.as_tensor(
+            action_np, dtype=torch.float32, device=self.device).unsqueeze(0)
+        old_lp_t = torch.tensor(
+            [old_logprob_val], dtype=torch.float32, device=self.device)
+
+        # 1-step TD target and advantage (no grad — stability).
+        # get_value expects a batch (num_envs, obs_dim); wrap the single obs as a 1-row batch.
+        vp, vt = self.get_value(obs_np[None, :])
+        vp_next, vt_next = self.get_value(next_obs_np[None, :])
+        v_perm, v_trans = float(vp[0]), float(vt[0])
+        v_curr = v_perm + v_trans
+        v_next = float(vp_next[0]) + float(vt_next[0])
+        target_val = reward + self.gamma * (1.0 - done_flag) * v_next
+        adv_val = target_val - v_curr
+
+        adv_t = torch.tensor([adv_val], dtype=torch.float32, device=self.device)
+        ret_t = torch.tensor([target_val], dtype=torch.float32, device=self.device)
+
+        # Actor loss (clipped surrogate)
+        new_logprobs, entropy = self.actor.evaluate_actions(obs_t, action_t)
+        ratio = torch.exp(new_logprobs - old_lp_t)
+        surr1 = ratio * adv_t
+        surr2 = torch.clamp(ratio, 1.0 - self.clip_coef,
+                            1.0 + self.clip_coef) * adv_t
+        actor_loss = -torch.min(surr1, surr2).mean()
+        entropy_loss = -entropy.mean()
+
+        # Critic loss (delegated to subclass)
+        batch = {"obs": obs_t, "actions": action_t,
+                 "v_perm": torch.tensor([v_perm], device=self.device),
+                 "v_trans": torch.tensor([v_trans], device=self.device)}
+        c_loss = self.critic_loss(batch, adv_t, ret_t)
+
+        # Extra loss hook (e.g. EWC penalty)
+        extra = self._extra_loss()
+
+        loss = actor_loss + c_loss + self.ent_coef * entropy_loss + extra
+
+        self.actor_optim.zero_grad()
+        self._zero_critic_grads()
+        loss.backward()
+        all_params = list(self.actor.parameters()) + list(self._critic_parameters())
+        torch.nn.utils.clip_grad_norm_(all_params, self.max_grad_norm)
+        self.actor_optim.step()
+        self._step_critic_optims()
+
+        with torch.no_grad():
+            approx_kl = ((ratio - 1) - ratio.log()).mean().item()
+
+        return (actor_loss.item(), c_loss.item(), entropy.mean().item(),
+                approx_kl, extra.item())
 
     # ------------------------------------------------------------------
     # PPO update
@@ -135,7 +250,7 @@ class PPOBase(ABC):
         adv_t = torch.as_tensor(advantages, device=self.device)
         ret_t = torch.as_tensor(returns, device=self.device)
         batch = self.buffer.get_tensors()
-        n = self.cfg["n_steps"]
+        n = batch["obs"].shape[0]          # flattened batch = n_steps * num_envs
         mb = self.minibatch_size
 
         total_actor_loss = 0.0

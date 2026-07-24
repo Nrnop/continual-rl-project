@@ -1,0 +1,41 @@
+# Agent-agnostic overlay for the FULL continual (directional task-switching) experiment,
+# vectorized for throughput. PT/EWC-specific knobs come from their agent YAML, which is
+# loaded BEFORE this overlay, so they are preserved.
+#
+#   python -m src_continuous_control.train --agent vanilla --config continual_fast --seed 0
+#   python -m src_continuous_control.train --agent ewc     --config continual_fast --seed 0
+#   python -m src_continuous_control.train --agent pt      --config continual_fast --seed 0
+#
+# On a Linux GPU box, AsyncVectorEnv parallelizes env.step() across cores for a real
+# wall-clock speedup (the bottleneck is MuJoCo physics, not the tiny [64,64] net).
+
+# --- validated PPO base ---
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: true
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+lr_critic: 0.0003
+epochs: 10
+minibatch_size: 64
+
+# --- vectorized envs: 8 x 256 = 2048 batch (matches the validated single-env recipe) ---
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# --- continual task-switching (directional forward/backward flips) ---
+tasks: [1, -1]
+total_steps: 3072000
+switch: 614400

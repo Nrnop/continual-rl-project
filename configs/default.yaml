@@ -3,8 +3,9 @@
 # --- environment ---
 env_id: "HalfCheetah-v5"        # falls back to v4 automatically if v5 is unavailable
 tasks: [1, -1]                  # directional: +1 = forward, -1 = backward
-switch: 1000000                 # env steps between task flips (cyclic)
-total_steps: 3000000            # total env steps
+switch: 614400                  # env steps between task flips (cyclic)
+total_steps: 3072000            # total env steps (5 clean phases)
+step_by_step: true              # per-step online updates instead of batch PPO
 max_episode_steps: 1000
 
 # --- PPO core ---

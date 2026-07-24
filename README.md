@@ -1,88 +1,129 @@
 # src_continuous_control
 
-Continuous-control extension of the Permanent–Transient (PT) decomposition from
-Anand & Precup (2023), *Prediction and Control in Continual Reinforcement Learning*.
-
-This module is **fully isolated**: it does not modify, import, or depend on any file in the
-baseline repository. The baseline (`control/`, `prediction_semi_crl/`) is preserved untouched as
-the reference implementation. We only *copied patterns* from it — chiefly the `train_T_Net` /
-`train_P_Net` update equations in `control/minatar_crl/PT_DQN_half.py`.
+A **continuous-control extension of the Permanent–Transient (PT) value decomposition** from
+Anand & Precup (2023), *Prediction and Control in Continual Reinforcement Learning*, applied to a
+**PPO actor-critic on MuJoCo HalfCheetah**. Thesis codebase (BIHE, B.Eng.):
+*Permanent and Transient Representations for Continual RL under Smooth Environment Non-Stationarity.*
 
 ## What this is
 
-We port the value-based PT decomposition `Q = Q_perm + Q_trans` into a **continuous-control
-actor-critic (PPO)** on a MuJoCo **DirectionalHalfCheetah** task (forward ↔ backward = reward-sign
-flip at fixed boundaries). The critic is split into a **dual-timescale state value**:
+We port the value-based PT idea `V = V_perm + V_trans` into continuous-control PPO and study it
+under continual (non-stationary) conditions:
 
-```
-V(s) = V_perm(s; θ_P) + V_trans(s; θ_T)
-```
+- **PT is applied to the critic** (the value function), not the policy:
 
-- **Transient critic** `θ_T`: updated aggressively every PPO update, learning rate `α_T`.
-- **Permanent critic** `θ_P`: consolidated conservatively every `k` updates (and at task
-  boundaries), learning rate `α_P ≪ α_T` (SGD). It regresses `V_perm → V_trans.detach() + old_V_perm`,
-  mirroring the paper's `train_P_Net`.
-- After each consolidation the transient critic is **decayed** (`θ_T ← decay · θ_T`; `decay=0` ≈ reset).
+  ```
+  V(s) = V_perm(s; θ_P) + V_trans(s; θ_T)
+  ```
 
-The goal (supervisor feedback): keep the combined `V` from lurching at task switches — `V_perm`
-anchors the shared locomotion physics, `V_trans` absorbs the directional shift — minimizing the
-performance drop at the boundary while raising the overall return.
+  - **Transient critic `θ_T`** — fast (`lr_trans`, Adam): trained every PPO update to fit the
+    residual `returns − V_perm.detach()` above the frozen permanent baseline.
+  - **Permanent critic `θ_P`** — slow (`lr_perm`, SGD): *not* trained on returns each step. Every
+    `k` updates it **consolidates**, regressing `V_perm → old_V_perm + (1−decay)·V_trans.detach()`
+    over a buffer of visited states, then the transient is decayed (`θ_T ← decay·θ_T`). This target
+    is **value-preserving for any `decay`**: the acting value `V` doesn't drift across consolidation.
+  - At a task boundary the agent **consolidates first, then decays** — locking the just-learned task
+    value into `θ_P` so `V` doesn't lurch at the switch.
 
-We benchmark the PT agent against a **vanilla single-critic PPO on the same environment and seeds**
-(the same apples-to-apples comparison the paper uses for PT_DQN vs DQN).
+- **Non-stationarity** comes from `DirectionalHalfCheetah`: the forward-velocity reward term flips
+  sign at fixed step boundaries — `task = +1` rewards running **forward**, `task = −1` rewards
+  **backward**. Control cost stays task-invariant (shared physics); only the direction flips.
 
-## Install (use an isolated venv — do not reuse the baseline's gymnasium 0.28.1)
+- **Three agents, apples-to-apples** (same actor, env, seeds — only the critic/regularizer differs):
+
+  | Agent | What it is |
+  |-------|-----------|
+  | `vanilla` | Standard single-critic PPO — the baseline |
+  | `pt` | Dual-timescale split critic + consolidation — **the contribution** |
+  | `ewc` | Online Elastic Weight Consolidation (diagonal Fisher penalty) — regularization baseline |
+
+> **Scope note.** The proposal describes *smooth, Lipschitz-continuous dynamics drift* (friction/mass
+> drifting every step). The code currently implements *discrete directional task-switching* instead.
+> Smooth drift is a planned later addition, once the PT mechanism is validated on this setup.
+
+## Install
+
+Use an isolated virtualenv with a **modern** gymnasium (HalfCheetah-v5 needs ≥ 0.29):
 
 ```bash
 python -m venv .venv_cc
-# Windows (Git Bash):
-source .venv_cc/Scripts/activate
-# Linux/Mac:
-# source .venv_cc/bin/activate
-
+source .venv_cc/Scripts/activate      # Windows (Git Bash);  Linux/Mac: .venv_cc/bin/activate
 pip install -r src_continuous_control/requirements_continuous.txt
 ```
 
-The `mujoco` pip wheel runs natively on Windows (no `mujoco-py` needed).
+The `mujoco` pip wheel runs natively on Windows (no `mujoco-py`).
 
 ## Run
 
+> **Run from the *parent* directory** (`…/` that contains `src_continuous_control/`). The default
+> `results_dir`/`runs_dir` are relative, so running from *inside* the package creates a stray nested
+> `src_continuous_control/` folder.
+
 ```bash
-# Vanilla single-critic PPO baseline
-python -m src_continuous_control.train --agent vanilla --seed 0
+cd ..    # into the folder that contains src_continuous_control/
 
-# Dual-timescale PT-PPO (the contribution)
-python -m src_continuous_control.train --agent pt --seed 0
+# Baseline / contribution / regularization baseline
+python -m src_continuous_control.train --agent vanilla --config continual_fast --seed 0
+python -m src_continuous_control.train --agent pt      --config continual_fast --seed 0
+python -m src_continuous_control.train --agent ewc     --config continual_fast --seed 0
 
-# Quick smoke test (tiny run, frequent switch)
+# Single-task sanity check (no switching) — does PPO reach a healthy positive HalfCheetah return?
+python -m src_continuous_control.train --agent pt --config pt_fixed \
+    --disable-task-switch --total-steps 1000000 --no-wandb --no-tb
+
+# Quick smoke test (tiny run, no logging backends)
 python -m src_continuous_control.train --agent pt --seed 0 \
-    --total-steps 6000 --n-steps 1000 --switch 2000 --no-wandb
+    --total-steps 6000 --n-steps 1000 --switch 2000 --no-wandb --no-tb
 ```
 
-Per-seed return curves are written to `src_continuous_control/results/*.pkl`; TensorBoard event
-files to `src_continuous_control/runs/`; W&B (if enabled) to project `pt-continuous-control`.
+Per-seed curves are written to `results/*.pkl`; TensorBoard events to `runs/`; W&B (unless
+`--no-wandb`) to project `pt-continuous-control`. Multi-seed sweeps live in `scripts/`.
+
+### Configuration
+
+Layered — later overrides earlier: `configs/default.yaml` ← `configs/ppo_<agent>.yaml`
+← `--config <overlay>.yaml` ← CLI flags. Key overlays:
+
+| Overlay | Purpose |
+|---------|---------|
+| `cleanrl_match` | Validated single-env PPO recipe (obs/reward normalization, LR anneal, Adam eps 1e-5) |
+| `continual_fast` | The full continual experiment, 8× async vector envs for throughput |
+| `pt_fixed` | Corrected PT on the validated base |
+
+The CleanRL-style **observation and reward normalization** (running mean/std, clipped to ±10) is
+what makes HalfCheetah reach positive return; without it PPO returns stay negative.
 
 ## Compare & plot
 
 ```bash
-# After running both agents over several seeds:
 python -m src_continuous_control.plots.plot_compare --seeds 0 1 2 3 4
 ```
 
-Produces an overlaid mean ± CI return curve with task-boundary markers, plus a boundary-drop bar
-chart, under `src_continuous_control/plots/figures/`.
+Produces overlaid mean ± CI return curves with task-boundary markers, plus boundary-drop and
+recovery-time charts, under `plots/figures/`.
 
 ## Layout
 
 | Path | Purpose |
 |------|---------|
-| `envs/directional_half_cheetah.py` | HalfCheetah wrapper; `set_task(±1)`; directional reward |
-| `models/actor.py` | Gaussian MLP policy (continuous actions) |
-| `models/critic.py` | `SplitCritic` (V_perm + V_trans) and `VanillaCritic` |
-| `agents/ppo_base.py` | Shared PPO core (rollout, GAE-λ, clipped actor loss) |
+| `envs/directional_half_cheetah.py` | HalfCheetah wrapper; `set_task(±1)`; vectorized + normalized env factories |
+| `models/actor.py` | `GaussianActor` (used by **all** agents). `SplitActor` exists but is unused — PT is critic-only |
+| `models/critic.py` | `VanillaCritic` and `SplitCritic` (`V_perm + V_trans`, two separate trunks) |
+| `agents/ppo_base.py` | Shared PPO core: vectorized rollout, GAE-λ, clipped-surrogate update, LR anneal |
 | `agents/ppo_vanilla.py` | Single-critic baseline |
-| `agents/ppo_pt.py` | Dual-timescale split critic + consolidation + decay |
-| `utils/` | seeding, buffers, unified logger (TB+W&B+pickle), metrics |
-| `train.py` | Entry point (config + CLI) |
-| `plots/plot_compare.py` | Comparative charts |
-| `scripts/` | Multi-seed run shell scripts |
+| `agents/ppo_pt.py` | Dual-timescale split critic + value-preserving consolidation + decay |
+| `agents/ppo_ewc.py` | Online EWC (diagonal Fisher penalty on the actor) |
+| `utils/` | seeding, buffers (rollout + consolidation), unified logger (TB+W&B+pickle), boundary metrics |
+| `plots/` | `plot_compare` (comparative charts), `plot_singletask_live` |
+| `scripts/` | Multi-seed / full-scale run scripts |
+| `train.py` | Entry point (config resolution + training loop) |
+
+## Testing
+
+```bash
+cd ..
+python -m pytest src_continuous_control/tests -q
+```
+
+Fast, CPU-only unit tests (buffers, agent updates, task switching, logging/plotting) — no MuJoCo
+training required.

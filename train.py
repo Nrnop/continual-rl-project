@@ -19,9 +19,15 @@ import time
 import numpy as np
 import torch
 import yaml
+import gymnasium as gym
+from gymnasium.wrappers import RecordVideo
 
 from .agents import AGENTS
-from .envs.directional_half_cheetah import DirectionalHalfCheetah
+from .envs.directional_half_cheetah import (
+    DirectionalHalfCheetah,
+    make_directional_env,
+    make_vector_env,
+)
 from .utils.logger import Logger
 from .utils.metrics import ValueDriftProbe, BoundaryReturnTracker
 from .utils.seeding import seed_everything, seed_env
@@ -39,15 +45,29 @@ def _load_yaml(path):
 
 
 def build_config(cli_args):
-    """Merge default.yaml ← agent-specific YAML ← CLI overrides."""
+    """Merge default.yaml ← agent-specific YAML ← --config overlay ← CLI overrides."""
     cfg = _load_yaml(os.path.join(_CFG_DIR, "default.yaml"))
 
     agent_yaml = os.path.join(_CFG_DIR, f"ppo_{cli_args.agent}.yaml")
     if os.path.exists(agent_yaml):
         cfg.update(_load_yaml(agent_yaml))
 
-    # CLI overrides (only non-None values)
+    # Optional extra overlay (e.g. --config cleanrl_match) — applied on top of the
+    # agent YAML so a single file can pin a full experiment's hyper-params.
+    extra = getattr(cli_args, "config", None)
+    if extra:
+        if not extra.endswith(".yaml"):
+            extra = extra + ".yaml"
+        path = extra if os.path.isabs(extra) else os.path.join(_CFG_DIR, extra)
+        if os.path.exists(path):
+            cfg.update(_load_yaml(path))
+        else:
+            raise FileNotFoundError(f"--config overlay not found: {path}")
+
+    # CLI overrides (only non-None values). 'config' is a meta-key consumed above.
     for key, val in vars(cli_args).items():
+        if key == "config":
+            continue
         if val is not None:
             cfg[key] = val
 
@@ -60,6 +80,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Continuous-control PT-PPO training")
     p.add_argument("--agent", type=str, default="pt", choices=list(AGENTS.keys()))
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--config", type=str, default=None,
+                   help="extra YAML overlay in configs/ (e.g. cleanrl_match)")
 
     # Env
     p.add_argument("--env-id", type=str, default=None)
@@ -67,6 +89,22 @@ def parse_args():
     p.add_argument("--switch", type=int, default=None)
     p.add_argument("--n-steps", type=int, default=None)
     p.add_argument("--max-episode-steps", type=int, default=None)
+    p.add_argument("--num-envs", type=int, default=None,
+                   help="parallel envs (batch = n_steps * num_envs)")
+    p.add_argument("--async-envs", type=lambda v: str(v).lower() in ("true","1","yes","y"),
+                   nargs="?", const=True, default=None,
+                   help="use AsyncVectorEnv (subprocesses) when num_envs>1")
+
+    def _str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if str(v).lower() in ("true", "1", "yes", "t", "y"):
+            return True
+        elif str(v).lower() in ("false", "0", "no", "f", "n"):
+            return False
+        return bool(v)
+
+    p.add_argument("--step-by-step", type=_str2bool, nargs="?", const=True, default=None)
 
     # PPO
     p.add_argument("--lr-actor", type=float, default=None)
@@ -98,6 +136,9 @@ def parse_args():
     p.add_argument("--eval-interval-updates", type=int, default=None)
     p.add_argument("--no-eval", action="store_true")
     p.add_argument("--save-checkpoints", action="store_true")
+    p.add_argument("--disable-task-switch", action="store_true")
+    p.add_argument("--render", action="store_true")
+    p.add_argument("--render-freq", type=int, default=None)
 
     args = p.parse_args()
 
@@ -124,11 +165,83 @@ def _run_offline_eval(agent, eval_env, n_episodes=5):
                 else:
                     action, _ = agent.select_action(obs_t)
             action_np = action.squeeze(0).cpu().numpy()
-            obs, r, term, trunc, _ = eval_env.step(action_np)
-            ep_ret += r
+            obs, r, term, trunc, info = eval_env.step(action_np)
+            # True reward even if a reward normalizer is present upstream.
+            ep_ret += info.get("directional_reward", r)
             done = term or trunc
         eval_returns.append(ep_ret)
     return float(np.mean(eval_returns))
+
+
+# ---------------------------------------------------------------------------
+# Helper functions for traversing wrappers (e.g. RecordVideo) cleanly
+# ---------------------------------------------------------------------------
+def _set_env_task(env, direction):
+    """Find the DirectionalHalfCheetah wrapper across any stack and call set_task."""
+    if hasattr(env, "set_task"):
+        return env.set_task(direction)
+    if hasattr(env, "get_wrapper_attr"):
+        try:
+            return env.get_wrapper_attr("set_task")(direction)
+        except AttributeError:
+            pass
+    cur = env
+    while hasattr(cur, "env"):
+        cur = cur.env
+        if hasattr(cur, "set_task"):
+            return cur.set_task(direction)
+    return getattr(env.unwrapped, "set_task", lambda d: None)(direction)
+
+
+def _find_normalize_obs(env):
+    """Return the NormalizeObservation wrapper in the stack, or None.
+
+    Matches both the single-env and vector variants so the training (vector) stats
+    can be copied onto the single-env eval wrapper — both expose obs_rms with the
+    same per-feature (obs_dim,) mean/var/count.
+    """
+    norm_types = (gym.wrappers.NormalizeObservation, gym.wrappers.vector.NormalizeObservation)
+    cur = env
+    while cur is not None:
+        if isinstance(cur, norm_types):
+            return cur
+        cur = getattr(cur, "env", None)
+    return None
+
+
+def _sync_obs_stats(train_env, eval_env):
+    """Copy the training obs running-mean/std onto the eval env and freeze it.
+
+    The policy was trained on observations normalized by the *training* stats;
+    evaluating with a different normalizer would inject a distribution shift. We
+    copy the stats and stop the eval env from updating its own (CleanRL evaluates
+    with the training normalizer's statistics).
+    """
+    src = _find_normalize_obs(train_env)
+    dst = _find_normalize_obs(eval_env)
+    if src is None or dst is None:
+        return
+    dst.obs_rms.mean = np.array(src.obs_rms.mean, copy=True)
+    dst.obs_rms.var = np.array(src.obs_rms.var, copy=True)
+    dst.obs_rms.count = src.obs_rms.count
+    dst.update_running_mean = False
+
+
+def _get_env_direction(env):
+    """Find the running direction across any wrapper stack."""
+    if hasattr(env, "direction"):
+        return env.direction
+    if hasattr(env, "get_wrapper_attr"):
+        try:
+            return env.get_wrapper_attr("direction")
+        except AttributeError:
+            pass
+    cur = env
+    while hasattr(cur, "env"):
+        cur = cur.env
+        if hasattr(cur, "direction"):
+            return cur.direction
+    return getattr(env.unwrapped, "direction", 1)
 
 
 # ---------------------------------------------------------------------------
@@ -142,15 +255,30 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seed_everything(seed)
 
-    # --- Environment ---
-    env = DirectionalHalfCheetah(
+    # --- Environment (vectorized) ---
+    render_mode = "rgb_array" if cfg.get("render", False) else None
+    normalize_obs = cfg.get("normalize_obs", False)
+    normalize_reward = cfg.get("normalize_reward", False)
+    num_envs = int(cfg.get("num_envs", 1))
+    async_envs = cfg.get("async_envs", True)
+    if cfg.get("render", False) and num_envs > 1:
+        print("[train] render is not supported with num_envs>1; disabling train-env video.")
+    env = make_vector_env(
         env_id=cfg.get("env_id", "HalfCheetah-v5"),
+        num_envs=num_envs,
         direction=cfg["tasks"][0],
         max_episode_steps=cfg.get("max_episode_steps", 1000),
+        gamma=cfg["gamma"],
+        normalize_obs=normalize_obs,
+        normalize_reward=normalize_reward,
+        clip_obs=cfg.get("clip_obs", 10.0),
+        clip_reward=cfg.get("clip_reward", 10.0),
+        asynchronous=async_envs,
     )
-    obs = seed_env(env, seed)
-    obs_dim = env.observation_space.shape[0]
-    act_dim = env.action_space.shape[0]
+    obs, _ = env.reset(seed=seed)
+    done = np.zeros(num_envs, dtype=np.float32)
+    obs_dim = env.single_observation_space.shape[0]
+    act_dim = env.single_action_space.shape[0]
 
     # --- Agent ---
     AgentClass = AGENTS[cfg["agent"]]
@@ -186,69 +314,100 @@ def main():
     boundary_tracker = BoundaryReturnTracker(post_window_steps=n_steps * 5)
     probe_states = None  # sampled lazily
 
-    # --- Training state ---
+    # --- Training state ---  (obs/done initialized from env.reset above)
     avg_return = 0.0
     global_step = 0
     update_idx = 0
     task_idx = 0
-    done = 0.0
 
     returns_curve = []
     all_episode_returns = []
     eval_returns_curve = []
+    velocity_curve = []
 
     eval_env = None
     if not cfg.get("no_eval", False):
-        eval_env = DirectionalHalfCheetah(
+        eval_env = make_directional_env(
             env_id=cfg.get("env_id", "HalfCheetah-v5"),
             direction=cfg["tasks"][0],
             max_episode_steps=cfg.get("max_episode_steps", 1000),
+            render_mode=render_mode,
+            normalize_obs=normalize_obs,      # stats synced from train env before each eval
+            normalize_reward=False,           # eval reports the true (un-normalized) return
+            clip_obs=cfg.get("clip_obs", 10.0),
         )
+        if cfg.get("render", False):
+            video_folder_eval = os.path.join(cfg.get("runs_dir", "src_continuous_control/runs"), "videos", f"{cfg['agent']}_seed_{seed}_eval")
+            eval_env = RecordVideo(
+                eval_env,
+                video_folder=video_folder_eval,
+                episode_trigger=lambda ep_id: ep_id % 5 == 0,
+                disable_logger=True,
+            )
         seed_env(eval_env, seed + 10000)
 
     print(f"[train] agent={cfg['agent']}  seed={seed}  device={device}")
-    print(f"[train] total_steps={total_steps}  switch={switch_interval}  n_steps={n_steps}")
+    print(f"[train] total_steps={total_steps}  switch={switch_interval}  n_steps={n_steps}  "
+          f"num_envs={num_envs}  async={async_envs and num_envs > 1}  batch={n_steps * num_envs}")
+    print(f"[train] step_by_step={cfg.get('step_by_step', False)}")
+    if cfg.get("disable_task_switch", False):
+        print("[train] Task switching disabled (Single-Task Baseline)")
+    if cfg.get("render", False):
+        print(f"[train] Video rendering enabled (render_freq={cfg.get('render_freq', 25)})")
     t0 = time.time()
 
+    anneal_lr = cfg.get("anneal_lr", False)
+    steps_per_update = n_steps * num_envs
+    num_updates = max(total_steps // steps_per_update, 1)
+
     while global_step < total_steps:
+        # ---- LR annealing (CleanRL: linear decay to 0 over training) ----
+        if anneal_lr:
+            frac = max(1.0 - update_idx / num_updates, 0.0)
+            agent.anneal_lr(frac)
+
         # ---- Task switching ----
-        next_switch = (task_idx + 1) * switch_interval
-        if global_step >= next_switch:
-            task_idx += 1
-            direction = tasks[task_idx % len(tasks)]
-            env.set_task(direction)
-            agent.on_task_switch(global_step)
+        if not cfg.get("disable_task_switch", False):
+            next_switch = (task_idx + 1) * switch_interval
+            if global_step >= next_switch:
+                task_idx += 1
+                direction = tasks[task_idx % len(tasks)]
+                env.unwrapped.call("set_task", direction)  # propagates to every sub-env
+                agent.on_task_switch(global_step)
 
-            # Value-drift measurement at boundary
-            if probe_states is not None:
-                def val_fn(s):
-                    t = torch.as_tensor(s, dtype=torch.float32, device=device)
-                    with torch.no_grad():
-                        if hasattr(agent.critic, "value"):
-                            return agent.critic.value(t).cpu().numpy()
-                        else:
-                            return agent.critic(t).cpu().numpy()
-                    return np.zeros(len(s))
-                drift = drift_probe.snapshot(val_fn, probe_states)
-                if drift is not None:
-                    logger.log_scalar("boundary/value_drift", drift, global_step)
+                # Value-drift measurement at boundary
+                if probe_states is not None:
+                    def val_fn(s):
+                        t = torch.as_tensor(s, dtype=torch.float32, device=device)
+                        with torch.no_grad():
+                            if hasattr(agent.critic, "value"):
+                                return agent.critic.value(t).cpu().numpy()
+                            else:
+                                return agent.critic(t).cpu().numpy()
+                        return np.zeros(len(s))
+                    drift = drift_probe.snapshot(val_fn, probe_states)
+                    if drift is not None:
+                        logger.log_scalar("boundary/value_drift", drift, global_step)
 
-            boundary_tracker.on_switch(global_step, avg_return)
-            print(f"[train] step {global_step}: SWITCH to task {direction}  avg_return={avg_return:.1f}")
+                boundary_tracker.on_switch(global_step, avg_return)
+                print(f"[train] step {global_step}: SWITCH to task {direction}  avg_return={avg_return:.1f}")
 
         # ---- Collect rollout ----
         obs, done, episode_returns = agent.collect_rollout(env, obs, done)
         all_episode_returns.extend(episode_returns)
-        global_step += n_steps
+        global_step += steps_per_update
+
+        # Track velocity
+        velocity_curve.append((global_step, float(np.mean(agent._velocities))))
 
         # Track episodic returns (EMA, mirrors baseline's avg_return = 0.99 * avg_return + 0.01 * epi_return)
         ema = cfg.get("eval_ema", 0.99)
         for ep_ret in episode_returns:
             avg_return = ema * avg_return + (1 - ema) * ep_ret
 
-        returns_curve.append(avg_return)
+        returns_curve.append((global_step, avg_return))
 
-        # ---- PPO update ----
+        # ---- PPO update (batch PPO over the flattened rollout) ----
         metrics = agent.update(obs, done, update_idx)
         update_idx += 1
 
@@ -257,9 +416,10 @@ def main():
         if eval_interval is None:
             eval_interval = 50
         if eval_env is not None and (update_idx % eval_interval == 0 or update_idx == 1):
-            eval_env.set_task(env.direction)
+            _set_env_task(eval_env, tasks[task_idx % len(tasks)])  # match current train task
+            _sync_obs_stats(env, eval_env)  # evaluate with the training normalizer's stats
             clean_eval_ret = _run_offline_eval(agent, eval_env, n_episodes=5)
-            eval_returns_curve.append((update_idx, clean_eval_ret))
+            eval_returns_curve.append((global_step, clean_eval_ret))
             logger.log_scalar("eval/zero_momentum_return", clean_eval_ret, global_step)
             if cfg.get("save_checkpoints", False):
                 logger.save_checkpoint(agent.state_dict(), step=global_step)
@@ -280,8 +440,9 @@ def main():
 
         # Sample probe states lazily (first rollout provides good coverage)
         if probe_states is None:
-            n_probe = min(cfg.get("probe_states", 256), n_steps)
-            probe_states = agent.buffer.obs[:n_probe].copy()
+            flat_obs = agent.buffer.obs.reshape(-1, obs_dim)
+            n_probe = min(cfg.get("probe_states", 256), flat_obs.shape[0])
+            probe_states = flat_obs[:n_probe].copy()
 
         # Boundary return tracker
         rec = boundary_tracker.update(global_step, avg_return)
@@ -307,11 +468,17 @@ def main():
         logger.save_returns(all_episode_returns, suffix="ep_returns")
     if eval_returns_curve:
         logger.save_returns(eval_returns_curve, suffix="eval_returns")
+    if velocity_curve:
+        logger.save_returns(velocity_curve, suffix="velocities")
     mean_drop = boundary_tracker.mean_drop()
     if mean_drop is not None:
         logger.log_scalar("boundary/mean_drop", mean_drop, global_step)
         print(f"[train] mean boundary drop: {mean_drop:.2f}")
 
+    if hasattr(env, "close"):
+        env.close()
+    if eval_env is not None and hasattr(eval_env, "close"):
+        eval_env.close()
     logger.close()
     elapsed = time.time() - t0
     print(f"[train] Done. {global_step} steps in {elapsed:.0f}s ({global_step/elapsed:.0f} sps). "

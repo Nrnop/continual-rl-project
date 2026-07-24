@@ -15,24 +15,38 @@ import torch
 
 
 class RolloutBuffer:
-    """Fixed-length on-policy buffer for one PPO update."""
+    """Fixed-length on-policy buffer for one PPO update, vectorized over `num_envs`.
 
-    def __init__(self, n_steps, obs_dim, act_dim, device):
+    Storage is shaped (n_steps, num_envs, ...); GAE is computed per-env and the
+    returned advantages/returns (and get_tensors) are flattened to a single batch
+    of size n_steps * num_envs, so the PPO update loop is env-count-agnostic.
+    A single synchronous env is just num_envs == 1.
+    """
+
+    def __init__(self, n_steps, num_envs, obs_dim, act_dim, device):
         self.n_steps = n_steps
+        self.num_envs = num_envs
+        self.batch_size = n_steps * num_envs
         self.device = device
-        self.obs = np.zeros((n_steps, obs_dim), dtype=np.float32)
-        self.actions = np.zeros((n_steps, act_dim), dtype=np.float32)
-        self.logprobs = np.zeros(n_steps, dtype=np.float32)
-        self.rewards = np.zeros(n_steps, dtype=np.float32)
-        self.dones = np.zeros(n_steps, dtype=np.float32)
-        self.v_perm = np.zeros(n_steps, dtype=np.float32)
-        self.v_trans = np.zeros(n_steps, dtype=np.float32)
+        self.obs = np.zeros((n_steps, num_envs, obs_dim), dtype=np.float32)
+        self.actions = np.zeros((n_steps, num_envs, act_dim), dtype=np.float32)
+        self.logprobs = np.zeros((n_steps, num_envs), dtype=np.float32)
+        self.rewards = np.zeros((n_steps, num_envs), dtype=np.float32)
+        self.dones = np.zeros((n_steps, num_envs), dtype=np.float32)
+        self.v_perm = np.zeros((n_steps, num_envs), dtype=np.float32)
+        self.v_trans = np.zeros((n_steps, num_envs), dtype=np.float32)
         self.ptr = 0
 
     def reset(self):
         self.ptr = 0
 
     def add(self, obs, action, logprob, reward, done, v_perm, v_trans):
+        """All arguments are per-env arrays with leading dim num_envs.
+
+        `done` is the done flag of `obs` at this step (CleanRL convention:
+        dones[t] marks whether obs[t] is the first state after a reset), and
+        `reward` is the reward received for the action taken at this step.
+        """
         i = self.ptr
         self.obs[i] = obs
         self.actions[i] = action
@@ -48,13 +62,17 @@ class RolloutBuffer:
         return self.ptr >= self.n_steps
 
     def compute_gae(self, last_value, last_done, gamma, gae_lambda):
-        """GAE-lambda over the combined value V = V_perm + V_trans.
+        """GAE-lambda over the combined value V = V_perm + V_trans, per env.
 
-        Returns (advantages, returns) as numpy arrays of shape (n_steps,).
+        last_value, last_done: per-env arrays (num_envs,) for the bootstrap step.
+        Returns (advantages, returns) FLATTENED to (n_steps * num_envs,), matching
+        the row-major flattening used by get_tensors.
         """
-        values = self.v_perm + self.v_trans
-        advantages = np.zeros(self.n_steps, dtype=np.float32)
-        last_gae = 0.0
+        values = self.v_perm + self.v_trans                 # (n_steps, num_envs)
+        last_value = np.asarray(last_value, dtype=np.float32).reshape(self.num_envs)
+        last_done = np.asarray(last_done, dtype=np.float32).reshape(self.num_envs)
+        advantages = np.zeros_like(values)
+        last_gae = np.zeros(self.num_envs, dtype=np.float32)
         for t in reversed(range(self.n_steps)):
             if t == self.n_steps - 1:
                 next_nonterminal = 1.0 - last_done
@@ -66,16 +84,19 @@ class RolloutBuffer:
             last_gae = delta + gamma * gae_lambda * next_nonterminal * last_gae
             advantages[t] = last_gae
         returns = advantages + values
-        return advantages, returns
+        return advantages.reshape(-1), returns.reshape(-1)
 
     def get_tensors(self):
+        """Flattened (batch, ...) tensors, batch = n_steps * num_envs."""
+        obs_dim = self.obs.shape[-1]
+        act_dim = self.actions.shape[-1]
         t = lambda x: torch.as_tensor(x, device=self.device)
         return {
-            "obs": t(self.obs),
-            "actions": t(self.actions),
-            "logprobs": t(self.logprobs),
-            "v_perm": t(self.v_perm),
-            "v_trans": t(self.v_trans),
+            "obs": t(self.obs.reshape(-1, obs_dim)),
+            "actions": t(self.actions.reshape(-1, act_dim)),
+            "logprobs": t(self.logprobs.reshape(-1)),
+            "v_perm": t(self.v_perm.reshape(-1)),
+            "v_trans": t(self.v_trans.reshape(-1)),
         }
 
 
