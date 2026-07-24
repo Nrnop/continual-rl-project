@@ -14,15 +14,26 @@ policy/critic are tiny `[64,64]` nets. So:
 - **Speedup = parallelism.** 24 threads → run multiple seeds/agents at once. That turns the full
   5-seed sweep from ~20 h sequential into **~7 h**.
 
-## 1. Clone (after the work is pushed)
+## 1. Get the code onto the box (and verify it's the FIXED version)
 
-The GitHub remote must already contain the fixed code (PT fixes, tests, configs, docs). If it only
-has the old baseline commit, you'll clone the negative-return version — push first from the dev machine.
+The code is delivered by **copying the project folder over VSCode Remote-SSH** (not `git clone`).
+Open the box in VSCode Remote-SSH; the folder that contains `src_continuous_control/` is already
+present. **Run everything from that parent folder** (the run-from-parent rule).
+
+**Verify it's the fixed code before doing anything** — a copy made before the fixes is the old,
+negative-return version:
+
+- `src_continuous_control/VASTAI_SETUP.md` and `CLAUDE.md` must exist (they only exist in the fixed version).
+- After installing deps (§2), `pytest` must reach **15 passed** (§3). If not, the copy is stale —
+  re-copy the current local folder and start over.
 
 ```bash
-git clone https://github.com/Nrnop/continual-rl-project.git
-cd continual-rl-project            # this is the PARENT of src_continuous_control/  -> run everything from here
+cd <folder that CONTAINS src_continuous_control/>     # the parent dir — run everything from here
+ls src_continuous_control/VASTAI_SETUP.md              # sanity: should exist
 ```
+
+> Alternative (only if the box has the repo via git): `git pull` to fast-forward to the latest
+> `main`. But the normal path here is the VSCode folder copy above.
 
 ## 2. Environment
 
@@ -52,7 +63,7 @@ in parallel (3 × 8 envs ≈ 24 threads); seeds go sequentially.
 
 ```bash
 tmux new -s sweep
-cd continual-rl-project
+cd <folder that CONTAINS src_continuous_control/>    # the parent dir
 export CUDA_VISIBLE_DEVICES=""
 mkdir -p sweeplogs
 
@@ -78,16 +89,17 @@ echo "SWEEP DONE $(date)"
 
 ## 5. Get results back
 
-Result `.pkl`s land in `src_continuous_control/results/` (gitignored). Either:
+Result `.pkl`s land in `src_continuous_control/results/` (gitignored). Plot on the box first:
 
 ```bash
-# plot on the box, then copy just the figures:
 python -m src_continuous_control.plots.plot_compare --seeds 0 1 2 3 4
-# from your local machine:
-scp -r -P <ssh_port> root@<host>:continual-rl-project/src_continuous_control/plots/figures ./
+# figures -> src_continuous_control/plots/figures/
 ```
 
-or `git add -f src_continuous_control/plots/figures && git commit && git push` to ship figures via git.
+Then pull the figures to your machine. Since you're on **VSCode Remote-SSH**, the easy way is:
+right-click `src_continuous_control/plots/figures/` in the VSCode Explorer → **Download**.
+(Alternatives: `scp -r -P <ssh_port> root@<host>:<path>/plots/figures ./`, or `git add -f` the
+figures and push if the box has git.)
 
 ## Notes
 
