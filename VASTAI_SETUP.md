@@ -13,6 +13,15 @@ policy/critic are tiny `[64,64]` nets. So:
   wouldn't speed this up anyway (transfer overhead can make it slower).
 - **Speedup = parallelism.** 24 threads → run multiple seeds/agents at once. That turns the full
   5-seed sweep from ~20 h sequential into **~7 h**.
+- **PIN EACH PROCESS TO ONE THREAD — this is not optional.** Torch defaults to a large intra-op
+  thread pool per process, so 3 concurrent runs (3 mains × ~13 torch threads + 24 env workers ≈ 63
+  threads on 24 cores) thrash and throughput **collapses to ~40 sps** — the full sweep would take
+  ~21 h *per seed*. With the pinning below each run gets ~1600 sps (near solo speed even with 3
+  concurrent), and the whole sweep finishes in ~3 h:
+  ```bash
+  export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
+  ```
+  The `scripts/run_*.sh` runners set this themselves; export it manually for any ad-hoc run.
 
 ## 1. Get the code onto the box (and verify it's the FIXED version)
 
@@ -65,6 +74,9 @@ in parallel (3 × 8 envs ≈ 24 threads); seeds go sequentially.
 tmux new -s sweep
 cd <folder that CONTAINS src_continuous_control/>    # the parent dir
 export CUDA_VISIBLE_DEVICES=""
+# REQUIRED: without this, concurrent runs oversubscribe the cores and throughput
+# collapses from ~1600 sps to ~40 sps (see TL;DR).
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 mkdir -p sweeplogs
 
 for S in 0 1 2 3 4; do

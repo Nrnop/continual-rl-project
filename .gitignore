@@ -38,6 +38,12 @@ abl_results/
 abl_runs/
 abl_logs/
 sweeplogs/
+# Ad-hoc driver/monitor scripts written on the compute box: hardcoded to /workspace, partly
+# superseded, and duplicative of scripts/run_*.sh. The one thing that mattered in them (the
+# OMP/MKL thread pinning) is documented in VASTAI_SETUP.md and set by the committed runners.
+run_sweep*.sh
+monitor_*.sh
+*_driver.log
 # NOTE: plots/ is deliberately NOT ignored. It holds source (plot_*.py) as well as the thesis
 # figures, which are a deliverable and small (~2 MB). Ignoring the whole directory silently
 # excluded newly added scripts/figures — git only applies ignore rules to UNtracked files, so
