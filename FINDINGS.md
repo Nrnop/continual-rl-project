@@ -160,11 +160,15 @@ Four rounds, all at 5 seeds and the full 3.07 M horizon unless noted.
 
 ### 5.1 Round 1 — permanent LR and switch-time decay *(inconclusive; two methodological traps found)*
 
-| Variant | Phase-3 result |
+| Variant | Phase-3 result (end-of-phase, per seed) |
 |---|---|
 | baseline | −225 / +1501 (2 seeds) |
 | no-switch-decay | **identical to baseline, bit-for-bit** |
 | unfreeze-perm (`lr_perm` 1e-5 → 1e-3) | +811 / +260 |
+
+*(This round predates the switch to per-phase means as the primary metric; its figures are
+end-of-phase values on a 2-seed, shortened-horizon run, and are reported here only to document the
+two methodological traps below. They are not comparable to the per-phase means used elsewhere.)*
 
 Two traps discovered, both important for future work:
 
@@ -186,13 +190,17 @@ phase** (P1 903 vs 1112, P2 −498 vs 171, P3 535 vs 638); it "won" only a 2-see
 Motivated by the observation that `lr_trans` (3e-4) equalled vanilla's `lr_critic` (3e-4) — meaning
 PT had **no fast timescale at all** relative to the baseline.
 
-| Variant | P3 mean | P4 mean |
-|---|---|---|
-| `lr_trans = 1e-3` | +146 (3/5) | −289 (1/5) |
-| `lr_trans = 3e-3` | +287 (3/5) | −484 (1/5) |
+Per-phase mean return (seeds with a positive mean in brackets):
 
-Marginal improvement at phase 3, but both still collapse at phase 4 — **worse** than the baseline's
-own phase 4. Adaptation *speed* is not the lever.
+| Variant | P1 | P2 | P3 | P4 | P5 |
+|---|---|---|---|---|---|
+| PT baseline | 475 (5/5) | 332 (2/5) | −279 (1/5) | −249 (2/5) | −396 (0/5) |
+| `lr_trans = 1e-3` | 691 (5/5) | 134 (3/5) | **−192** (1/5) | **−434** (0/5) | −238 (0/5) |
+| `lr_trans = 3e-3` | 795 (5/5) | −215 (1/5) | **−54** (2/5) | **−553** (0/5) | −53 (2/5) |
+
+Phase 3 improves over the baseline (−279 → −192 → −54) but **never becomes positive**, and both
+variants are **worse than the baseline at phase 4** (−434 and −553 vs −249). Adaptation *speed* is
+not the lever.
 
 ### 5.3 Round 3 — `decay = 0` (after finding the decay bug)
 
