@@ -68,3 +68,8 @@ graphify-out/
 
 # Keep source configs, README, requirements, scripts, and code tracked.
 # To force-track a specific artifact (e.g. a paper figure): git add -f plots/final.png
+
+# Local working docs: AI-assistant guide and rented-box setup notes. Kept on disk (CLAUDE.md
+# is still loaded by local Claude Code sessions) but not part of the thesis repo.
+CLAUDE.md
+VASTAI_SETUP.md

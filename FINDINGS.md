@@ -459,7 +459,7 @@ still adds drag" observation (§7.1), which does not survive multiple-comparison
 | Per-seed numeric logs (15 CSVs) | `numeric_logs_csv/` |
 | Full-resolution curves | `results/*.pkl` |
 | Ablation outputs | `abl_results/<variant>/`, `abl_logs/` |
-| Run instructions | `VASTAI_SETUP.md`, `CLAUDE.md`, `README.md` |
+| Run instructions | `README.md` |
 
 All runs are seeded and reproducible. The environment is CPU-bound (MuJoCo physics with small
 networks), so a GPU provides no benefit; throughput scales with core count and process-level
