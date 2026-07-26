@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 from .ppo_base import PPOBase
-from ..models.critic import SplitCritic
+from ..models.critic import SplitCritic, SharedTrunkSplitCritic
 from ..utils.buffers import ConsolidationBuffer
 
 
@@ -28,25 +28,39 @@ class PPOPT(PPOBase):
         super().__init__(obs_dim, act_dim, cfg, device)
 
         hidden = list(cfg.get("hidden_sizes", [256, 256]))
-        self.critic = SplitCritic(obs_dim, hidden_sizes=hidden).to(device)
-
         adam_eps = cfg.get("adam_eps", 1e-8)
-
-        # Fast optimizer for the transient head (task-specific)
         lr_trans = cfg.get("lr_trans", cfg["lr_actor"])
-        self.trans_optim = torch.optim.Adam(
-            self.critic.trans.parameters(), lr=lr_trans, eps=adam_eps
-        )
 
-        # Slow optimizer for the permanent head (task-invariant)
-        lr_perm = cfg.get("lr_perm", 3e-5)
-        perm_opt_name = cfg.get("perm_optimizer", "adam").lower()
-        if perm_opt_name == "sgd":
-            self.perm_optim = torch.optim.SGD(self.critic.perm.parameters(), lr=lr_perm)
-        else:
-            self.perm_optim = torch.optim.Adam(
-                self.critic.perm.parameters(), lr=lr_perm, eps=adam_eps
+        # "separate" (default) = two independent MLP trunks, consolidation by regression (lossy).
+        # "shared_trunk"       = one trunk + two linear heads, consolidation by exact weight arithmetic.
+        self.critic_arch = str(cfg.get("critic_arch", "separate")).lower()
+        self.shared_trunk = self.critic_arch == "shared_trunk"
+
+        if self.shared_trunk:
+            self.critic = SharedTrunkSplitCritic(obs_dim, hidden_sizes=hidden).to(device)
+            # The shared trunk is learned together with the fast transient head; the permanent head
+            # receives NO gradients (v_perm is detached in critic_loss) and moves only at
+            # consolidation, via exact weight arithmetic. So lr_perm is unused in this variant.
+            self.trans_optim = torch.optim.Adam(
+                list(self.critic.trunk.parameters()) + list(self.critic.trans.parameters()),
+                lr=lr_trans, eps=adam_eps,
             )
+            self.perm_optim = None
+        else:
+            self.critic = SplitCritic(obs_dim, hidden_sizes=hidden).to(device)
+            # Fast optimizer for the transient head (task-specific)
+            self.trans_optim = torch.optim.Adam(
+                self.critic.trans.parameters(), lr=lr_trans, eps=adam_eps
+            )
+            # Slow optimizer for the permanent head (task-invariant)
+            lr_perm = cfg.get("lr_perm", 3e-5)
+            perm_opt_name = cfg.get("perm_optimizer", "adam").lower()
+            if perm_opt_name == "sgd":
+                self.perm_optim = torch.optim.SGD(self.critic.perm.parameters(), lr=lr_perm)
+            else:
+                self.perm_optim = torch.optim.Adam(
+                    self.critic.perm.parameters(), lr=lr_perm, eps=adam_eps
+                )
 
         # NOTE: PT is critic-only. The actor is the single GaussianActor built by
         # PPOBase.__init__ (lr = lr_actor), identical to vanilla/EWC. We deliberately do NOT
@@ -99,14 +113,16 @@ class PPOPT(PPOBase):
 
     def post_update(self, update_idx):
         """After each PPO update: bank this rollout's states, consolidate every k updates."""
-        # Snapshot visited states with the CURRENT permanent value. theta_P is frozen
-        # between consolidations, so this is old_V_perm at visit time. The rollout
-        # buffer is (n_steps, num_envs, obs_dim); flatten to a batch of states.
-        states = self.buffer.obs.reshape(-1, self.obs_dim)
-        with torch.no_grad():
-            s_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
-            old_v_perm, _ = self.critic(s_t)
-        self.consolidation_buffer.add_batch(states, old_v_perm.cpu().numpy())
+        # The shared-trunk variant consolidates by weight arithmetic, so it needs no state buffer.
+        if not self.shared_trunk:
+            # Snapshot visited states with the CURRENT permanent value. theta_P is frozen
+            # between consolidations, so this is old_V_perm at visit time. The rollout
+            # buffer is (n_steps, num_envs, obs_dim); flatten to a batch of states.
+            states = self.buffer.obs.reshape(-1, self.obs_dim)
+            with torch.no_grad():
+                s_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+                old_v_perm, _ = self.critic(s_t)
+            self.consolidation_buffer.add_batch(states, old_v_perm.cpu().numpy())
 
         self._updates_since_consolidation += 1
         if self._updates_since_consolidation >= self.k:
@@ -122,6 +138,11 @@ class PPOPT(PPOBase):
         (The earlier target old_P + T with a >0 decay double-counted the transient and inflated V
         by decay*T every cycle.)  decay=0 => hard reset, P absorbs all of T.
         """
+        # Shared-trunk variant: exact, O(1), no regression and no value drift.
+        if self.shared_trunk:
+            self.critic.consolidate(self.transient_decay)
+            return
+
         if len(self.consolidation_buffer) == 0:
             return
         keep = 1.0 - self.transient_decay
@@ -140,30 +161,47 @@ class PPOPT(PPOBase):
         self.consolidation_buffer.clear()
 
     def on_task_switch(self, step):
-        """At a task boundary, consolidate (absorb T into P) then let T re-adapt to the new task.
+        """Task-boundary handling, selectable via cfg['on_switch']:
 
-        Consolidating BEFORE decaying locks the just-learned task value into the permanent
-        baseline, so the transient can be decayed without the acting value V = V_perm + V_trans
-        lurching (that boundary lurch is exactly what BoundaryReturnTracker measures). If
-        consolidate_on_switch is off, fall back to a bare value-preserving-free transient decay.
+          - "consolidate" (default): absorb the transient into the permanent (value-preserving),
+            then decay the transient — locks the just-learned task value into the permanent baseline.
+          - "decay": only decay the transient (no consolidation).
+          - "none": do nothing — let the fast transient carry through the boundary and re-adapt on
+            its own (periodic k-step consolidation is unaffected).
+
+        Back-compat: if `on_switch` is unset, fall back to `consolidate_on_switch`
+        (True -> "consolidate", False -> "decay").
         """
-        if self.cfg.get("consolidate_on_switch", True):
+        mode = self.cfg.get("on_switch")
+        if mode is None:
+            mode = "consolidate" if self.cfg.get("consolidate_on_switch", True) else "decay"
+        if mode == "consolidate":
             self._consolidate()                       # absorbs T into P, then decays T
             self._updates_since_consolidation = 0
-        elif self.transient_decay < 1.0:
-            self.critic.decay_transient(self.transient_decay)
+        elif mode == "decay":
+            if self.transient_decay < 1.0:
+                self.critic.decay_transient(self.transient_decay)
+        # mode == "none": intentionally do nothing
 
     # ------------------------------------------------------------------
     # Critic optimizer plumbing
     # ------------------------------------------------------------------
     def _zero_critic_grads(self):
         self.trans_optim.zero_grad()
-        self.perm_optim.zero_grad()
+        if self.perm_optim is not None:
+            self.perm_optim.zero_grad()
 
     def _step_critic_optims(self):
         self.trans_optim.step()
-        self.perm_optim.step()
+        if self.perm_optim is not None:
+            self.perm_optim.step()
 
     def _critic_parameters(self):
-        """All critic params (for grad clipping during the main PPO update)."""
+        """Critic params that receive gradients (for grad clipping in the main PPO update).
+
+        Shared-trunk: trunk + transient head (the permanent head is updated only by consolidation).
+        Separate:     both trunks.
+        """
+        if self.shared_trunk:
+            return list(self.critic.trunk.parameters()) + list(self.critic.trans.parameters())
         return list(self.critic.trans.parameters()) + list(self.critic.perm.parameters())

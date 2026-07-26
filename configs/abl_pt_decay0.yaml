@@ -1,0 +1,56 @@
+# PT ablation round 3 — DECAY=0 (the only mathematically value-preserving setting).
+#
+# BUG FOUND: SplitCritic.decay_transient(d) scales every PARAMETER of the transient MLP by d.
+# For a nonlinear net (tanh + biases) that does NOT scale the OUTPUT V_trans by d. Measured error
+# at d=0.5 is ~33% of the value magnitude. So the consolidation identity
+#     V_new = (old_P + (1-d)*T) + d*T = V_old
+# silently breaks for any 0 < d < 1: every consolidation injects an uncontrolled perturbation into
+# the acting value — ~150 times per run (1500 updates / k=10).
+#
+# At d = 0 the identity is EXACT: target is old_P + 1.0*V_trans, then theta_T -> 0 exactly, so
+# V = V_perm + V_trans is unchanged. This isolates "is the repeated decay shock what degrades PT?"
+#
+# Consistent with the evidence: critic_loss stays LOW (the transient re-fits after each shock, so the
+# critic looks healthy) while returns crater, and damage compounds from phase 3 on as the LR anneals.
+#
+# FULL horizon (3.07M / 5 phases, num_updates=1500) => directly comparable to the main sweep.
+#   python -m src_continuous_control.train --agent pt --config abl_pt_decay0 --seed 0
+agent: "pt"
+
+# --- validated PPO base (identical to continual_fast) ---
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: true
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# --- PT critic knobs ---
+lr_trans: 0.0003            # baseline transient LR (isolates the decay fix alone)
+lr_perm: 0.00001
+perm_optimizer: "sgd"
+k: 10
+decay: 0.0                  # <== ABLATION VARIABLE (exact hard reset; was 0.5 = broken)
+consolidation_epochs: 1
+consolidation_buffer_size: 20480
+on_switch: "consolidate"
+
+# --- full continual experiment: 5 phases / 4 switches (+,-,+,-,+) ---
+tasks: [1, -1]
+switch: 614400
+total_steps: 3072000

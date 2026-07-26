@@ -34,7 +34,19 @@ runs/
 runs_singletask/
 results/
 results_singletask/
-plots/
+abl_results/
+abl_runs/
+abl_logs/
+sweeplogs/
+# NOTE: plots/ is deliberately NOT ignored. It holds source (plot_*.py) as well as the thesis
+# figures, which are a deliverable and small (~2 MB). Ignoring the whole directory silently
+# excluded newly added scripts/figures — git only applies ignore rules to UNtracked files, so
+# already-tracked ones kept working and hid the problem.
+# Superseded figure sets generated BEFORE the PPO/PT corrections (see FINDINGS.md §3): kept on
+# disk for reference but not committed, so stale numbers can't be mistaken for results.
+plots/figures_multitask_all5seeds/
+plots/figures_singletask/
+plots/vanilla_before_after.png
 wandb/
 videos/
 *.pt

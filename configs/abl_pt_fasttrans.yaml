@@ -1,0 +1,50 @@
+# PT ablation — FAST-TRANSIENT (lr_trans 3e-4 -> 1e-3).
+#
+# Rationale: PT is critic-only, so its ONLY possible edge over vanilla is producing better
+# advantages FASTER right after a task switch. But the sweep ran lr_trans = 3e-4 = vanilla's
+# lr_critic — i.e. PT's "fast" head adapted no faster than the baseline critic, so PT paid all the
+# costs of the decomposition (stale permanent baseline, periodic decay) and got none of the benefit.
+# This variant gives the transient a genuine fast timescale relative to vanilla.
+#
+# FULL horizon (3.07M / 5 phases) so the LR-anneal schedule matches the main sweep exactly and
+# results are directly comparable to the existing PT/vanilla/EWC runs.
+#   python -m src_continuous_control.train --agent pt --config abl_pt_fasttrans --seed 0
+agent: "pt"
+
+# --- validated PPO base (identical to continual_fast) ---
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: true
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# --- PT critic knobs ---
+lr_trans: 0.001             # <== ABLATION VARIABLE (3.3x vanilla's critic LR; was 3e-4)
+lr_perm: 0.00001
+perm_optimizer: "sgd"
+k: 10
+decay: 0.5
+consolidation_epochs: 1
+consolidation_buffer_size: 20480
+on_switch: "consolidate"
+
+# --- full continual experiment: 5 phases / 4 switches (+,-,+,-,+) ---
+tasks: [1, -1]
+switch: 614400
+total_steps: 3072000

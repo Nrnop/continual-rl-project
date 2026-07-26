@@ -1,0 +1,60 @@
+# PT — SHARED-TRUNK variant: the fix for the measured root cause.
+#
+# THE BUG (measured): with two separate MLP trunks, consolidation must make V_perm *learn*
+# old_V_perm + V_trans by regression — i.e. represent the SUM OF TWO MLPs with a single MLP. That
+# class is not closed under addition, so the operation is lossy by construction: ~16-35% value error
+# per consolidation even assuming a perfectly converged regression, and ~98% at the production
+# settings (lr_perm=1e-5 SGD transfers only 0.05% while the decay wipes 100% of the transient).
+# Repeated every k=10 updates (~150x per run) this destroys the value function, corrupting the values
+# GAE uses. critic_loss cannot see it, because it is measured after the fast transient has re-fitted.
+#
+# THE FIX: one shared feature trunk phi with two LINEAR heads. Then
+#     V = w_P·phi(s) + w_T·phi(s) = (w_P + w_T)·phi(s)
+# so consolidation is exact weight arithmetic (w_P += (1-decay)·w_T ; w_T *= decay) with ZERO value
+# drift for any decay, no regression, no consolidation buffer, and lr_perm is not used at all.
+# Verified numerically: value error per consolidation 16.3% -> 0.0000% at decay=0.5.
+# This is the shared-trunk two-head variant the reference implementation uses for minigrid; our
+# analysis shows it is the correct choice under deep function approximation.
+#
+# NOTE: this is the first FAIR test of the PT mechanism — every earlier run exercised a consolidation
+# operator that was destroying its own value function.
+#
+# FULL horizon (3.07M / 5 phases, num_updates=1500) => directly comparable to the main sweep.
+#   python -m src_continuous_control.train --agent pt --config abl_pt_sharedtrunk --seed 0
+agent: "pt"
+
+# --- validated PPO base (identical to continual_fast) ---
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: true
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# --- PT critic ---
+critic_arch: "shared_trunk"  # <== THE FIX (default "separate" = the old two-MLP variant)
+lr_trans: 0.0003             # trains the shared trunk + transient head
+k: 10                        # consolidate every k updates (now exact, so this is cheap and safe)
+decay: 0.5                   # exact for ANY decay with linear heads; 0.5 keeps a soft transient
+on_switch: "consolidate"     # absorb the just-learned task value at each boundary
+# lr_perm / perm_optimizer / consolidation_* are unused in this variant (no regression involved).
+
+# --- full continual experiment: 5 phases / 4 switches (+,-,+,-,+) ---
+tasks: [1, -1]
+switch: 614400
+total_steps: 3072000

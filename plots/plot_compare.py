@@ -441,6 +441,8 @@ def main():
             fig6.savefig(path6, dpi=200, bbox_inches="tight")
             print(f"[plot] Saved {path6}")
         plt.close(fig6)
+    else:
+        plt.close(fig6)
         print("[plot] Notice: No velocity curves found. "
               "Skipping Figure 6 (velocity_curves).")
 
