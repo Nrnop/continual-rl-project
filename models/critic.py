@@ -6,10 +6,13 @@ Two PT variants, both present in the reference implementation:
 
 - `SplitCritic` — TWO SEPARATE trunks, mirroring P_Net / T_Net in the paper's
   control/minatar_crl/PT_DQN_half.py. Consolidation must make V_perm *learn* old_V_perm + V_trans by
-  regression, i.e. represent the SUM OF TWO MLPs with a single MLP. That function class is not closed
-  under addition, so the operation is lossy by construction (measured ~16-35% value error per
-  consolidation even with a perfectly converged regression, and ~98% at production settings where the
-  slow SGD barely moves). Repeated ~150x per run it destroys the value function.
+  regression. At the shipped settings (lr_perm=1e-5, SGD, 1 epoch = 320 steps) that transfers only
+  ~0.05% while the decay deletes 100% of the transient, so ~98% of the acting value is destroyed —
+  repeated ~150x per run, this wrecks the value function. NOTE: the target IS fittable given enough
+  capacity and training (Adam, [256,256], 200 epochs reaches ~3% error on the consolidation batch);
+  an earlier comment here wrongly called it unrepresentable. What does not improve is generalisation
+  — held-out error floors near 38-40% — and the states that matter are the NEW ones visited in the
+  next rollout. See FINDINGS.md 6.3.
 
 - `SharedTrunkSplitCritic` — ONE shared feature trunk with two LINEAR heads (the shared-trunk
   two-head variant the reference uses for minigrid). Because

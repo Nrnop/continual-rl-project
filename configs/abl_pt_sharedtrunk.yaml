@@ -1,12 +1,12 @@
 # PT — SHARED-TRUNK variant: the fix for the measured root cause.
 #
 # THE BUG (measured): with two separate MLP trunks, consolidation must make V_perm *learn*
-# old_V_perm + V_trans by regression — i.e. represent the SUM OF TWO MLPs with a single MLP. That
-# class is not closed under addition, so the operation is lossy by construction: ~16-35% value error
-# per consolidation even assuming a perfectly converged regression, and ~98% at the production
-# settings (lr_perm=1e-5 SGD transfers only 0.05% while the decay wipes 100% of the transient).
-# Repeated every k=10 updates (~150x per run) this destroys the value function, corrupting the values
-# GAE uses. critic_loss cannot see it, because it is measured after the fast transient has re-fitted.
+# old_V_perm + V_trans by regression. At the shipped settings (lr_perm=1e-5, SGD, 1 epoch = 320
+# steps) it transfers only 0.05% while the decay wipes 100% of the transient, so ~98% of the acting
+# value is destroyed every k=10 updates (~150x per run), corrupting the values GAE uses.
+# critic_loss cannot see it, because it is measured after the fast transient has re-fitted.
+# (The target itself IS fittable given enough capacity/training — see FINDINGS.md 6.3; what does not
+# improve is generalisation to the NEW states visited after consolidation.)
 #
 # THE FIX: one shared feature trunk phi with two LINEAR heads. Then
 #     V = w_P·phi(s) + w_T·phi(s) = (w_P + w_T)·phi(s)

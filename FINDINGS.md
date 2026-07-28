@@ -17,12 +17,12 @@ Five results:
 
 1. **PT fails in this setting** — it collapses to a do-nothing standstill policy from the third task
    phase onward (phase-3 mean return **−279** vs vanilla **+243**).
-2. **We identified the exact cause**, and it is structural rather than a tuning problem: the
-   consolidation operator destroys ~98 % of the value function every *k* updates (~150× per run).
-   The permanent critic must *learn* `old_V_perm + V_trans` by regression — i.e. represent the **sum
-   of two neural networks with a single network** — and that function class is not closed under
-   addition. In the original paper's tabular/linear setting that sum *is* exactly representable,
-   which is precisely why PT works there and not here.
+2. **We identified the exact cause:** the consolidation operator destroys ~98 % of the value
+   function every *k* updates (~150× per run). At the shipped settings the permanent critic absorbs
+   **0.05 %** of the transient while the decay deletes **100 %** of it. The transfer is a regression
+   — the permanent critic must *learn* `old_V_perm + V_trans` — and at `lr_perm = 1e-5` with one
+   epoch (320 SGD steps) it barely moves, while the deletion happens regardless. See §6.3 for what
+   is and is not a fundamental limit here.
 3. **We proved causation**: disabling consolidation entirely reverses the collapse
    (phase-3 mean **−279 → +291**).
 4. **We built and validated a fix** — a shared trunk with linear heads makes consolidation
@@ -275,23 +275,56 @@ while the damage is happening. This is why the failure looked mysterious, and it
 earlier hypothesis failed: `lr_perm = 1e-3` still transfers only ~5 %; a faster transient merely
 re-fits sooner; and `decay = 0` vs `0.5` is irrelevant when the value dies either way.
 
-### 6.3 Why it is structural, not a tuning problem
+### 6.3 How far the regression can be pushed — and what actually limits it
 
-Consolidation asks a single MLP to represent `old_V_perm + V_trans` — **the sum of two MLPs**. That
-function class is not closed under addition, so the target is not exactly representable and the
-regression is lossy *by construction*. Increasing effort does not remove it:
+An earlier draft of this report claimed the consolidation target was **not representable** — that a
+single MLP cannot express `old_V_perm + V_trans`, the sum of two MLPs, because the function class is
+not closed under addition. **That claim was wrong, and this section corrects it.** The objection that
+prompted the check was straightforward: on a *finite* batch a sufficiently large network should
+simply overfit the target, so any observed error may be an optimisation or capacity artefact rather
+than a representational limit. That is what the measurement shows.
 
-- 50 consolidation epochs (16 000 gradient steps): error floors at **~33 %**
-- widening the permanent network: **35.2 %** `[64,64]` → **22.3 %** `[256,256]` → **17.2 %** `[512,512]`
-  — reducible, but never zero, with sharply diminishing returns
+Setup: the true production consolidation problem — 20 480 buffered states, target `old_V_perm(s) +
+V_trans(s)` with both components `[64,64]` MLPs — fitted with Adam (lr 1e-3, batch 256) rather than
+the shipped SGD at 1e-5, and evaluated both on the fitted batch and on held-out states.
 
-**This also explains why the original method works.** In the paper's tabular/linear setting, the sum
-of two linear functions *is* linear — exactly representable — so consolidation is exact there. The
-operation only becomes lossy under deep function approximation.
+| permanent net | params | epochs | error on fitted batch | error on held-out states |
+|---|---|---|---|---|
+| `[64,64]` (production) | 5 377 | 50 | 35.6 % | 39.2 % |
+| `[64,64]` | 5 377 | 200 | 29.3 % | 38.9 % |
+| `[256,256]` | 70 657 | 50 | 23.8 % | 38.4 % |
+| **`[256,256]`** | 70 657 | 200 | **3.2 %** | 44.2 % |
+| `[512,512]` | 267 265 | 200 | 4.3 % | 42.5 % |
 
-This is consistent with the direction taken by Anand et al. (2024, ICLR under review, ref. [4] of the
-proposal), who extend PT with *separate feature encoders and non-parametric transient memory* —
-i.e. the original authors also moved away from the naive parametric transient.
+**Three conclusions:**
+
+1. **The target is fittable.** With enough capacity and training the batch error reaches ~3 %. There
+   is no representational barrier; the earlier "sum of two MLPs" argument does not hold.
+2. **The shipped configuration is nowhere near that.** `lr_perm = 1e-5`, SGD, one epoch (320
+   gradient steps) transfers **0.05 %**. The production failure is overwhelmingly a matter of the
+   consolidation regression never being trained — while the decay deletes the transient regardless.
+   This alone accounts for the collapse, and it is the finding the ablations confirm (§5.4).
+3. **What does not improve is generalisation.** Held-out error floors at **≈ 38–40 %** across every
+   capacity and budget tried, and past a point more fitting makes it *worse* (`[256,256]`: batch
+   23.8 % → 3.2 % while held-out 38.4 % → 44.2 %). This is the operationally relevant quantity:
+   consolidation fits the states of the last *k* rollouts, but the resulting value function is then
+   used to bootstrap on the **new** states of the next rollout.
+
+**Caveat.** The probe states here are iid Gaussian in 17 dimensions, which is a harder
+generalisation problem than genuine on-policy states, which concentrate on a low-dimensional
+manifold. The held-out floor should therefore be read as indicative of a generalisation gap, not as
+a calibrated estimate of it. Measuring the same quantity on real rollout states is a worthwhile
+follow-up (§9g).
+
+**What this means for the mechanism.** Consolidation-by-regression is not impossible, but it is
+expensive (thousands of gradient steps every *k* updates to approach a good fit), it did not happen
+at all in the shipped configuration, and even when performed well it leaves a substantial error on
+the states that matter next. The shared-trunk formulation in §7 sidesteps the entire question: the
+transfer becomes exact weight arithmetic, with no regression, no training budget and no
+generalisation gap — which is why it is the right construction regardless of how this section
+resolves. Notably, Anand et al. (2024, ICLR under review, ref. [4] of the proposal) also move away
+from a naive parametric transient, towards separate feature encoders and non-parametric transient
+memory.
 
 ---
 
@@ -447,6 +480,14 @@ Low expected value now that consolidation is known to be inert overall.
 
 **f) Explicitly not recommended.** Further PT hyper-parameter tuning; and the "exact consolidation
 still adds drag" observation (§7.1), which does not survive multiple-comparison scrutiny at n = 5.
+
+**g) Open question from §6.3 (cheap, no training required).** The held-out consolidation error was
+measured on iid Gaussian probe states, which is a harder generalisation problem than genuine
+on-policy states. Repeating the same measurement on **real rollout states** — fit the consolidation
+regression on one rollout's buffer, evaluate on the next rollout's states — would put a calibrated
+number on the generalisation gap. It needs only a saved checkpoint plus two rollouts, not a training
+run. It would not change any conclusion (the shared-trunk formulation removes the regression
+entirely), but it would tighten the mechanistic account.
 
 ---
 
