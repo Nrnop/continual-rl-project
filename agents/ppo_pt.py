@@ -84,6 +84,9 @@ class PPOPT(PPOBase):
                               self.k * cfg["n_steps"] * self.num_envs))
         self.consolidation_buffer = ConsolidationBuffer(buf_cap)
         self._updates_since_consolidation = 0
+        # % change in the acting value across the most recent consolidation (None until the first
+        # one runs). 0 means the transfer was value-preserving; large values mean it was not.
+        self.last_consolidation_error = None
 
     # ------------------------------------------------------------------
     # Hook implementations
@@ -141,10 +144,24 @@ class PPOPT(PPOBase):
         # Shared-trunk variant: exact, O(1), no regression and no value drift.
         if self.shared_trunk:
             self.critic.consolidate(self.transient_decay)
+            self.last_consolidation_error = 0.0
             return
 
         if len(self.consolidation_buffer) == 0:
             return
+
+        # Measure how much the acting value V = V_perm + V_trans actually moves across this
+        # consolidation, on the very states being consolidated. Ideally 0 (the transfer is meant to
+        # be value-preserving); in practice it is bounded by how well the regression below fits.
+        # Reported as a fraction of |V| so it is comparable across runs. This is the in-situ version
+        # of the offline measurement in FINDINGS.md 6.3.
+        probe_s, _ = self.consolidation_buffer.as_arrays()
+        probe_t = torch.as_tensor(probe_s[: min(4096, len(probe_s))],
+                                  dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            _p0, _t0 = self.critic(probe_t)
+            v_before = _p0 + _t0
+
         keep = 1.0 - self.transient_decay
         for _ in range(self.consolidation_epochs):
             for s_mb, old_vp_mb in self.consolidation_buffer.iter_minibatches(
@@ -158,6 +175,15 @@ class PPOPT(PPOBase):
                 self.perm_optim.step()
         # The transient head has been absorbed into the permanent; decay it back down.
         self.critic.decay_transient(self.transient_decay)
+
+        # How much did the acting value actually move? (0 = the transfer was value-preserving)
+        with torch.no_grad():
+            _p1, _t1 = self.critic(probe_t)
+            v_after = _p1 + _t1
+        denom = v_before.abs().mean().clamp_min(1e-8)
+        self.last_consolidation_error = float(
+            (v_after - v_before).abs().mean() / denom * 100.0)
+
         self.consolidation_buffer.clear()
 
     def on_task_switch(self, step):
