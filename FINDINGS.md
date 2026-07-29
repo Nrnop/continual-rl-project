@@ -395,6 +395,8 @@ Round 7 ran the 2×2 — decay (0.0 vs 0.5) × resetting the transient's optimis
 | **no reset** | 369±2 / −164±73 / −69±71 / −369±37 / −299±4 | 485±10 / −567±94 / 243±52 / −619±171 / 40±62 |
 | **reset optimiser state** | 34±44 / −504±64 / −232±130 / −632±92 / −204±125 | 446±13 / −161±34 / 321±92 / −827±168 / 196±33 |
 
+Plotted in `plots/figures/r7_grid.png`, against the vanilla reference none of the cells reaches.
+
 **Both hypotheses are disconfirmed, and one runs backwards.**
 
 1. **The stale-momentum mechanism is wrong.** It predicts the reset should help *most* at
@@ -646,7 +648,8 @@ of the task-switching tables):**
 
 1. **EWC's advantage is entirely boundary-dependent — confirmed exactly.** `ewc_penalty` is exactly
    0.0 at all 1 500 logged points on every seed, and with matched seeds the training trajectories
-   are **byte-identical** to vanilla's. Under boundary-free drift EWC does not merely fail to help:
+   are **byte-identical** to vanilla's — re-verified directly from the saved curves: 5/5 seeds
+   identical, max \|difference\| exactly 0. Under boundary-free drift EWC does not merely fail to help:
    it *mechanically is* vanilla. This is the study's cleanest positive result, and it lands
    precisely on the gap the proposal identifies — that the continual-RL literature assumes discrete
    task boundaries.
@@ -710,7 +713,9 @@ Both settings, 3 seeds each, return by 614 400-step segment (mean ± SEM):
 | PT | 576 ± 28 | 1437 ± 95 | 1774 ± 303 | 2040 ± 296 | 2192 ± 315 |
 | **PT − vanilla** | **−174** | **−1133** | **−1345** | **−1336** | **−1409** |
 
-**Vanilla beats PT outside the combined SEM in 9 of the 10 segments.** The prediction is not merely
+`plots/figures/drift_comparison.png` shows all three regimes side by side, annotating each gap
+that exceeds the combined SEM. **Vanilla beats PT outside the combined SEM in 9 of the 10
+segments.** The prediction is not merely
 unconfirmed — it is **reversed**. And the direction is systematic: under *slow* drift the two were
 tied (all gaps inside noise); adding real fast-timescale content turns that tie into a clear PT
 deficit, and the deficit is *larger* in `drift_fast` than in `drift_twoscale`. Giving the
