@@ -13,7 +13,7 @@ prediction to a **PPO actor–critic on MuJoCo HalfCheetah** under continual non
 benchmarked it against a vanilla PPO baseline and an Online-EWC baseline (3 agents × 5 seeds ×
 3.07 M steps).
 
-Five results:
+Seven results:
 
 1. **PT fails in this setting** — it collapses to a do-nothing standstill policy from the third task
    phase onward (phase-3 mean return **−279** vs vanilla **+243**).
@@ -41,16 +41,30 @@ Five results:
    that decaying the transient's *weights* leaves the optimiser's momentum untouched, so the
    just-consolidated state is undone on the very next update (§5.6, under test).
 
-**The central finding.** Value decomposition of the critic confers **no benefit** over a single
-critic in policy-gradient continual control — and this conclusion is now established in its strongest
-form, because we can demonstrate that the mechanism was functioning *correctly* when it failed to
-help, rather than merely reporting that an implementation underperformed. Regularisation-based
-continual learning (EWC) is substantially superior in this setting.
+7. **Under smooth Lipschitz drift — the proposal's own setting — the picture changes entirely**
+   (§8). With a fixed reward and continuously drifting physics, **no agent collapses**: all three
+   climb to ~1300–1900 and are statistically tied. And **EWC becomes byte-identical to vanilla**,
+   because with no task boundary its Fisher matrix is never computed. Its advantage is therefore
+   *entirely* boundary-dependent.
 
-**Note on scope.** The proposal specifies smooth, Lipschitz-continuous *dynamics* drift. The
-implemented environment is **discrete directional task-switching** (the forward-velocity reward term
-flips sign every 614 400 steps). This mismatch is discussed in §9 and must be resolved — either by
-implementing the drift wrapper or by adjusting the thesis framing.
+**The central finding.** Value decomposition of the critic confers **no benefit** over a single
+critic in policy-gradient continual control — established in its strongest form, because the
+mechanism can be shown to be functioning *correctly* when it fails to help, rather than merely
+reporting that an implementation underperformed. This holds under both discrete task switching and
+smooth dynamics drift.
+
+**The positive finding.** Regularisation-based continual learning (EWC) is substantially superior —
+**but only where discrete task boundaries exist.** Under boundary-free drift it has no mechanism
+left and reduces exactly to the baseline. Taken together with the observation that *nothing*
+collapses under smooth drift, the study's sharpest conclusion is about the **benchmark rather than
+the method**: continual-RL machinery pays for itself only when an abrupt change destroys prior
+knowledge. Smooth dynamics drift of this magnitude does not, so there is nothing for it to prevent.
+
+**Note on scope.** The proposal specifies smooth, Lipschitz-continuous *dynamics* drift; the main
+experiments use **discrete directional task-switching** (the forward-velocity reward term flips sign
+every 614 400 steps). Both are now implemented and reported — the task-switching study in §4–§7 and
+the drift study in §8 — so the thesis covers the proposed setting as well as the one that turned out
+to be the discriminating one.
 
 ---
 
@@ -338,7 +352,7 @@ same 20 480-state buffer, so both halves are drawn from the identical recent on-
 It therefore establishes that the permanent net **interpolates within its own recent state
 distribution** rather than memorising it — but it does *not* test extrapolation to the states of the
 **next** rollout, which are temporally later and, right after a switch, drawn from a shifted
-distribution. That stricter question remains open (§9h).
+distribution. That stricter question remains open (§10h).
 
 **What this leaves.** Consolidation demonstrably works: the transfer is near-exact, on fitted and
 unseen states alike, throughout training — and PT collapses anyway. The failure is therefore *not*
@@ -439,7 +453,7 @@ the shipped SGD at 1e-5, and evaluated both on the fitted batch and on held-out 
 generalisation problem than genuine on-policy states, which concentrate on a low-dimensional
 manifold. The held-out floor should therefore be read as indicative of a generalisation gap, not as
 a calibrated estimate of it. Measuring the same quantity on real rollout states is a worthwhile
-follow-up (§9g).
+follow-up (§10g).
 
 **What this means for the mechanism.** Consolidation-by-regression is not impossible, but it is
 expensive (thousands of gradient steps every *k* updates to approach a good fit), it did not happen
@@ -547,7 +561,64 @@ function *is* the policy, so improving it necessarily improves behaviour; that l
 
 ---
 
-## 8. Status against the proposal's deliverables
+## 8. The smooth-drift experiment (the proposal's setting)
+
+All results above use `DirectionalHalfCheetah`, where the **reward** flips sign at discrete task
+boundaries. The proposal specifies the opposite: a **fixed reward** with the **physics** drifting
+smoothly and no boundaries at all. `LipschitzDriftHalfCheetah` implements it — joint damping and
+ground friction rescaled every step by a sinusoid (amplitude 0.5, period 1 228 800 steps ⇒ 2.5
+cycles over the run), measured Lipschitz bound 2.557 × 10⁻⁶ per env step. Verified in the logs: the
+multiplier spans exactly [0.5, 1.5], crossing 1.0 at every half-period.
+
+This was run because it is the one setting where a **positive** result for PT was still plausible:
+
+> **EWC computes its Fisher information at a task boundary.** With no boundaries, `on_task_switch`
+> never fires, no Fisher accumulates, and EWC has no mechanism left. PT's consolidation runs on a
+> **timer** and is unaffected.
+
+**Return by 614 400-step segment (mean ± SEM, 5 seeds, segments chosen to line up with the phases
+of the task-switching tables):**
+
+| Agent | Seg 1 | Seg 2 | Seg 3 | Seg 4 | Seg 5 |
+|---|---|---|---|---|---|
+| vanilla | 569 ± 28 | 1631 ± 34 | 1320 ± 51 | 1772 ± 58 | 1655 ± 169 |
+| EWC | *byte-identical to vanilla* | | | | |
+| PT (shared trunk) | 546 ± 34 | 1564 ± 78 | 1300 ± 109 | 1870 ± 80 | 1808 ± 272 |
+
+**Three findings.**
+
+1. **EWC's advantage is entirely boundary-dependent — confirmed exactly.** `ewc_penalty` is exactly
+   0.0 at all 1 500 logged points on every seed, and with matched seeds the training trajectories
+   are **byte-identical** to vanilla's. Under boundary-free drift EWC does not merely fail to help:
+   it *mechanically is* vanilla. This is the study's cleanest positive result, and it lands
+   precisely on the gap the proposal identifies — that the continual-RL literature assumes discrete
+   task boundaries.
+2. **PT does not beat vanilla here either.** Every segment gap is well inside the combined SEM (the
+   largest, +153 in segment 5, against ~317). It does not collapse either — this config uses the
+   shared-trunk critic with `decay = 0.5`, the combination §5.5 identified as safe — so the run is
+   consistent with, and further confirms, the earlier finding that a well-behaved PT tracks vanilla
+   rather than beating it.
+3. **Nobody collapses under smooth drift.** All three agents climb from ~550 to ~1300–1900 and
+   simply track the drift cycle (segment 3 dips near the multiplier's 0.5 trough — harder physics,
+   lower return, identically for every agent). Compare this with the directional task, where PT
+   collapses to negative return and even vanilla only reaches ~743/468/243/375/−34.
+
+**The last point reframes the whole study.** Smooth dynamics drift of this magnitude is simply *not
+hard* for plain PPO: there is no catastrophic forgetting for a continual-learning method to prevent,
+so none of the machinery has anything to do. The difficulty in the directional experiment comes from
+the **abrupt inversion of the reward**, not from non-stationarity as such. A continual-RL method can
+only pay for itself where a discrete boundary destroys prior knowledge — and that is exactly the
+regime in which EWC helps and PT does not.
+
+**Limitation.** The drift magnitude (amplitude 0.5) was chosen to be smooth and clearly
+Lipschitz-bounded, and it turned out to be gentle enough that no method differentiates. A harsher
+schedule — larger amplitude, or drift that moves the optimal policy further — might separate the
+agents. The negative result here is therefore about *this* difficulty setting, not about smooth
+drift in general (§10i).
+
+---
+
+## 9. Status against the proposal's deliverables
 
 | Deliverable | Status |
 |---|---|
@@ -565,7 +636,7 @@ plasticity."* The present work exceeds that bar: it delivers not merely a null r
 
 ---
 
-## 9. Open issues and next steps
+## 10. Open issues and next steps
 
 **The PT investigation is closed.** Four ablation rounds plus a validated fix have converged on a
 consistent answer, and further hyper-parameter search would amount to fishing for a favourable seed
@@ -603,6 +674,12 @@ end-of-phase values. Any future fine-grained comparison should use 10 seeds.
 (see §5.1); doing so requires `k = 7` so that consolidation does not coincide with the boundary.
 Low expected value now that consolidation is known to be inert overall.
 
+**i) The drift difficulty setting (§8).** Amplitude 0.5 proved gentle enough that no method
+differentiates — plain PPO handles it without forgetting. A harsher schedule (larger amplitude, or a
+drift that moves the optimal policy further) is the one knob that might separate the agents, and
+would test whether the "nothing collapses under smooth drift" conclusion is general or specific to
+this magnitude.
+
 **f) Explicitly not recommended.** Further PT hyper-parameter tuning; and the "exact consolidation
 still adds drag" observation (§7.1), which does not survive multiple-comparison scrutiny at n = 5.
 
@@ -616,7 +693,7 @@ entirely), but it would tighten the mechanistic account.
 
 ---
 
-## 10. Reproducibility
+## 11. Reproducibility
 
 | Item | Location |
 |---|---|
