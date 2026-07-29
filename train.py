@@ -233,17 +233,24 @@ def _drift_multiplier(cfg, t):
     amp = float(cfg.get("drift_amplitude", 0.5))
     period = max(int(cfg.get("drift_period", 1228800)), 1)
     if str(cfg.get("drift_schedule", "sin")).lower() == "sin":
-        return 1.0 + amp * float(np.sin(2.0 * np.pi * t / period + float(cfg.get("drift_phase", 0.0))))
-    return 1.0 + amp * (t / period)
+        m = 1.0 + amp * float(np.sin(2.0 * np.pi * t / period + float(cfg.get("drift_phase", 0.0))))
+    else:
+        m = 1.0 + amp * (t / period)
+    amp2 = float(cfg.get("drift_amplitude2", 0.0))
+    if amp2:
+        p2 = max(int(cfg.get("drift_period2", 30720)), 1)
+        m += amp2 * float(np.sin(2.0 * np.pi * t / p2 + float(cfg.get("drift_phase2", 0.0))))
+    return m
 
 
 def _drift_lipschitz(cfg):
     """Max |change in the multiplier| per env step: the eps of ||P_{t+1} - P_t|| <= eps."""
     amp = abs(float(cfg.get("drift_amplitude", 0.5)))
     period = max(int(cfg.get("drift_period", 1228800)), 1)
-    if str(cfg.get("drift_schedule", "sin")).lower() == "sin":
-        return amp * 2.0 * np.pi / period
-    return amp / period
+    slow = amp * 2.0 * np.pi / period if str(cfg.get("drift_schedule", "sin")).lower() == "sin"         else amp / period
+    amp2 = abs(float(cfg.get("drift_amplitude2", 0.0)))
+    fast = amp2 * 2.0 * np.pi / max(int(cfg.get("drift_period2", 30720)), 1)
+    return slow + fast
 
 
 def _sync_drift_clock(eval_env, t):
@@ -314,6 +321,9 @@ def main():
         period=cfg.get("drift_period", 1228800),
         schedule=cfg.get("drift_schedule", "sin"),
         phase=cfg.get("drift_phase", 0.0),
+        amplitude2=cfg.get("drift_amplitude2", 0.0),
+        period2=cfg.get("drift_period2", 30720),
+        phase2=cfg.get("drift_phase2", 0.0),
     )
     if drift_mode:
         env = make_drift_vector_env(

@@ -1,0 +1,70 @@
+# DRIFT SWEEP — TWO-TIMESCALE drift: a slow trend PLUS a fast fluctuation.
+#
+# THIS IS THE REGIME PT IS ACTUALLY DESIGNED FOR, and the sharpest test in the study. The proposal
+# describes the permanent module as capturing "stable and invariant physical properties" while the
+# transient "adapts quickly to short-term, high-frequency changes... filtering out temporary noise".
+# A single-component drift has no such separation -- there is only one timescale, so there is
+# nothing to decompose. Here the multiplier is
+#
+#     m(t) = 1 + 0.4*sin(2*pi*t/1,228,800)   <- slow structural trend  (permanent should capture)
+#              + 0.2*sin(2*pi*t/30,720)      <- fast fluctuation       (transient should absorb)
+#
+# The slow term moves ~0.4% per PPO update; the fast term completes a full cycle every 15 PPO
+# updates, i.e. faster than one consolidation cycle (k=10). If the permanent/transient split has any
+# value at all, it should show here: the permanent should track the trend without being dragged
+# around by the fluctuation, while a single critic must chase both at once.
+#
+# PREDICTION TO TEST: PT > vanilla here, even though PT = vanilla under single-timescale drift.
+# If PT still ties under this decomposition, the mechanism has been given its best case and
+# declined it.
+#
+#   python -m src_continuous_control.train --agent pt --config drift_twoscale --seed 0
+
+agent: "vanilla"        # overridden by --agent
+
+# --- the drift setting ---
+env_mode: "drift"
+drift_targets: ["damping", "friction"]   # dof_damping (6 actuated joints) + geom sliding friction
+drift_amplitude: 0.4                     # parameters swing over [0.5x, 1.5x] nominal
+drift_period: 1228800                    # one full cycle, in GLOBAL env steps
+drift_schedule: "sin"                    # "linear" for a never-repeating ramp
+drift_phase: 0.0
+drift_amplitude2: 0.2      # fast component
+drift_period2: 30720       # one fast cycle every ~15 PPO updates (k=10 consolidations)
+drift_phase2: 0.0
+
+# --- validated PPO base: IDENTICAL to continual_fast, so drift vs switching is the only change ---
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: true
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+lr_critic: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# --- PT knobs: the shared-trunk variant, i.e. the one where consolidation is exact ---
+critic_arch: "shared_trunk"
+lr_trans: 0.0003
+k: 10
+decay: 0.5
+on_switch: "consolidate"   # never fires under drift (no boundaries); consolidation is on the timer
+
+# --- horizon: same as the main sweep, so results are directly comparable ---
+total_steps: 3072000
+tasks: [1, -1]             # unused under drift; kept so shared config code paths stay valid
+switch: 614400             # unused under drift

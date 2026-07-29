@@ -610,11 +610,28 @@ the **abrupt inversion of the reward**, not from non-stationarity as such. A con
 only pay for itself where a discrete boundary destroys prior knowledge — and that is exactly the
 regime in which EWC helps and PT does not.
 
-**Limitation.** The drift magnitude (amplitude 0.5) was chosen to be smooth and clearly
-Lipschitz-bounded, and it turned out to be gentle enough that no method differentiates. A harsher
-schedule — larger amplitude, or drift that moves the optimal policy further — might separate the
-agents. The negative result here is therefore about *this* difficulty setting, not about smooth
-drift in general (§10i).
+**Important limitation — this setting could not have shown a PT advantage.** At period 1 228 800
+the multiplier moves by only **0.5 % per PPO update** and ~5 % per consolidation cycle. The critic
+gets 10 epochs at `lr = 3e-4` per update, so it tracks that trivially: there is **no fast component
+for a transient to absorb**, and therefore nothing for a permanent/transient split to do. The tie
+observed here is what the decomposition *predicts* in a single-timescale, slowly-drifting world —
+it is not evidence against the mechanism.
+
+Two further settings address this directly:
+
+| setting | change per PPO update | change per consolidation cycle |
+|---|---|---|
+| `drift.yaml` (run above) | 0.5 % | 5 % |
+| `drift_fast.yaml` (period ÷10) | 5 % | 52 % |
+| `drift_twoscale.yaml` | slow 0.4 % + a **full fast cycle every ~15 updates** | — |
+
+`drift_twoscale` is the sharpest of the three, and the regime the proposal actually describes: a
+slow structural trend (amplitude 0.4, period 1 228 800) the **permanent** part should capture, plus
+a fast fluctuation (amplitude 0.2, period 30 720) the **transient** should absorb — "filtering out
+temporary noise". A single critic must chase both at once. **Prediction: PT > vanilla there, even
+though PT = vanilla under single-timescale drift.** If it ties under that decomposition too, the
+mechanism has been given its best case and declined it. Until those run, the drift conclusion above
+should be read as covering *slow single-timescale* drift only (§10i).
 
 ---
 
@@ -674,11 +691,12 @@ end-of-phase values. Any future fine-grained comparison should use 10 seeds.
 (see §5.1); doing so requires `k = 7` so that consolidation does not coincide with the boundary.
 Low expected value now that consolidation is known to be inert overall.
 
-**i) The drift difficulty setting (§8).** Amplitude 0.5 proved gentle enough that no method
-differentiates — plain PPO handles it without forgetting. A harsher schedule (larger amplitude, or a
-drift that moves the optimal policy further) is the one knob that might separate the agents, and
-would test whether the "nothing collapses under smooth drift" conclusion is general or specific to
-this magnitude.
+**i) The drift regime (§8) — the most important open item.** The completed drift run used a single
+slow component that the critic tracks trivially, so it tested a regime where the PT decomposition is
+expected to tie. `drift_fast.yaml` (10x faster) and especially `drift_twoscale.yaml` (an explicit
+slow trend + fast fluctuation, i.e. the separation PT is designed to exploit) are the settings that
+can actually discriminate. These are implemented and ready — `scripts/run_drift_sweep.sh`, 12 runs,
+~2-2.5 h — and until they run, no general claim about smooth drift is warranted.
 
 **f) Explicitly not recommended.** Further PT hyper-parameter tuning; and the "exact consolidation
 still adds drag" observation (§7.1), which does not survive multiple-comparison scrutiny at n = 5.

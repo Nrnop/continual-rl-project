@@ -11,8 +11,16 @@ Formally the transition kernel satisfies ||P_{t+1} - P_t|| <= eps: physical para
 bounded amount each step. We implement that by scaling MuJoCo model parameters with a smooth
 multiplier m(t) applied to their ORIGINAL values (never compounding):
 
-    m(t) = 1 + amplitude * s(t),    s = sin(2*pi*t/period + phase)   [default]
-                                    s = t/period                     [schedule="linear"]
+    m(t) = 1 + amplitude * s(t) [+ amplitude2 * sin(2*pi*t/period2 + phase2)]
+
+with s = sin(2*pi*t/period + phase) by default, or t/period for schedule="linear".
+
+The OPTIONAL SECOND COMPONENT is what makes this a real test of a dual-timescale method. With one
+slow component the physics move ~0.5% per PPO update at the default period — far slower than a
+single critic tracks, so a permanent/transient split has nothing to do and PT necessarily ties the
+baseline. Adding a fast component gives the regime PT is actually designed for: a slow structural
+trend the PERMANENT part should capture, plus a fast fluctuation the TRANSIENT part should absorb
+without contaminating the permanent ("filtering out temporary noise").
 
 `lipschitz_constant()` reports the implied bound (max |dm/dt| times the base magnitude), so the
 eps in the proposal's formulation is a measured property of the config rather than a claim.
@@ -67,6 +75,7 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
 
     def __init__(self, env_id="HalfCheetah-v5", drift_targets=("damping", "friction"),
                  amplitude=0.5, period=1228800, schedule="sin", phase=0.0,
+                 amplitude2=0.0, period2=30720, phase2=0.0,
                  clock_scale=1, max_episode_steps=1000, render_mode=None):
         env = make_base_env(env_id, max_episode_steps=max_episode_steps, render_mode=render_mode)
         super().__init__(env)
@@ -82,6 +91,10 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
         self.period = int(period)
         self.schedule = schedule
         self.phase = float(phase)
+        # Optional fast component (0 amplitude = single-timescale drift, the original behaviour).
+        self.amplitude2 = float(amplitude2)
+        self.period2 = max(int(period2), 1)
+        self.phase2 = float(phase2)
         self.clock_scale = int(clock_scale)
         self.t = 0                      # virtual clock in GLOBAL env steps; never reset
 
@@ -107,16 +120,19 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
             s = np.sin(2.0 * np.pi * t / self.period + self.phase)
         else:                                    # linear ramp
             s = t / self.period
-        return 1.0 + self.amplitude * s
+        m = 1.0 + self.amplitude * s
+        if self.amplitude2:
+            m += self.amplitude2 * np.sin(2.0 * np.pi * t / self.period2 + self.phase2)
+        return m
 
     def lipschitz_constant(self):
         """Max |change in the multiplier| per GLOBAL env step — the eps of ||P_{t+1}-P_t|| <= eps.
 
         Multiply by a parameter's nominal magnitude for that parameter's absolute per-step bound.
         """
-        if self.schedule == "sin":
-            return abs(self.amplitude) * 2.0 * np.pi / self.period
-        return abs(self.amplitude) / self.period
+        slow = (abs(self.amplitude) * 2.0 * np.pi / self.period) if self.schedule == "sin"             else (abs(self.amplitude) / self.period)
+        fast = abs(self.amplitude2) * 2.0 * np.pi / self.period2
+        return slow + fast
 
     # ------------------------------------------------------------------
     # Applying the drift
@@ -173,22 +189,25 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
 
 
 def _make_single_drift(env_id, drift_targets, amplitude, period, schedule, phase,
-                       clock_scale, max_episode_steps, render_mode=None):
+                       clock_scale, max_episode_steps, render_mode=None,
+                       amplitude2=0.0, period2=30720, phase2=0.0):
     """Module-level factory so functools.partial stays picklable for AsyncVectorEnv."""
     return LipschitzDriftHalfCheetah(
         env_id=env_id, drift_targets=drift_targets, amplitude=amplitude, period=period,
-        schedule=schedule, phase=phase, clock_scale=clock_scale,
-        max_episode_steps=max_episode_steps, render_mode=render_mode,
+        schedule=schedule, phase=phase, amplitude2=amplitude2, period2=period2, phase2=phase2,
+        clock_scale=clock_scale, max_episode_steps=max_episode_steps, render_mode=render_mode,
     )
 
 
 def make_drift_env(env_id="HalfCheetah-v5", drift_targets=("damping", "friction"),
-                   amplitude=0.5, period=1228800, schedule="sin", phase=0.0, clock_scale=1,
+                   amplitude=0.5, period=1228800, schedule="sin", phase=0.0,
+                   amplitude2=0.0, period2=30720, phase2=0.0, clock_scale=1,
                    max_episode_steps=1000, render_mode=None, normalize_obs=False,
                    normalize_reward=False, gamma=0.99, clip_obs=10.0, clip_reward=10.0):
     """Single drifting env, optionally with the CleanRL-style normalisation wrappers."""
     env = _make_single_drift(env_id, drift_targets, amplitude, period, schedule, phase,
-                             clock_scale, max_episode_steps, render_mode)
+                             clock_scale, max_episode_steps, render_mode,
+                             amplitude2, period2, phase2)
     if normalize_obs:
         env = gym.wrappers.NormalizeObservation(env)
         env = gym.wrappers.TransformObservation(
@@ -202,6 +221,7 @@ def make_drift_env(env_id="HalfCheetah-v5", drift_targets=("damping", "friction"
 def make_drift_vector_env(env_id="HalfCheetah-v5", num_envs=1,
                           drift_targets=("damping", "friction"), amplitude=0.5,
                           period=1228800, schedule="sin", phase=0.0,
+                          amplitude2=0.0, period2=30720, phase2=0.0,
                           max_episode_steps=1000, gamma=0.99, normalize_obs=False,
                           normalize_reward=False, clip_obs=10.0, clip_reward=10.0,
                           asynchronous=True):
@@ -212,7 +232,8 @@ def make_drift_vector_env(env_id="HalfCheetah-v5", num_envs=1,
     """
     fns = [
         functools.partial(_make_single_drift, env_id, tuple(drift_targets), amplitude, period,
-                          schedule, phase, num_envs, max_episode_steps, None)
+                          schedule, phase, num_envs, max_episode_steps, None,
+                          amplitude2, period2, phase2)
         for _ in range(num_envs)
     ]
     base = gym.vector.AsyncVectorEnv(fns) if (asynchronous and num_envs > 1) \

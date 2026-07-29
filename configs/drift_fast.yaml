@@ -1,0 +1,59 @@
+# DRIFT SWEEP — FAST single-timescale drift (period 122,880 = 25 cycles over the run).
+#
+# WHY. The first drift run (configs/drift.yaml, period 1,228,800) found all three agents tied. But
+# at that period the physics move only ~0.5% per PPO update and ~5% per consolidation cycle -- far
+# slower than a single critic tracks with 10 epochs at lr 3e-4. There was no fast component for a
+# transient to absorb, so a permanent/transient split could not have helped whatever its merits.
+# That run therefore tested a regime where PT is expected to tie, not one where it can win.
+#
+# This config drifts 10x faster: ~5% per PPO update, ~52% per consolidation cycle -- fast enough
+# that tracking it is real work. Still smooth and Lipschitz-bounded, just with a larger eps
+# (2.557e-05 per env step, printed at startup).
+#
+#   python -m src_continuous_control.train --agent pt --config drift_fast --seed 0
+
+agent: "vanilla"        # overridden by --agent
+
+# --- the drift setting ---
+env_mode: "drift"
+drift_targets: ["damping", "friction"]   # dof_damping (6 actuated joints) + geom sliding friction
+drift_amplitude: 0.5                     # parameters swing over [0.5x, 1.5x] nominal
+drift_period: 122880                    # one full cycle, in GLOBAL env steps
+drift_schedule: "sin"                    # "linear" for a never-repeating ramp
+drift_phase: 0.0
+
+# --- validated PPO base: IDENTICAL to continual_fast, so drift vs switching is the only change ---
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: true
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+lr_critic: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# --- PT knobs: the shared-trunk variant, i.e. the one where consolidation is exact ---
+critic_arch: "shared_trunk"
+lr_trans: 0.0003
+k: 10
+decay: 0.5
+on_switch: "consolidate"   # never fires under drift (no boundaries); consolidation is on the timer
+
+# --- horizon: same as the main sweep, so results are directly comparable ---
+total_steps: 3072000
+tasks: [1, -1]             # unused under drift; kept so shared config code paths stay valid
+switch: 614400             # unused under drift
