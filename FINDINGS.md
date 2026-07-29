@@ -13,7 +13,7 @@ prediction to a **PPO actor–critic on MuJoCo HalfCheetah** under continual non
 benchmarked it against a vanilla PPO baseline and an Online-EWC baseline (3 agents × 5 seeds ×
 3.07 M steps).
 
-Seven results:
+Eight results:
 
 1. **PT fails in this setting** — it collapses to a do-nothing standstill policy from the third task
    phase onward (phase-3 mean return **−279** vs vanilla **+243**).
@@ -42,17 +42,23 @@ Seven results:
    to have sd 787 across seeds (2–3× every other phase) and cannot support such an argument at all;
    that claim is retracted.
 
-7. **Under smooth Lipschitz drift — the proposal's own setting — the picture changes entirely**
-   (§8). With a fixed reward and continuously drifting physics, **no agent collapses**: all three
-   climb to ~1300–1900 and are statistically tied. And **EWC becomes byte-identical to vanilla**,
-   because with no task boundary its Fisher matrix is never computed. Its advantage is therefore
-   *entirely* boundary-dependent.
+7. **Under smooth Lipschitz drift — the proposal's own setting — EWC's advantage vanishes
+   entirely** (§8). With a fixed reward and continuously drifting physics, **EWC becomes
+   byte-identical to vanilla**, because with no task boundary its Fisher matrix is never computed.
+   No agent collapses; under *slow* drift all three are statistically tied.
+8. **Under drift fast enough to matter, PT is actively worse than the baseline** (§8.1). Given the
+   slow-trend-plus-fast-fluctuation decomposition it was explicitly designed to exploit, vanilla
+   beats PT **outside the combined SEM in 9 of 10 segments**, and the deficit *grows* with more
+   fast-timescale content. The prediction that PT would win here was not merely unconfirmed but
+   reversed — the strongest single piece of evidence in the study against the mechanism.
 
 **The central finding.** Value decomposition of the critic confers **no benefit** over a single
-critic in policy-gradient continual control — established in its strongest form, because the
-mechanism can be shown to be functioning *correctly* when it fails to help, rather than merely
-reporting that an implementation underperformed. This holds under both discrete task switching and
-smooth dynamics drift.
+critic in policy-gradient continual control, and under non-stationarity fast enough to matter it is
+an active handicap. This is established in its strongest form: the mechanism can be shown to be
+functioning *correctly* (consolidation is near-exact in situ) when it fails to help, so the result
+cannot be dismissed as an implementation defect. It holds under discrete task switching, under slow
+smooth drift, and — most tellingly — under the explicit slow/fast decomposition the method was
+designed for.
 
 **The positive finding.** Regularisation-based continual learning (EWC) is substantially superior —
 **but only where discrete task boundaries exist.** Under boundary-free drift it has no mechanism
@@ -654,12 +660,15 @@ of the task-switching tables):**
    lower return, identically for every agent). Compare this with the directional task, where PT
    collapses to negative return and even vanilla only reaches ~743/468/243/375/−34.
 
-**The last point reframes the whole study.** Smooth dynamics drift of this magnitude is simply *not
-hard* for plain PPO: there is no catastrophic forgetting for a continual-learning method to prevent,
-so none of the machinery has anything to do. The difficulty in the directional experiment comes from
-the **abrupt inversion of the reward**, not from non-stationarity as such. A continual-RL method can
-only pay for itself where a discrete boundary destroys prior knowledge — and that is exactly the
-regime in which EWC helps and PT does not.
+**The last point reframes the whole study.** Smooth dynamics drift *of this magnitude* is simply
+*not hard* for plain PPO: there is no catastrophic forgetting for a continual-learning method to
+prevent, so none of the machinery has anything to do. The difficulty in the directional experiment
+comes from the **abrupt inversion of the reward**, not from non-stationarity as such. A continual-RL
+method can only pay for itself where a discrete boundary destroys prior knowledge — and that is
+exactly the regime in which EWC helps and PT does not.
+
+*(Qualified by §8.1: at faster drift the setting does become discriminating — but it discriminates
+**against** PT, which falls clearly behind vanilla rather than catching up.)*
 
 **Important limitation — this setting could not have shown a PT advantage.** At period 1 228 800
 the multiplier moves by only **0.5 % per PPO update** and ~5 % per consolidation cycle. The critic
@@ -679,10 +688,53 @@ Two further settings address this directly:
 `drift_twoscale` is the sharpest of the three, and the regime the proposal actually describes: a
 slow structural trend (amplitude 0.4, period 1 228 800) the **permanent** part should capture, plus
 a fast fluctuation (amplitude 0.2, period 30 720) the **transient** should absorb — "filtering out
-temporary noise". A single critic must chase both at once. **Prediction: PT > vanilla there, even
-though PT = vanilla under single-timescale drift.** If it ties under that decomposition too, the
-mechanism has been given its best case and declined it. Until those run, the drift conclusion above
-should be read as covering *slow single-timescale* drift only (§10i).
+temporary noise". A single critic must chase both at once. **We predicted PT > vanilla there.**
+
+### 8.1 Result: PT does not merely tie under harder drift — it loses
+
+Both settings, 3 seeds each, return by 614 400-step segment (mean ± SEM):
+
+**`drift_twoscale`** (slow trend + fast fluctuation — the regime PT is designed for):
+
+| | Seg 1 | Seg 2 | Seg 3 | Seg 4 | Seg 5 |
+|---|---|---|---|---|---|
+| vanilla | 870 ± 107 | 2317 ± 401 | 2745 ± 282 | 2255 ± 550 | 2550 ± 470 |
+| PT | 562 ± 41 | 1588 ± 41 | 1351 ± 72 | 1756 ± 46 | 1462 ± 92 |
+| **PT − vanilla** | **−308** | **−729** | **−1394** | −499 *(inside)* | **−1088** |
+
+**`drift_fast`** (10× faster single-timescale drift):
+
+| | Seg 1 | Seg 2 | Seg 3 | Seg 4 | Seg 5 |
+|---|---|---|---|---|---|
+| vanilla | 750 ± 137 | 2570 ± 295 | 3119 ± 336 | 3377 ± 318 | 3601 ± 389 |
+| PT | 576 ± 28 | 1437 ± 95 | 1774 ± 303 | 2040 ± 296 | 2192 ± 315 |
+| **PT − vanilla** | **−174** | **−1133** | **−1345** | **−1336** | **−1409** |
+
+**Vanilla beats PT outside the combined SEM in 9 of the 10 segments.** The prediction is not merely
+unconfirmed — it is **reversed**. And the direction is systematic: under *slow* drift the two were
+tied (all gaps inside noise); adding real fast-timescale content turns that tie into a clear PT
+deficit, and the deficit is *larger* in `drift_fast` than in `drift_twoscale`. Giving the
+decomposition the timescale separation it was designed to exploit made it **worse**, not better.
+
+**Plausible explanation — offered as a hypothesis, not a demonstrated mechanism.** (Two earlier
+mechanistic claims in this study were retracted after controlled testing; this one has *not* been
+tested and should not be reported as established.) Under PT, only the transient trains between
+consolidations — `V_perm` is frozen — so PT's effective capacity for tracking change is a single
+MLP, exactly as for vanilla. But its regression target is `returns − V_perm.detach()`, and when the
+physics move quickly that frozen baseline goes stale fast, making the target *more* non-stationary
+than the raw returns vanilla fits. Every *k* updates, consolidation then folds the transient into
+the permanent and decays it, so the transient must re-learn its residual against a
+just-changed baseline. Same capacity, harder target, periodic disruption: PT is structurally
+handicapped precisely when tracking speed is what matters.
+
+**A secondary observation.** Vanilla's across-seed SEM is much larger than PT's (e.g. `drift_twoscale`
+segment 2: 401 vs 41), and one vanilla seed reached 3563. Vanilla is noisier but attains a far higher
+ceiling; PT is consistently mediocre. That is consistent with the decomposition acting as a
+constraint on the value function rather than as an aid.
+
+**This closes the search.** PT was given the setting the proposal specifies, then the harder version
+of it, then the exact slow/fast decomposition it was designed for. It tied in the first and lost in
+the other two.
 
 ---
 
@@ -742,12 +794,13 @@ end-of-phase values. Any future fine-grained comparison should use 10 seeds.
 (see §5.1); doing so requires `k = 7` so that consolidation does not coincide with the boundary.
 Low expected value now that consolidation is known to be inert overall.
 
-**i) The drift regime (§8) — the most important open item.** The completed drift run used a single
-slow component that the critic tracks trivially, so it tested a regime where the PT decomposition is
-expected to tie. `drift_fast.yaml` (10x faster) and especially `drift_twoscale.yaml` (an explicit
-slow trend + fast fluctuation, i.e. the separation PT is designed to exploit) are the settings that
-can actually discriminate. These are implemented and ready — `scripts/run_drift_sweep.sh`, 12 runs,
-~2-2.5 h — and until they run, no general claim about smooth drift is warranted.
+**i) The drift regime (§8) — now closed.** Both harder settings were run (§8.1). PT loses to
+vanilla outside the SEM in 9 of 10 segments, so no further drift setting is needed to establish the
+conclusion. What remains open is the *explanation* offered in §8.1 (that PT's transient faces a
+harder, staler regression target than vanilla's critic): it is untested, and given that two earlier
+mechanistic claims in this study were retracted after controlled testing, it should be reported as a
+hypothesis. A controlled test would compare the transient's regression target error against
+vanilla's critic loss under identical drift.
 
 **f) Explicitly not recommended.** Further PT hyper-parameter tuning; and the "exact consolidation
 still adds drag" observation (§7.1), which does not survive multiple-comparison scrutiny at n = 5.
