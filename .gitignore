@@ -75,3 +75,6 @@ graphify-out/
 # is still loaded by local Claude Code sessions) but not part of the thesis repo.
 CLAUDE.md
 VASTAI_SETUP.md
+
+# Thesis chapter drafts — kept local until reviewed by the supervisors.
+THESIS_*.md
