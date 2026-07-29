@@ -178,17 +178,13 @@ class PPOPT(PPOBase):
         states_np, oldvp_np = self.consolidation_buffer.as_arrays()
         n_total = len(states_np)
         holdout_frac = float(self.cfg.get("consolidation_holdout_frac", 0.0))
-        perm_idx = np.random.permutation(n_total)
-        n_hold = int(n_total * holdout_frac)
-        hold_idx, train_idx = perm_idx[:n_hold], perm_idx[n_hold:]
+        keep = 1.0 - self.transient_decay
 
-        def _probe(idx):
-            if len(idx) == 0:
+        def _probe(arr):
+            if arr is None or len(arr) == 0:
                 return None
-            sub = idx[: min(4096, len(idx))]
-            return torch.as_tensor(states_np[sub], dtype=torch.float32, device=self.device)
-
-        fit_probe, hold_probe = _probe(train_idx), _probe(hold_idx)
+            return torch.as_tensor(arr[: min(4096, len(arr))], dtype=torch.float32,
+                                   device=self.device)
 
         def _value(t):
             if t is None:
@@ -197,25 +193,49 @@ class PPOPT(PPOBase):
                 a, b = self.critic(t)
             return a + b
 
-        v_fit_before, v_hold_before = _value(fit_probe), _value(hold_probe)
+        if holdout_frac <= 0.0:
+            # DEFAULT PATH — must consume RNG exactly as the original implementation did, so runs
+            # stay comparable across this refactor. iter_minibatches uses np.random.shuffle; adding
+            # a np.random.permutation or a torch.randperm here would silently shift every
+            # downstream random draw and make same-seed runs non-reproducible.
+            fit_probe, hold_probe = _probe(states_np), None
+            v_fit_before, v_hold_before = _value(fit_probe), None
+            for _ in range(self.consolidation_epochs):
+                for s_mb, old_vp_mb in self.consolidation_buffer.iter_minibatches(
+                        self.minibatch_size, self.device):
+                    v_perm, v_trans = self.critic(s_mb)
+                    target = old_vp_mb + keep * v_trans.detach()
+                    loss = 0.5 * ((v_perm - target) ** 2).mean()
+                    self.perm_optim.zero_grad()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.critic.perm.parameters(),
+                                                   self.max_grad_norm)
+                    self.perm_optim.step()
+        else:
+            # DIAGNOSTIC PATH — hold part of the buffer out of the regression and measure drift on
+            # it separately. This deliberately changes the RNG stream, so runs using it are not
+            # seed-comparable with default-path runs.
+            perm_idx = np.random.permutation(n_total)
+            n_hold = int(n_total * holdout_frac)
+            hold_idx, train_idx = perm_idx[:n_hold], perm_idx[n_hold:]
+            fit_probe, hold_probe = _probe(states_np[train_idx]), _probe(states_np[hold_idx])
+            v_fit_before, v_hold_before = _value(fit_probe), _value(hold_probe)
+            s_train = torch.as_tensor(states_np[train_idx], dtype=torch.float32, device=self.device)
+            v_train = torch.as_tensor(oldvp_np[train_idx], dtype=torch.float32, device=self.device)
+            mb = self.minibatch_size
+            for _ in range(self.consolidation_epochs):
+                order = torch.randperm(len(s_train), device=self.device)
+                for i in range(0, len(s_train), mb):
+                    sel = order[i:i + mb]
+                    v_perm, v_trans = self.critic(s_train[sel])
+                    target = v_train[sel] + keep * v_trans.detach()
+                    loss = 0.5 * ((v_perm - target) ** 2).mean()
+                    self.perm_optim.zero_grad()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.critic.perm.parameters(),
+                                                   self.max_grad_norm)
+                    self.perm_optim.step()
 
-        # Train the permanent head on the (possibly reduced) training split only.
-        s_train = torch.as_tensor(states_np[train_idx], dtype=torch.float32, device=self.device)
-        v_train = torch.as_tensor(oldvp_np[train_idx], dtype=torch.float32, device=self.device)
-        keep = 1.0 - self.transient_decay
-        mb = self.minibatch_size
-        for _ in range(self.consolidation_epochs):
-            order = torch.randperm(len(s_train), device=self.device)
-            for i in range(0, len(s_train), mb):
-                sel = order[i:i + mb]
-                s_mb, old_vp_mb = s_train[sel], v_train[sel]
-                v_perm, v_trans = self.critic(s_mb)
-                target = old_vp_mb + keep * v_trans.detach()
-                loss = 0.5 * ((v_perm - target) ** 2).mean()
-                self.perm_optim.zero_grad()
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.critic.perm.parameters(), self.max_grad_norm)
-                self.perm_optim.step()
         # The transient head has been absorbed into the permanent; decay it back down.
         self._decay_transient(self.transient_decay)
 
@@ -224,6 +244,7 @@ class PPOPT(PPOBase):
                 return None
             after = _value(t)
             return float((after - before).abs().mean() / before.abs().mean().clamp_min(1e-8) * 100.0)
+
 
         self.last_consolidation_error = _drift(fit_probe, v_fit_before)
         self.last_consolidation_error_holdout = _drift(hold_probe, v_hold_before)

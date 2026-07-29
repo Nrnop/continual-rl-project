@@ -33,13 +33,14 @@ Seven results:
 5. **EWC is the positive result** — it beats both, decisively and outside noise (phase-4 mean
    **1238** vs vanilla **375** and PT **212**; gap ≈ 1026 against σ ≈ 399).
 
-6. **Consolidation fidelity is not the problem** (§5.5–5.6). Training the regression properly makes
-   PT no better — and a held-out measurement shows the transfer is near-exact in situ (~0.3 % value
-   drift on *both* fitted and unseen states, throughout training) while PT still collapses. What
-   separates the healthy runs from the collapsing ones is the **transient decay**: every
-   `decay = 0.5` run survives phase 2, every `decay = 0.0` run does not. The leading explanation is
-   that decaying the transient's *weights* leaves the optimiser's momentum untouched, so the
-   just-consolidated state is undone on the very next update (§5.6, under test).
+6. **Consolidation fidelity is not the problem, and no finer mechanism was found** (§5.5–5.7).
+   Training the regression properly makes PT no better; a held-out measurement shows the transfer is
+   near-exact in situ (~0.3 % value drift on *both* fitted and unseen states) while PT still
+   collapses. Two candidate mechanisms — the transient decay, and stale optimiser momentum surviving
+   that decay — were then tested in a controlled 2×2 and **both failed**, the second producing the
+   opposite of its prediction. Phase 2, on which an earlier draft based a decay argument, turns out
+   to have sd 787 across seeds (2–3× every other phase) and cannot support such an argument at all;
+   that claim is retracted.
 
 7. **Under smooth Lipschitz drift — the proposal's own setting — the picture changes entirely**
    (§8). With a fixed reward and continuously drifting physics, **no agent collapses**: all three
@@ -294,7 +295,14 @@ This closes off "the consolidation was never trained" as the explanation for the
 >
 > Every `decay = 0.5` run is positive at phase 2 and every `decay = 0.0` run is not — and crucially
 > `decay=0` already collapses at P2 with *untrained* consolidation. So the amount of regression is
-> not what separates them. §5.6 tests decay directly.
+> not what separates them.
+>
+> **⚠ This grouping is itself retracted — see §5.7.** A controlled 2×2 varying decay alone found the
+> opposite ordering at phase 2, and the shipped run's phase-2 values have sd 787 across seeds
+> (2–3× every other phase, only 2/5 seeds positive), so phase-2 point estimates cannot support a
+> mechanism claim in either direction. What both readings share, and what does survive, is the
+> narrower statement above: the amount of consolidation training is not what distinguishes these
+> runs.
 
 **The in-situ measurement, and the puzzle it creates.** This round logs
 `train/consolidation_error_pct`: the % change in the acting value across each consolidation,
@@ -367,9 +375,48 @@ network that no longer exists. Consolidation makes `V_perm` and `V_trans` mutual
 one update later that consistency is destroyed. This predicts exactly the observed pattern: `decay = 0`
 maximises the weight/state mismatch and collapses; `decay = 0.5` halves it and survives.
 
-Round 7 tests this directly as a 2×2 — decay (0.0 vs 0.5) × resetting the transient's optimiser
-state on decay (yes/no), 3 seeds each — which also un-confounds decay from the other changes made
-alongside it in earlier rounds.
+### 5.7 Round 7 — both hypotheses fail, and phase 2 turns out to be uninterpretable
+
+Round 7 ran the 2×2 — decay (0.0 vs 0.5) × resetting the transient's optimiser state on decay
+(yes/no), 3 seeds per cell, everything else held fixed. Per-phase mean return ± SEM:
+
+| | decay = 0.0 | decay = 0.5 |
+|---|---|---|
+| **no reset** | 369±2 / −164±73 / −69±71 / −369±37 / −299±4 | 485±10 / −567±94 / 243±52 / −619±171 / 40±62 |
+| **reset optimiser state** | 34±44 / −504±64 / −232±130 / −632±92 / −204±125 | 446±13 / −161±34 / 321±92 / −827±168 / 196±33 |
+
+**Both hypotheses are disconfirmed, and one runs backwards.**
+
+1. **The stale-momentum mechanism is wrong.** It predicts the reset should help *most* at
+   `decay = 0`, where zeroed weights and full-scale momentum are maximally mismatched. The opposite
+   happens: at `decay = 0` the reset makes P1, P2 and P4 significantly *worse* (P2: −164 → −504,
+   gap ~340 against a combined SEM of ~137), while it helps only at `decay = 0.5`
+   (P2: −567 → −161). That is the reverse of the prediction — a positive disconfirmation, not a
+   null.
+2. **The decay grouping of §5.5 does not survive a controlled test.** In this un-confounded
+   comparison `decay = 0.0` is *better* than `decay = 0.5` at phase 2 (−164 vs −567), the very
+   phase the grouping was built on.
+3. **Nothing beats vanilla** (743/468/243/375/−34) in any cell, in any phase.
+
+**Why §5.5's grouping was unsound — phase 2 cannot carry an argument.** The shipped PT run's own
+phase-2 values across its five seeds are **+800, +1479, −210, −15, −393**: mean +332 but **sd 787**,
+with only **2/5 seeds positive**. That standard deviation is 2–3× every other phase (P1 71, P3 338,
+P4 312, P5 271), and the positive mean rests on two outlier seeds. Round 7's cell mean of −567 sits
+~1.1 sd below it — comfortably inside noise. **The §5.5 decay grouping is therefore retracted**: it
+read a difference between chaotic phase-2 point estimates as a mechanism.
+
+**A reproducibility defect found in the process (now fixed).** The holdout instrumentation added for
+round 6 was intended to be inert at `consolidation_holdout_frac = 0`, but it changed which RNG
+stream consolidation consumes (`np.random.permutation` + `torch.randperm` in place of
+`np.random.shuffle`). That shifts every downstream random draw, so same-seed runs before and after
+it are **not** trajectory-comparable, and round 7's cells cannot be compared seed-by-seed against
+the main sweep. The default path now reproduces the original RNG consumption exactly, and the
+diagnostic path is explicitly documented as not seed-comparable. Round 7's *internal* comparisons
+(all cells, same code, same session) are unaffected and remain valid.
+
+**What survives.** PT's collapse in phases 3–5 is robust — those phases have sd 271–338 with means
+clearly negative across every variant tested. What does *not* survive is any fine-grained causal
+story pinned to phase 2. Neither decay nor optimiser state explains PT's failure.
 
 ---
 
