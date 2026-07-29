@@ -315,7 +315,9 @@ measured on the states being consolidated. It falls to essentially zero:
 | final phase | **~0.00–0.07 %** |
 
 So the regression *does* fit, and the transfer *is* value-preserving — **on the states it trained
-on**. Yet performance is the worst of any variant.
+on**. Yet performance is the worst of any variant. Panel (a) of
+`plots/figures/consolidation_insitu.png` plots this directly from the run's own logs: the drift
+falls from ~3 % to ~0.006 % over training, on every seed.
 
 **Leading explanation (measured offline, in-situ confirmation pending).** The metric above is
 in-distribution only. With Adam, `lr_perm = 1e-3` and 6 400 gradient steps on a `[64,64]` net over a
@@ -351,7 +353,9 @@ the buffer from the regression and measuring value drift on that held-out portio
 | 2 | 0.30 % | 0.31 % | +0.24 % |
 
 **The two track each other almost exactly, everywhere in training, including immediately after a
-switch, and both converge to ~0.00 % by the end.** No gap ever opens. **The memorisation hypothesis
+switch, and both converge to ~0.00 % by the end.** No gap ever opens — panel (b) of
+`plots/figures/consolidation_insitu.png` shows the two curves lying on top of one another for the
+whole run. Measured over every logged consolidation: fitted 0.300 %, held-out 0.310 %. **The memorisation hypothesis
 is wrong**, and the offline probe's prediction (a gap widening with training effort) does not
 reproduce in situ.
 
@@ -763,8 +767,9 @@ entirely), but it would tighten the mechanistic account.
 | Item | Location |
 |---|---|
 | Source, configs, tests | `src_continuous_control/` (git; training artefacts excluded) |
-| Main-sweep figures (6) | `plots/figures/` |
+| Figures | `plots/figures/` (see the list below) |
 | Per-seed numeric logs (15 CSVs) | `numeric_logs_csv/` |
+| Figure regeneration | `plots/plot_compare.py`, `plot_thesis_figures.py`, `plot_consolidation_insitu.py`, `make_consolidation_figure.py` |
 | Full-resolution curves | `results/*.pkl` |
 | Ablation outputs | `abl_results/<variant>/`, `abl_logs/` |
 | Run instructions | `README.md` |

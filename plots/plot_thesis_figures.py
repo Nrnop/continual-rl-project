@@ -132,11 +132,16 @@ def _save(fig, out_dir, name):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-dir", default="src_continuous_control/results")
-    ap.add_argument("--abl-dir", default="abl_results")
+    # Ablation outputs have lived in two places depending on where the runner was invoked from,
+    # so auto-detect rather than silently skipping every variant.
+    _abl_default = next((d for d in ("abl_results", "src_continuous_control/abl_results")
+                         if os.path.isdir(d)), "abl_results")
+    ap.add_argument("--abl-dir", default=_abl_default)
     ap.add_argument("--out-dir", default="src_continuous_control/plots/figures")
     ap.add_argument("--expect-seeds", type=int, default=5,
                     help="warn loudly if a variant does not match exactly this many seed curves")
     a = ap.parse_args()
+    print(f"  reading results from {a.results_dir!r} and ablations from {a.abl_dir!r}")
 
     def check(label, n):
         if n != a.expect_seeds:
