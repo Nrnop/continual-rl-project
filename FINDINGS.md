@@ -822,48 +822,24 @@ entirely), but it would tighten the mechanistic account.
 
 ## 11. Reproducibility
 
+**In the repository:**
+
 | Item | Location |
 |---|---|
-| Source, configs, tests | `src_continuous_control/` (git; training artefacts excluded) |
-| Figures | `plots/figures/` (see the list below) |
-| Per-seed numeric logs (15 CSVs) | `numeric_logs_csv/` |
-| Figure regeneration | `plots/plot_compare.py`, `plot_thesis_figures.py`, `plot_consolidation_insitu.py`, `make_consolidation_figure.py` |
-| Full-resolution curves | `results/*.pkl` |
-| Ablation outputs | `abl_results/<variant>/`, `abl_logs/` |
+| Source, configs, tests | `agents/`, `envs/`, `models/`, `utils/`, `configs/`, `tests/` |
+| Figures (13) | `plots/figures/` |
+| Figure and experiment scripts | `plots/plot_*.py`, `plots/make_consolidation_figure.py`, `scripts/run_*.sh` |
 | Run instructions | `README.md` |
 
+**Produced by running the experiments** (excluded from version control — regenerable, and several
+hundred MB in total):
 
-**Experiment inventory.** Every run behind this report, and where its per-seed curves live.
-Ablation directories are under `abl_results/`; TensorBoard scalars for the same runs are under
-`abl_runs/` with matching names, and console logs under `abl_logs/`.
+| Item | Written to |
+|---|---|
+| Per-seed return / eval / velocity curves | `results/*.pkl` |
+| Ablation and drift runs | `abl_results/<variant>/`, with TensorBoard scalars in `abl_runs/<variant>/` and console output in `abl_logs/` |
+| Exported numeric logs | `numeric_logs_csv/` |
 
-| Directory | Experiment | Seeds | Section |
-|---|---|---|---|
-| `results/` (`vanilla_ppo_*`) | Main task-switching sweep, vanilla | 5 | §4 |
-| `results/` (`ewc_ppo_*`) | Main task-switching sweep, ewc | 5 | §4 |
-| `results/` (`pt_ppo_*`) | Main task-switching sweep, pt | 5 | §4 |
-| `drift_ewc` | Slow drift, EWC (bit-identical to vanilla) | 5 | §8 |
-| `drift_fast_pt` | Fast drift, PT | 3 | §8.1 |
-| `drift_fast_vanilla` | Fast drift, vanilla | 3 | §8.1 |
-| `drift_pt` | Slow drift, PT | 5 | §8 |
-| `drift_twoscale_pt` | Two-timescale drift, PT | 3 | §8.1 |
-| `drift_twoscale_vanilla` | Two-timescale drift, vanilla | 3 | §8.1 |
-| `drift_vanilla` | Slow drift, vanilla | 5 | §8 |
-| `pt_baseline` | R1 baseline (short horizon, confounded — see §5.1) | 2 | §5.1 |
-| `pt_consol_holdout` | R6 consolidation held-out diagnostic | 3 | §5.6 |
-| `pt_decay0` | R3 decay = 0 | 5 | §5.3 |
-| `pt_decay0_fast` | R3 decay = 0 + fast transient | 5 | §5.3 |
-| `pt_fasttrans` | R2 fast transient, lr_trans 1e-3 | 5 | §5.2 |
-| `pt_fasttrans_x3` | R2 fast transient, lr_trans 3e-3 | 5 | §5.2 |
-| `pt_noconsol` | R4 consolidation disabled (causal control) | 5 | §5.4 |
-| `pt_noswitchdecay` | R1 no switch-decay — bit-identical to baseline (invalid arm) | 2 | §5.1 |
-| `pt_sharedtrunk` | Shared trunk + linear heads (exact consolidation) | 5 | §7 |
-| `pt_trained_consol` | R5 separate trunks + trained consolidation regression | 5 | §5.5 |
-| `pt_unfreezeperm` | R1 unfreeze permanent LR | 2 | §5.1 |
-| `r7_decay00_noreset` | R7 decay 0.0, no optimiser reset | 3 | §5.7 |
-| `r7_decay00_reset` | R7 decay 0.0, optimiser state reset | 3 | §5.7 |
-| `r7_decay05_noreset` | R7 decay 0.5, no optimiser reset | 3 | §5.7 |
-| `r7_decay05_reset` | R7 decay 0.5, optimiser state reset | 3 | §5.7 |
 
 All runs are seeded and reproducible. The environment is CPU-bound (MuJoCo physics with small
 networks), so a GPU provides no benefit; throughput scales with core count and process-level
