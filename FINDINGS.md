@@ -33,12 +33,13 @@ Five results:
 5. **EWC is the positive result** — it beats both, decisively and outside noise (phase-4 mean
    **1238** vs vanilla **375** and PT **212**; gap ≈ 1026 against σ ≈ 399).
 
-6. **Training the consolidation regression properly makes PT *worse*, not better** (§5.5). Ordering
-   the variants by how much regression actually happens gives a monotone relationship in the wrong
-   direction: no regression at all (shared trunk) is the best PT variant, a barely-trained
-   regression is next, and a well-trained one is the worst tested — and it collapses a full phase
-   earlier. The consolidation operator is not merely ineffective; performing it more faithfully is
-   actively harmful.
+6. **Consolidation fidelity is not the problem** (§5.5–5.6). Training the regression properly makes
+   PT no better — and a held-out measurement shows the transfer is near-exact in situ (~0.3 % value
+   drift on *both* fitted and unseen states, throughout training) while PT still collapses. What
+   separates the healthy runs from the collapsing ones is the **transient decay**: every
+   `decay = 0.5` run survives phase 2, every `decay = 0.0` run does not. The leading explanation is
+   that decaying the transient's *weights* leaves the optimiser's momentum untouched, so the
+   just-consolidated state is undone on the very next update (§5.6, under test).
 
 **The central finding.** Value decomposition of the critic confers **no benefit** over a single
 critic in policy-gradient continual control — and this conclusion is now established in its strongest
@@ -261,11 +262,25 @@ SEMs 26 / 47 / 106 / 162 / 109; seeds-positive 5/5, 0/5, 1/5, 0/5, 1/5.
 ~900 points against a 47-point SEM). The collapse also arrives **one phase earlier**: this variant is
 already deeply negative at P2, the very first switch, whereas the shipped version survives to P3.
 
-Ordering the variants by *how much consolidation regression actually happens* gives a monotone
-relationship in the wrong direction — **more regression, worse performance** — with the variant that
-removes the regression entirely (shared trunk) performing best. This closes off "the consolidation
-was never trained" as the explanation for the original collapse, and points instead at the
-regression itself being harmful.
+This closes off "the consolidation was never trained" as the explanation for the original collapse.
+
+> **Correction.** An earlier version of this section read the variants as an ordering by *how much
+> consolidation regression happens* and concluded "more regression, worse performance". **That
+> comparison was confounded.** The shipped config and this round differ in **two** ways — the amount
+> of regression training *and* the decay — and the collapse tracks the **decay**:
+>
+> | variant | decay | consolidation training | P2 |
+> |---|---|---|---|
+> | shipped | 0.5 | barely runs | **+332** |
+> | shared trunk | 0.5 | none (exact) | **+394** |
+> | fast transient | 0.5 | barely runs | **+134** |
+> | `decay=0` (§5.3) | **0.0** | barely runs | **−319** |
+> | `decay=0` + fast transient | **0.0** | barely runs | **+30** |
+> | trained consolidation (this round) | **0.0** | fits well | **−594** |
+>
+> Every `decay = 0.5` run is positive at phase 2 and every `decay = 0.0` run is not — and crucially
+> `decay=0` already collapses at P2 with *untrained* consolidation. So the amount of regression is
+> not what separates them. §5.6 tests decay directly.
 
 **The in-situ measurement, and the puzzle it creates.** This round logs
 `train/consolidation_error_pct`: the % change in the acting value across each consolidation,
@@ -299,6 +314,48 @@ More training improves the fitted states while held-out error barely moves — t
 confirm it in situ (3 seeds; it measures a mechanism, not a return difference). Until that lands,
 this explanation is **suggestive rather than established** — the round-5 result itself (more
 regression ⇒ worse performance) is what stands on the evidence.
+
+### 5.6 Round 6 — the memorisation hypothesis is falsified, and the decay comes into focus
+
+§5.5 proposed that the permanent net *memorises* the consolidation buffer: near-perfect on the
+states it fits, badly wrong on the new states visited next. Round 6 tested it by excluding 20 % of
+the buffer from the regression and measuring value drift on that held-out portion separately
+(3 seeds, full horizon).
+
+| seed | mean error, fitted states | mean error, held-out states | max gap |
+|---|---|---|---|
+| 0 | 0.31 % | 0.32 % | +0.25 % |
+| 1 | 0.28 % | 0.29 % | +0.22 % |
+| 2 | 0.30 % | 0.31 % | +0.24 % |
+
+**The two track each other almost exactly, everywhere in training, including immediately after a
+switch, and both converge to ~0.00 % by the end.** No gap ever opens. **The memorisation hypothesis
+is wrong**, and the offline probe's prediction (a gap widening with training effort) does not
+reproduce in situ.
+
+**An important limitation of this test, however.** The held-out portion is a *random* 20 % of the
+same 20 480-state buffer, so both halves are drawn from the identical recent on-policy distribution.
+It therefore establishes that the permanent net **interpolates within its own recent state
+distribution** rather than memorising it — but it does *not* test extrapolation to the states of the
+**next** rollout, which are temporally later and, right after a switch, drawn from a shifted
+distribution. That stricter question remains open (§9h).
+
+**What this leaves.** Consolidation demonstrably works: the transfer is near-exact, on fitted and
+unseen states alike, throughout training — and PT collapses anyway. The failure is therefore *not*
+in the transfer. Combined with the decay grouping in §5.5, attention moves to what happens
+**immediately after** consolidation.
+
+**Leading hypothesis (untested).** `decay_transient` scales the transient's *parameters*
+(`p.data.mul_(decay)`) but leaves the **optimiser state untouched** — Adam's `exp_avg` and
+`exp_avg_sq` for those parameters survive the reset. So after `θ_T ← 0` the next optimiser step
+displaces the zeroed weights by roughly `lr · exp_avg / √exp_avg_sq`, driven by momentum from a
+network that no longer exists. Consolidation makes `V_perm` and `V_trans` mutually consistent, and
+one update later that consistency is destroyed. This predicts exactly the observed pattern: `decay = 0`
+maximises the weight/state mismatch and collapses; `decay = 0.5` halves it and survives.
+
+Round 7 tests this directly as a 2×2 — decay (0.0 vs 0.5) × resetting the transient's optimiser
+state on decay (yes/no), 3 seeds each — which also un-confounds decay from the other changes made
+alongside it in earlier rounds.
 
 ---
 

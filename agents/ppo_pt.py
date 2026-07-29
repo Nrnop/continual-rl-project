@@ -70,6 +70,12 @@ class PPOPT(PPOBase):
 
         # Decay factor for the transient critic head at consolidation / task boundaries.
         self.transient_decay = cfg.get("decay", 0.0)
+        # Scaling theta_T only touches the PARAMETERS: Adam's exp_avg / exp_avg_sq for those same
+        # parameters survive untouched, so the next step displaces the freshly-decayed weights using
+        # momentum from a network that no longer exists — undoing the consistency consolidation just
+        # established. Enable this to clear that state alongside the decay. Default False keeps the
+        # original behaviour so earlier runs stay reproducible.
+        self.reset_trans_optim_on_decay = bool(cfg.get("reset_trans_optim_on_decay", False))
 
         # --- Permanent consolidation: the actual PT mechanism (was never wired up) ---
         # theta_P is NOT trained on returns every step. Every k updates it absorbs the
@@ -147,6 +153,8 @@ class PPOPT(PPOBase):
         # Shared-trunk variant: exact, O(1), no regression and no value drift.
         if self.shared_trunk:
             self.critic.consolidate(self.transient_decay)
+            if self.reset_trans_optim_on_decay:
+                self._decay_transient(1.0)               # weights unchanged; clears optimiser state
             self.last_consolidation_error = 0.0          # exact by construction
             self.last_consolidation_error_holdout = 0.0  # ...on every state, not just fitted ones
             return
@@ -209,7 +217,7 @@ class PPOPT(PPOBase):
                 torch.nn.utils.clip_grad_norm_(self.critic.perm.parameters(), self.max_grad_norm)
                 self.perm_optim.step()
         # The transient head has been absorbed into the permanent; decay it back down.
-        self.critic.decay_transient(self.transient_decay)
+        self._decay_transient(self.transient_decay)
 
         def _drift(t, before):
             if t is None or before is None:
@@ -221,6 +229,22 @@ class PPOPT(PPOBase):
         self.last_consolidation_error_holdout = _drift(hold_probe, v_hold_before)
 
         self.consolidation_buffer.clear()
+
+    def _decay_transient(self, decay):
+        """Decay the transient head, optionally clearing its optimiser state at the same time.
+
+        Without the reset, Adam carries momentum for parameters that were just scaled (to zero, when
+        decay=0), so the very next update pushes them straight back out — see FINDINGS.md 5.6.
+        """
+        self.critic.decay_transient(decay)
+        if self.reset_trans_optim_on_decay:
+            # Drop only the state for the transient parameters (the shared-trunk variant's optimiser
+            # also holds the trunk, whose state must be preserved).
+            trans_params = set(id(p) for p in self.critic.trans.parameters())
+            for group in self.trans_optim.param_groups:
+                for p in group["params"]:
+                    if id(p) in trans_params:
+                        self.trans_optim.state.pop(p, None)
 
     def on_task_switch(self, step):
         """Task-boundary handling, selectable via cfg['on_switch']:
@@ -242,7 +266,7 @@ class PPOPT(PPOBase):
             self._updates_since_consolidation = 0
         elif mode == "decay":
             if self.transient_decay < 1.0:
-                self.critic.decay_transient(self.transient_decay)
+                self._decay_transient(self.transient_decay)
         # mode == "none": intentionally do nothing
 
     # ------------------------------------------------------------------
