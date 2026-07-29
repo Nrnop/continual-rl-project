@@ -37,6 +37,7 @@ C_EWC     = "#eb6834"   # orange
 C_PT      = "#1baf7a"   # aqua    - PT as implemented (broken consolidation)
 C_NOCON   = "#4a3aa7"   # violet  - PT, consolidation disabled
 C_SHARED  = "#e34948"   # red     - PT, shared trunk + linear heads (exact consolidation)
+C_TRAINED = "#eda100"   # yellow  - PT, separate trunks + a properly trained consolidation regression
 INK       = "#0b0b0b"
 INK_MUTED = "#52514e"
 GRIDC     = "#d9d8d4"
@@ -116,7 +117,7 @@ def _grouped_bars(ax, series, ylabel, title):
     ax.set_xticks(x)
     ax.set_xticklabels(PHASE_LABELS)
     _style(ax, ylabel, title)
-    ax.legend(frameon=False, fontsize=9, labelcolor=INK_MUTED, ncol=min(n, 4), loc="upper right")
+    ax.legend(frameon=False, fontsize=8, labelcolor=INK_MUTED, ncol=2, loc="upper right")
 
 
 def _save(fig, out_dir, name):
@@ -161,9 +162,19 @@ def main():
         _save(fig, a.out_dir, "phase_means_main")
 
     # ---------- Figure 2: PT ablation variants, against a vanilla reference ----------
-    abl_spec = [("PT (as implemented)", C_PT, os.path.join(a.results_dir, "pt_ppo_seed_*_returns.pkl")),
-                ("PT, consolidation off", C_NOCON, os.path.join(a.abl_dir, "pt_noconsol", "pt_ppo_seed_*_returns.pkl")),
-                ("PT, shared trunk (exact)", C_SHARED, os.path.join(a.abl_dir, "pt_sharedtrunk", "pt_ppo_seed_*_returns.pkl"))]
+    # Ordered by HOW MUCH CONSOLIDATION REGRESSION ACTUALLY RUNS, because that ordering is the
+    # result: none -> exact-but-no-regression -> barely trained -> well trained, and performance
+    # falls monotonically along it. Colours follow the entity and are fixed across all figures.
+    abl_spec = [
+        ("PT, consolidation off", C_NOCON,
+         os.path.join(a.abl_dir, "pt_noconsol", "pt_ppo_seed_*_returns.pkl")),
+        ("PT, shared trunk (exact, no regression)", C_SHARED,
+         os.path.join(a.abl_dir, "pt_sharedtrunk", "pt_ppo_seed_*_returns.pkl")),
+        ("PT as implemented (regression barely runs)", C_PT,
+         os.path.join(a.results_dir, "pt_ppo_seed_*_returns.pkl")),
+        ("PT, trained consolidation (regression fits)", C_TRAINED,
+         os.path.join(a.abl_dir, "pt_trained_consol", "pt_ppo_seed_*_returns.pkl")),
+    ]
     series = []
     for label, colour, pat in abl_spec:
         m, s, n = phase_means(pat)
@@ -184,7 +195,7 @@ def main():
             ax.step(np.concatenate([xs - 0.5, [xs[-1] + 0.5]]),
                     np.concatenate([van_m, [van_m[-1]]]), where="post",
                     color=INK_MUTED, lw=1.6, ls="--", zorder=5, label="Vanilla PPO (reference)")
-            ax.legend(frameon=False, fontsize=9, labelcolor=INK_MUTED, ncol=2, loc="upper right")
+            ax.legend(frameon=False, fontsize=8, labelcolor=INK_MUTED, ncol=2, loc="upper right")
         _save(fig, a.out_dir, "phase_means_ablation")
 
     print("done.")
