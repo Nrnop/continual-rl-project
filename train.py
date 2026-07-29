@@ -440,6 +440,9 @@ def main():
             consol_err = getattr(agent, "last_consolidation_error", None)
             if consol_err is not None:
                 scalars["train/consolidation_error_pct"] = consol_err
+            consol_ho = getattr(agent, "last_consolidation_error_holdout", None)
+            if consol_ho is not None:
+                scalars["train/consolidation_error_holdout_pct"] = consol_ho
             logger.log_scalars(scalars, step=global_step)
 
         # Sample probe states lazily (first rollout provides good coverage)

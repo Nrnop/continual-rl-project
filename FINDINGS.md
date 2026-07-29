@@ -33,6 +33,13 @@ Five results:
 5. **EWC is the positive result** — it beats both, decisively and outside noise (phase-4 mean
    **1238** vs vanilla **375** and PT **212**; gap ≈ 1026 against σ ≈ 399).
 
+6. **Training the consolidation regression properly makes PT *worse*, not better** (§5.5). Ordering
+   the variants by how much regression actually happens gives a monotone relationship in the wrong
+   direction: no regression at all (shared trunk) is the best PT variant, a barely-trained
+   regression is next, and a well-trained one is the worst tested — and it collapses a full phase
+   earlier. The consolidation operator is not merely ineffective; performing it more faithfully is
+   actively harmful.
+
 **The central finding.** Value decomposition of the critic confers **no benefit** over a single
 critic in policy-gradient continual control — and this conclusion is now established in its strongest
 form, because we can demonstrate that the mechanism was functioning *correctly* when it failed to
@@ -231,6 +238,67 @@ across 4/5 seeds) is large relative to that noise and is treated as real.
 
 *Phase-5 decline is generic, not PT-specific:* vanilla (375 → −34) and EWC (1238 → 533) decline in
 phase 5 as well, consistent with the near-fully-annealed learning rate late in training.
+
+### 5.5 Round 5 — separate trunks with a *properly trained* consolidation regression
+
+Rounds 1–4 and §7 each break one half of the PT idea: the permanent critic must both **accumulate**
+knowledge and stay **insulated** from the fast timescale. Consolidation-off is insulated but learns
+nothing; the shared trunk accumulates exactly but its features move at the fast rate; the shipped
+separate-trunk config has both properties in principle but never actually trains its regression
+(0.05 % transfer). This round runs the missing configuration: **separate trunks, Adam,
+`lr_perm = 1e-3`, `consolidation_epochs = 20`** (6 400 gradient steps per consolidation instead of
+320), `decay = 0`, full horizon, 5 seeds.
+
+| Variant | P1 | P2 | P3 | P4 | P5 |
+|---|---|---|---|---|---|
+| shared trunk (no regression at all) | 814 | 394 | 27 | 212 | −176 |
+| shipped (regression barely runs) | 475 | 332 | −279 | −249 | −396 |
+| **trained consolidation (this round)** | **410** | **−594** | **−50** | **−837** | **−114** |
+
+SEMs 26 / 47 / 106 / 162 / 109; seeds-positive 5/5, 0/5, 1/5, 0/5, 1/5.
+
+**Training the regression made PT worse, not better** — and decisively so (the phase-2 gap alone is
+~900 points against a 47-point SEM). The collapse also arrives **one phase earlier**: this variant is
+already deeply negative at P2, the very first switch, whereas the shipped version survives to P3.
+
+Ordering the variants by *how much consolidation regression actually happens* gives a monotone
+relationship in the wrong direction — **more regression, worse performance** — with the variant that
+removes the regression entirely (shared trunk) performing best. This closes off "the consolidation
+was never trained" as the explanation for the original collapse, and points instead at the
+regression itself being harmful.
+
+**The in-situ measurement, and the puzzle it creates.** This round logs
+`train/consolidation_error_pct`: the % change in the acting value across each consolidation,
+measured on the states being consolidated. It falls to essentially zero:
+
+| training stage | consolidation error (fitted states) |
+|---|---|
+| first cycle | ~2.5–3.0 % |
+| mid-training | ~0.3–0.7 % |
+| final phase | **~0.00–0.07 %** |
+
+So the regression *does* fit, and the transfer *is* value-preserving — **on the states it trained
+on**. Yet performance is the worst of any variant.
+
+**Leading explanation (measured offline, in-situ confirmation pending).** The metric above is
+in-distribution only. With Adam, `lr_perm = 1e-3` and 6 400 gradient steps on a `[64,64]` net over a
+20 480-state buffer, the permanent net plausibly **memorises the buffer** and extrapolates badly onto
+the *new* states the policy visits immediately afterwards — worst right after a switch, when the
+state distribution has just moved, which matches the collapse arriving one phase earlier. Holding
+out 20 % of the buffer from the regression and measuring drift on it separately reproduces exactly
+this signature offline:
+
+| consolidation epochs | error on fitted states | error on held-out states |
+|---|---|---|
+| 1 | 89.5 % | 89.6 % |
+| 20 | 41.3 % | 55.8 % |
+| 60 | **24.2 %** | **53.4 %** |
+
+More training improves the fitted states while held-out error barely moves — the gap widens from
+~0 to ~29 points. `configs/abl_pt_consol_holdout.yaml` runs this measurement *during training* to
+confirm it in situ (3 seeds; it measures a mechanism, not a return difference). Until that lands,
+this explanation is **suggestive rather than established** — the round-5 result itself (more
+regression ⇒ worse performance) is what stands on the evidence.
 
 ---
 

@@ -15,6 +15,8 @@
 #   RUN FROM THE PARENT of src_continuous_control/:
 #     MAXJOBS=4 bash src_continuous_control/scripts/run_ablation5.sh
 #
+# NOTE: do NOT add --no-tb -- with --no-wandb too, the logger backend becomes "none" and
+# log_scalar is a no-op, so consolidation metrics would never be recorded.
 # NOTE: consolidation roughly doubles the gradient work, so expect ~3x a normal run
 # (~1.5-2 h each; ~3-4 h total for 5 seeds at MAXJOBS=4).
 # Writes to abl_results/pt_trained_consol/ — results/ is NEVER touched.
@@ -36,7 +38,7 @@ for seed in 0 1 2 3 4; do
   while [ "$(jobs -rp | wc -l)" -ge "$MAXJOBS" ]; do sleep 5; done
   echo "launch pt_trained_consol seed=$seed  $(date +%H:%M:%S)"
   python -u -m src_continuous_control.train --agent pt --config abl_pt_trained_consol \
-      --seed "$seed" --no-wandb --no-tb \
+      --seed "$seed" --no-wandb \
       --results-dir "abl_results/pt_trained_consol" --runs-dir "abl_runs/pt_trained_consol" \
       > "abl_logs/pt_trained_consol_seed${seed}.log" 2>&1 &
 done

@@ -87,6 +87,9 @@ class PPOPT(PPOBase):
         # % change in the acting value across the most recent consolidation (None until the first
         # one runs). 0 means the transfer was value-preserving; large values mean it was not.
         self.last_consolidation_error = None
+        # Same measurement on buffered states EXCLUDED from the regression (needs
+        # consolidation_holdout_frac > 0). This is the number that matters operationally.
+        self.last_consolidation_error_holdout = None
 
     # ------------------------------------------------------------------
     # Hook implementations
@@ -144,28 +147,60 @@ class PPOPT(PPOBase):
         # Shared-trunk variant: exact, O(1), no regression and no value drift.
         if self.shared_trunk:
             self.critic.consolidate(self.transient_decay)
-            self.last_consolidation_error = 0.0
+            self.last_consolidation_error = 0.0          # exact by construction
+            self.last_consolidation_error_holdout = 0.0  # ...on every state, not just fitted ones
             return
 
         if len(self.consolidation_buffer) == 0:
             return
 
         # Measure how much the acting value V = V_perm + V_trans actually moves across this
-        # consolidation, on the very states being consolidated. Ideally 0 (the transfer is meant to
-        # be value-preserving); in practice it is bounded by how well the regression below fits.
-        # Reported as a fraction of |V| so it is comparable across runs. This is the in-situ version
-        # of the offline measurement in FINDINGS.md 6.3.
-        probe_s, _ = self.consolidation_buffer.as_arrays()
-        probe_t = torch.as_tensor(probe_s[: min(4096, len(probe_s))],
-                                  dtype=torch.float32, device=self.device)
-        with torch.no_grad():
-            _p0, _t0 = self.critic(probe_t)
-            v_before = _p0 + _t0
+        # consolidation. Ideally 0 (the transfer is meant to be value-preserving); in practice it is
+        # bounded by how well the regression below fits. Reported as a % of |V|.
+        #
+        # TWO measurements, because they answer different questions:
+        #   - FITTED states: error on the states the regression trained on (in-distribution).
+        #   - HELD-OUT states: error on buffered states deliberately EXCLUDED from the regression.
+        # The held-out number is the operationally relevant one: after consolidating, the agent
+        # immediately collects a NEW rollout and bootstraps from V on states it has not consolidated
+        # on. A low fitted error with a high held-out error means the permanent net memorised the
+        # buffer and extrapolates badly — good-looking diagnostics while the acting value is
+        # corrupted exactly where it is next used. Enable with consolidation_holdout_frac > 0
+        # (default 0 keeps the original behaviour, so earlier runs remain reproducible).
+        states_np, oldvp_np = self.consolidation_buffer.as_arrays()
+        n_total = len(states_np)
+        holdout_frac = float(self.cfg.get("consolidation_holdout_frac", 0.0))
+        perm_idx = np.random.permutation(n_total)
+        n_hold = int(n_total * holdout_frac)
+        hold_idx, train_idx = perm_idx[:n_hold], perm_idx[n_hold:]
 
+        def _probe(idx):
+            if len(idx) == 0:
+                return None
+            sub = idx[: min(4096, len(idx))]
+            return torch.as_tensor(states_np[sub], dtype=torch.float32, device=self.device)
+
+        fit_probe, hold_probe = _probe(train_idx), _probe(hold_idx)
+
+        def _value(t):
+            if t is None:
+                return None
+            with torch.no_grad():
+                a, b = self.critic(t)
+            return a + b
+
+        v_fit_before, v_hold_before = _value(fit_probe), _value(hold_probe)
+
+        # Train the permanent head on the (possibly reduced) training split only.
+        s_train = torch.as_tensor(states_np[train_idx], dtype=torch.float32, device=self.device)
+        v_train = torch.as_tensor(oldvp_np[train_idx], dtype=torch.float32, device=self.device)
         keep = 1.0 - self.transient_decay
+        mb = self.minibatch_size
         for _ in range(self.consolidation_epochs):
-            for s_mb, old_vp_mb in self.consolidation_buffer.iter_minibatches(
-                    self.minibatch_size, self.device):
+            order = torch.randperm(len(s_train), device=self.device)
+            for i in range(0, len(s_train), mb):
+                sel = order[i:i + mb]
+                s_mb, old_vp_mb = s_train[sel], v_train[sel]
                 v_perm, v_trans = self.critic(s_mb)
                 target = old_vp_mb + keep * v_trans.detach()
                 loss = 0.5 * ((v_perm - target) ** 2).mean()
@@ -176,13 +211,14 @@ class PPOPT(PPOBase):
         # The transient head has been absorbed into the permanent; decay it back down.
         self.critic.decay_transient(self.transient_decay)
 
-        # How much did the acting value actually move? (0 = the transfer was value-preserving)
-        with torch.no_grad():
-            _p1, _t1 = self.critic(probe_t)
-            v_after = _p1 + _t1
-        denom = v_before.abs().mean().clamp_min(1e-8)
-        self.last_consolidation_error = float(
-            (v_after - v_before).abs().mean() / denom * 100.0)
+        def _drift(t, before):
+            if t is None or before is None:
+                return None
+            after = _value(t)
+            return float((after - before).abs().mean() / before.abs().mean().clamp_min(1e-8) * 100.0)
+
+        self.last_consolidation_error = _drift(fit_probe, v_fit_before)
+        self.last_consolidation_error_holdout = _drift(hold_probe, v_hold_before)
 
         self.consolidation_buffer.clear()
 
