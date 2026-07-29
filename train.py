@@ -28,6 +28,7 @@ from .envs.directional_half_cheetah import (
     make_directional_env,
     make_vector_env,
 )
+from .envs.drift_half_cheetah import make_drift_env, make_drift_vector_env
 from .utils.logger import Logger
 from .utils.metrics import ValueDriftProbe, BoundaryReturnTracker
 from .utils.seeding import seed_everything, seed_env
@@ -227,6 +228,40 @@ def _sync_obs_stats(train_env, eval_env):
     dst.update_running_mean = False
 
 
+def _drift_multiplier(cfg, t):
+    """The drift multiplier at global env step t — same formula as the wrapper, no env access."""
+    amp = float(cfg.get("drift_amplitude", 0.5))
+    period = max(int(cfg.get("drift_period", 1228800)), 1)
+    if str(cfg.get("drift_schedule", "sin")).lower() == "sin":
+        return 1.0 + amp * float(np.sin(2.0 * np.pi * t / period + float(cfg.get("drift_phase", 0.0))))
+    return 1.0 + amp * (t / period)
+
+
+def _drift_lipschitz(cfg):
+    """Max |change in the multiplier| per env step: the eps of ||P_{t+1} - P_t|| <= eps."""
+    amp = abs(float(cfg.get("drift_amplitude", 0.5)))
+    period = max(int(cfg.get("drift_period", 1228800)), 1)
+    if str(cfg.get("drift_schedule", "sin")).lower() == "sin":
+        return amp * 2.0 * np.pi / period
+    return amp / period
+
+
+def _sync_drift_clock(eval_env, t):
+    """Put the eval env at the same point of the drift schedule as the training env.
+
+    The drift clock counts global env steps and never resets, so an eval env that started at t=0
+    would be evaluated on DIFFERENT physics than the policy is currently training on — which would
+    silently confound every eval point. Copy the training clock across and re-apply the drift.
+    """
+    cur = eval_env
+    while cur is not None:
+        if hasattr(cur, "multiplier") and hasattr(cur, "_apply"):
+            cur.t = t
+            cur._apply(cur.multiplier())
+            return
+        cur = getattr(cur, "env", None)
+
+
 def _get_env_direction(env):
     """Find the running direction across any wrapper stack."""
     if hasattr(env, "direction"):
@@ -263,18 +298,49 @@ def main():
     async_envs = cfg.get("async_envs", True)
     if cfg.get("render", False) and num_envs > 1:
         print("[train] render is not supported with num_envs>1; disabling train-env video.")
-    env = make_vector_env(
-        env_id=cfg.get("env_id", "HalfCheetah-v5"),
-        num_envs=num_envs,
-        direction=cfg["tasks"][0],
-        max_episode_steps=cfg.get("max_episode_steps", 1000),
-        gamma=cfg["gamma"],
-        normalize_obs=normalize_obs,
-        normalize_reward=normalize_reward,
-        clip_obs=cfg.get("clip_obs", 10.0),
-        clip_reward=cfg.get("clip_reward", 10.0),
-        asynchronous=async_envs,
+
+    # env_mode selects WHERE the non-stationarity lives:
+    #   "directional" (default) -- the REWARD flips sign at discrete task boundaries
+    #   "drift"                 -- the REWARD is fixed and the PHYSICS drift smoothly, with no
+    #                              boundaries at all (the setting the proposal specifies)
+    env_mode = str(cfg.get("env_mode", "directional")).lower()
+    drift_mode = env_mode == "drift"
+    if env_mode not in ("directional", "drift"):
+        raise ValueError(f"unknown env_mode {env_mode!r}; valid: 'directional', 'drift'")
+
+    drift_kwargs = dict(
+        drift_targets=tuple(cfg.get("drift_targets", ["damping", "friction"])),
+        amplitude=cfg.get("drift_amplitude", 0.5),
+        period=cfg.get("drift_period", 1228800),
+        schedule=cfg.get("drift_schedule", "sin"),
+        phase=cfg.get("drift_phase", 0.0),
     )
+    if drift_mode:
+        env = make_drift_vector_env(
+            env_id=cfg.get("env_id", "HalfCheetah-v5"),
+            num_envs=num_envs,
+            max_episode_steps=cfg.get("max_episode_steps", 1000),
+            gamma=cfg["gamma"],
+            normalize_obs=normalize_obs,
+            normalize_reward=normalize_reward,
+            clip_obs=cfg.get("clip_obs", 10.0),
+            clip_reward=cfg.get("clip_reward", 10.0),
+            asynchronous=async_envs,
+            **drift_kwargs,
+        )
+    else:
+        env = make_vector_env(
+            env_id=cfg.get("env_id", "HalfCheetah-v5"),
+            num_envs=num_envs,
+            direction=cfg["tasks"][0],
+            max_episode_steps=cfg.get("max_episode_steps", 1000),
+            gamma=cfg["gamma"],
+            normalize_obs=normalize_obs,
+            normalize_reward=normalize_reward,
+            clip_obs=cfg.get("clip_obs", 10.0),
+            clip_reward=cfg.get("clip_reward", 10.0),
+            asynchronous=async_envs,
+        )
     obs, _ = env.reset(seed=seed)
     done = np.zeros(num_envs, dtype=np.float32)
     obs_dim = env.single_observation_space.shape[0]
@@ -327,7 +393,15 @@ def main():
 
     eval_env = None
     if not cfg.get("no_eval", False):
-        eval_env = make_directional_env(
+        eval_env = make_drift_env(
+            env_id=cfg.get("env_id", "HalfCheetah-v5"),
+            max_episode_steps=cfg.get("max_episode_steps", 1000),
+            render_mode=render_mode,
+            normalize_obs=normalize_obs,
+            normalize_reward=False,
+            clip_obs=cfg.get("clip_obs", 10.0),
+            **drift_kwargs,
+        ) if drift_mode else make_directional_env(
             env_id=cfg.get("env_id", "HalfCheetah-v5"),
             direction=cfg["tasks"][0],
             max_episode_steps=cfg.get("max_episode_steps", 1000),
@@ -350,6 +424,13 @@ def main():
     print(f"[train] total_steps={total_steps}  switch={switch_interval}  n_steps={n_steps}  "
           f"num_envs={num_envs}  async={async_envs and num_envs > 1}  batch={n_steps * num_envs}")
     print(f"[train] step_by_step={cfg.get('step_by_step', False)}")
+    if drift_mode:
+        print(f"[train] env_mode=drift  targets={drift_kwargs['drift_targets']}  "
+              f"amplitude={drift_kwargs['amplitude']}  period={drift_kwargs['period']}  "
+              f"schedule={drift_kwargs['schedule']}")
+        print(f"[train] Lipschitz bound on the drift multiplier: "
+              f"{_drift_lipschitz(cfg):.3e} per env step "
+              f"({cfg['total_steps'] / max(int(cfg.get('drift_period', 1)), 1):.2f} full cycles)")
     if cfg.get("disable_task_switch", False):
         print("[train] Task switching disabled (Single-Task Baseline)")
     if cfg.get("render", False):
@@ -367,7 +448,7 @@ def main():
             agent.anneal_lr(frac)
 
         # ---- Task switching ----
-        if not cfg.get("disable_task_switch", False):
+        if not drift_mode and not cfg.get("disable_task_switch", False):
             next_switch = (task_idx + 1) * switch_interval
             if global_step >= next_switch:
                 task_idx += 1
@@ -416,7 +497,10 @@ def main():
         if eval_interval is None:
             eval_interval = 50
         if eval_env is not None and (update_idx % eval_interval == 0 or update_idx == 1):
-            _set_env_task(eval_env, tasks[task_idx % len(tasks)])  # match current train task
+            if drift_mode:
+                _sync_drift_clock(eval_env, global_step)  # evaluate on the CURRENT physics
+            else:
+                _set_env_task(eval_env, tasks[task_idx % len(tasks)])  # match current train task
             _sync_obs_stats(env, eval_env)  # evaluate with the training normalizer's stats
             clean_eval_ret = _run_offline_eval(agent, eval_env, n_episodes=5)
             eval_returns_curve.append((global_step, clean_eval_ret))
@@ -443,6 +527,10 @@ def main():
             consol_ho = getattr(agent, "last_consolidation_error_holdout", None)
             if consol_ho is not None:
                 scalars["train/consolidation_error_holdout_pct"] = consol_ho
+            if drift_mode:
+                # Record where on the drift schedule we are, so return curves can be read against
+                # the physics that produced them.
+                scalars["drift/multiplier"] = _drift_multiplier(cfg, global_step)
             logger.log_scalars(scalars, step=global_step)
 
         # Sample probe states lazily (first rollout provides good coverage)
