@@ -521,7 +521,13 @@ advantages for that entire rollout.
 
 ![Figure 6.1 — (a) One consolidation at the shipped settings: 0.1% of the transient absorbed, 100% deleted. (b) The target is fittable given capacity and training, but held-out error does not improve. (c) Parameter scaling is not output scaling — exact for any decay only with linear heads.](plots/figures/consolidation_mechanism.png)
 
-*Figure 6.1 — (a) One consolidation at the shipped settings: 0.1% of the transient absorbed, 100% deleted. (b) The target is fittable given capacity and training, but held-out error does not improve. (c) Parameter scaling is not output scaling — exact for any decay only with linear heads.*
+*Figure 6.1 — **Offline measurement** of the real consolidation code on **synthetic (iid Gaussian)
+probe states**, not on states the agent visited. (a) One consolidation at the shipped settings: 0.1 %
+of the transient absorbed, 100 % deleted. (b) The target is fittable given capacity and training, but
+held-out error does not improve. (c) Parameter scaling is not output scaling — exact for any decay
+only with linear heads. The synthetic inputs make this a controlled probe rather than a measurement
+of training; the in-situ counterparts on real rollout states are Figure 6.2 and §5.6, which agree
+with (a) and (c) and are the numbers quoted in the executive summary.*
 
 #### In-situ confirmation of both defects
 
