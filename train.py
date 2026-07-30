@@ -537,6 +537,17 @@ def main():
             consol_ho = getattr(agent, "last_consolidation_error_holdout", None)
             if consol_ho is not None:
                 scalars["train/consolidation_error_holdout_pct"] = consol_ho
+            # Consolidation-regression diagnostics (PT, separate-trunk variant only).
+            for attr, tag in (("last_consolidation_loss_first", "consol/loss_first"),
+                              ("last_consolidation_loss_last", "consol/loss_last"),
+                              ("last_consolidation_loss_mean", "consol/loss_mean"),
+                              ("last_trans_mean_before", "consol/trans_mean_before"),
+                              ("last_trans_mean_after", "consol/trans_mean_after"),
+                              ("last_trans_l2_before", "consol/trans_l2_before"),
+                              ("last_trans_l2_after", "consol/trans_l2_after")):
+                val = getattr(agent, attr, None)
+                if val is not None:
+                    scalars[f"train/{tag}"] = val
             if drift_mode:
                 # Record where on the drift schedule we are, so return curves can be read against
                 # the physics that produced them.

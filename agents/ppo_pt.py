@@ -96,6 +96,18 @@ class PPOPT(PPOBase):
         # Same measurement on buffered states EXCLUDED from the regression (needs
         # consolidation_holdout_frac > 0). This is the number that matters operationally.
         self.last_consolidation_error_holdout = None
+        # Consolidation-regression diagnostics, refreshed at each consolidation (None until the
+        # first one). `_loss_curve` is the full within-consolidation loss trace; the scalars are
+        # what gets logged each cycle.
+        self.last_consolidation_loss_first = None
+        self.last_consolidation_loss_last = None
+        self.last_consolidation_loss_mean = None
+        self.last_consolidation_loss_curve = None
+        # Transient value statistics over the consolidation batch, before and after the decay.
+        self.last_trans_mean_before = None
+        self.last_trans_mean_after = None
+        self.last_trans_l2_before = None
+        self.last_trans_l2_after = None
 
     # ------------------------------------------------------------------
     # Hook implementations
@@ -152,9 +164,22 @@ class PPOPT(PPOBase):
         """
         # Shared-trunk variant: exact, O(1), no regression and no value drift.
         if self.shared_trunk:
+            # No regression here — the transfer is weight arithmetic — so there is no loss curve.
+            # The transient statistics are still meaningful and are recorded.
+            probe = None
+            if len(self.consolidation_buffer):
+                st, _ = self.consolidation_buffer.as_arrays()
+                probe = torch.as_tensor(st[: min(4096, len(st))], dtype=torch.float32,
+                                        device=self.device)
+            self.last_trans_mean_before, self.last_trans_l2_before = self._trans_stats(probe)
             self.critic.consolidate(self.transient_decay)
             if self.reset_trans_optim_on_decay:
                 self._decay_transient(1.0)               # weights unchanged; clears optimiser state
+            self.last_trans_mean_after, self.last_trans_l2_after = self._trans_stats(probe)
+            self.last_consolidation_loss_first = None    # not applicable: no regression
+            self.last_consolidation_loss_last = None
+            self.last_consolidation_loss_mean = None
+            self.last_consolidation_loss_curve = None
             self.last_consolidation_error = 0.0          # exact by construction
             self.last_consolidation_error_holdout = 0.0  # ...on every state, not just fitted ones
             return
@@ -179,6 +204,7 @@ class PPOPT(PPOBase):
         n_total = len(states_np)
         holdout_frac = float(self.cfg.get("consolidation_holdout_frac", 0.0))
         keep = 1.0 - self.transient_decay
+        loss_curve = []          # regression loss, one entry per gradient step of this consolidation
 
         def _probe(arr):
             if arr is None or len(arr) == 0:
@@ -200,12 +226,14 @@ class PPOPT(PPOBase):
             # downstream random draw and make same-seed runs non-reproducible.
             fit_probe, hold_probe = _probe(states_np), None
             v_fit_before, v_hold_before = _value(fit_probe), None
+            self.last_trans_mean_before, self.last_trans_l2_before = self._trans_stats(fit_probe)
             for _ in range(self.consolidation_epochs):
                 for s_mb, old_vp_mb in self.consolidation_buffer.iter_minibatches(
                         self.minibatch_size, self.device):
                     v_perm, v_trans = self.critic(s_mb)
                     target = old_vp_mb + keep * v_trans.detach()
                     loss = 0.5 * ((v_perm - target) ** 2).mean()
+                    loss_curve.append(float(loss.detach()))
                     self.perm_optim.zero_grad()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.critic.perm.parameters(),
@@ -220,6 +248,7 @@ class PPOPT(PPOBase):
             hold_idx, train_idx = perm_idx[:n_hold], perm_idx[n_hold:]
             fit_probe, hold_probe = _probe(states_np[train_idx]), _probe(states_np[hold_idx])
             v_fit_before, v_hold_before = _value(fit_probe), _value(hold_probe)
+            self.last_trans_mean_before, self.last_trans_l2_before = self._trans_stats(fit_probe)
             s_train = torch.as_tensor(states_np[train_idx], dtype=torch.float32, device=self.device)
             v_train = torch.as_tensor(oldvp_np[train_idx], dtype=torch.float32, device=self.device)
             mb = self.minibatch_size
@@ -230,6 +259,7 @@ class PPOPT(PPOBase):
                     v_perm, v_trans = self.critic(s_train[sel])
                     target = v_train[sel] + keep * v_trans.detach()
                     loss = 0.5 * ((v_perm - target) ** 2).mean()
+                    loss_curve.append(float(loss.detach()))
                     self.perm_optim.zero_grad()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.critic.perm.parameters(),
@@ -238,6 +268,12 @@ class PPOPT(PPOBase):
 
         # The transient head has been absorbed into the permanent; decay it back down.
         self._decay_transient(self.transient_decay)
+        self.last_trans_mean_after, self.last_trans_l2_after = self._trans_stats(fit_probe)
+        if loss_curve:
+            self.last_consolidation_loss_curve = loss_curve
+            self.last_consolidation_loss_first = loss_curve[0]
+            self.last_consolidation_loss_last = loss_curve[-1]
+            self.last_consolidation_loss_mean = float(np.mean(loss_curve))
 
         def _drift(t, before):
             if t is None or before is None:
@@ -250,6 +286,14 @@ class PPOPT(PPOBase):
         self.last_consolidation_error_holdout = _drift(hold_probe, v_hold_before)
 
         self.consolidation_buffer.clear()
+
+    def _trans_stats(self, probe):
+        """(mean, L2 norm) of V_trans over a batch of states — the transient's magnitude."""
+        if probe is None:
+            return None, None
+        with torch.no_grad():
+            _, v_trans = self.critic(probe)
+        return float(v_trans.mean()), float(torch.linalg.vector_norm(v_trans))
 
     def _decay_transient(self, decay):
         """Decay the transient head, optionally clearing its optimiser state at the same time.
