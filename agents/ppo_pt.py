@@ -103,6 +103,13 @@ class PPOPT(PPOBase):
         self.last_consolidation_loss_last = None
         self.last_consolidation_loss_mean = None
         self.last_consolidation_loss_curve = None
+        # Permanent value statistics over the consolidation batch, before and after the
+        # consolidation regression. The transient pair below shows what the decay REMOVES; this
+        # pair shows what the transfer actually ADDS — together they are the two-defect picture.
+        self.last_perm_mean_before = None
+        self.last_perm_mean_after = None
+        self.last_perm_l2_before = None
+        self.last_perm_l2_after = None
         # Transient value statistics over the consolidation batch, before and after the decay.
         self.last_trans_mean_before = None
         self.last_trans_mean_after = None
@@ -172,10 +179,12 @@ class PPOPT(PPOBase):
                 probe = torch.as_tensor(st[: min(4096, len(st))], dtype=torch.float32,
                                         device=self.device)
             self.last_trans_mean_before, self.last_trans_l2_before = self._trans_stats(probe)
+            self.last_perm_mean_before, self.last_perm_l2_before = self._perm_stats(probe)
             self.critic.consolidate(self.transient_decay)
             if self.reset_trans_optim_on_decay:
                 self._decay_transient(1.0)               # weights unchanged; clears optimiser state
             self.last_trans_mean_after, self.last_trans_l2_after = self._trans_stats(probe)
+            self.last_perm_mean_after, self.last_perm_l2_after = self._perm_stats(probe)
             self.last_consolidation_loss_first = None    # not applicable: no regression
             self.last_consolidation_loss_last = None
             self.last_consolidation_loss_mean = None
@@ -227,6 +236,7 @@ class PPOPT(PPOBase):
             fit_probe, hold_probe = _probe(states_np), None
             v_fit_before, v_hold_before = _value(fit_probe), None
             self.last_trans_mean_before, self.last_trans_l2_before = self._trans_stats(fit_probe)
+            self.last_perm_mean_before, self.last_perm_l2_before = self._perm_stats(fit_probe)
             for _ in range(self.consolidation_epochs):
                 for s_mb, old_vp_mb in self.consolidation_buffer.iter_minibatches(
                         self.minibatch_size, self.device):
@@ -249,6 +259,7 @@ class PPOPT(PPOBase):
             fit_probe, hold_probe = _probe(states_np[train_idx]), _probe(states_np[hold_idx])
             v_fit_before, v_hold_before = _value(fit_probe), _value(hold_probe)
             self.last_trans_mean_before, self.last_trans_l2_before = self._trans_stats(fit_probe)
+            self.last_perm_mean_before, self.last_perm_l2_before = self._perm_stats(fit_probe)
             s_train = torch.as_tensor(states_np[train_idx], dtype=torch.float32, device=self.device)
             v_train = torch.as_tensor(oldvp_np[train_idx], dtype=torch.float32, device=self.device)
             mb = self.minibatch_size
@@ -265,6 +276,9 @@ class PPOPT(PPOBase):
                     torch.nn.utils.clip_grad_norm_(self.critic.perm.parameters(),
                                                    self.max_grad_norm)
                     self.perm_optim.step()
+
+        # Permanent statistics AFTER the regression (the decay below touches only the transient).
+        self.last_perm_mean_after, self.last_perm_l2_after = self._perm_stats(fit_probe)
 
         # The transient head has been absorbed into the permanent; decay it back down.
         self._decay_transient(self.transient_decay)
@@ -286,6 +300,14 @@ class PPOPT(PPOBase):
         self.last_consolidation_error_holdout = _drift(hold_probe, v_hold_before)
 
         self.consolidation_buffer.clear()
+
+    def _perm_stats(self, probe):
+        """(mean, L2 norm) of V_perm over a batch of states — the permanent's magnitude."""
+        if probe is None:
+            return None, None
+        with torch.no_grad():
+            v_perm, _ = self.critic(probe)
+        return float(v_perm.mean()), float(torch.linalg.vector_norm(v_perm))
 
     def _trans_stats(self, probe):
         """(mean, L2 norm) of V_trans over a batch of states — the transient's magnitude."""

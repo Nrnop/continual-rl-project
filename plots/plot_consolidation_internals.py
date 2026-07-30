@@ -1,13 +1,21 @@
-"""Internals of the permanent-consolidation step: the regression loss, and the transient's magnitude
-before and after the decay.
+"""Internals of the permanent-consolidation step, read from a run's own TensorBoard events.
 
-Two panels, both read from a run's own TensorBoard events:
+Four panels. Together (a)/(c) show what the TRANSFER fails to move and (d) shows the permanent
+network barely moving as a result, while (b)/(c) show what the DECAY removes — the two defects of
+FINDINGS.md 6.1, measured during training rather than on probes:
 
   (a) THE CONSOLIDATION REGRESSION LOSS. Every consolidation runs a supervised regression fitting
       V_perm -> old_V_perm + (1-decay)*V_trans over the buffered states. Logged per consolidation as
       the loss at the FIRST gradient step, the LAST, and the mean over the cycle. The first-vs-last
       gap shows how much each individual consolidation actually converges; the trend of the last
       value shows whether the regression gets easier as training proceeds.
+
+  (d) THE PERMANENT'S MAGNITUDE ACROSS THE REGRESSION. Mean of V_perm(s) over the same batch,
+      immediately before and immediately after the consolidation regression (the decay that follows
+      touches only the transient, so it cannot affect this pair). This is the quantity consolidation
+      is supposed to MOVE: if the transfer worked, the permanent should visibly absorb the
+      transient's value. The script also prints the relative change in ||V_perm||, which is the
+      transfer expressed as a single number.
 
   (b) THE TRANSIENT'S MAGNITUDE ACROSS THE DECAY. Mean and L2 norm of V_trans(s) over the
       consolidation batch, measured immediately before and immediately after theta_T is decayed.
@@ -87,6 +95,7 @@ def main():
 
     tags = {k: _scalars(a.runs_dir, f"train/consol/{k}") for k in
             ("loss_first", "loss_last", "loss_mean",
+             "perm_mean_before", "perm_mean_after", "perm_l2_before", "perm_l2_after",
              "trans_mean_before", "trans_mean_after", "trans_l2_before", "trans_l2_after")}
     have = {k: len(v) for k, v in tags.items()}
     print("  seeds found per tag:", have)
@@ -94,7 +103,7 @@ def main():
         print(f"  no train/consol/* tags in {a.runs_dir!r} — this run predates the instrumentation.")
         return
 
-    fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.3))
+    fig, axes = plt.subplots(1, 4, figsize=(20.5, 4.3))
 
     # ---- (a) regression loss ----
     ax = axes[0]
@@ -138,6 +147,20 @@ def main():
            "environment steps", "L2 norm", xmax)
     ax.legend(frameon=False, fontsize=8.5, labelcolor=MUT)
 
+    # ---- (d) permanent mean before/after the consolidation regression ----
+    ax = axes[3]
+    for key, col, ls, lab in (("perm_mean_before", C_BEFORE, "-", "before consolidation"),
+                              ("perm_mean_after", C_AFTER, "--", "after consolidation")):
+        x, y = _mean_curve(tags[key])
+        if x is None:
+            continue
+        ax.plot(x, y, color=col, lw=1.8, ls=ls, label=lab)
+    ax.axhline(0, color=MUT, lw=1.0)
+    _style(ax, "(d) Mean permanent value over the batch\n"
+               r"$\bar{V}_{perm}(s)$, before vs after the regression",
+           "environment steps", "mean value", xmax)
+    ax.legend(frameon=False, fontsize=8.5, labelcolor=MUT)
+
     os.makedirs(a.out_dir, exist_ok=True)
     for ext in ("png", "pdf"):
         p = os.path.join(a.out_dir, f"{a.name}.{ext}")
@@ -145,12 +168,20 @@ def main():
         print(f"  wrote {p}")
 
     # numbers for the write-up
-    for key in ("loss_first", "loss_last", "trans_mean_before", "trans_mean_after",
+    for key in ("loss_first", "loss_last", "perm_mean_before", "perm_mean_after",
+                "perm_l2_before", "perm_l2_after", "trans_mean_before", "trans_mean_after",
                 "trans_l2_before", "trans_l2_after"):
         x, y = _mean_curve(tags[key])
         if x is None:
             continue
         print(f"  {key:20} first {y[0]:12.5g}   final {y[-1]:12.5g}   overall mean {y.mean():12.5g}")
+    pb, pyb = _mean_curve(tags["perm_l2_before"])
+    pa, pya = _mean_curve(tags["perm_l2_after"])
+    if pb is not None and pa is not None:
+        n = min(len(pyb), len(pya))
+        d = np.abs(pya[:n] - pyb[:n]) / np.maximum(pyb[:n], 1e-12)
+        print(f"  permanent L2 relative CHANGE across the regression: mean {d.mean()*100:.3f}%  "
+              f"(how much the transfer actually moved V_perm)")
     xb, yb = _mean_curve(tags["trans_l2_before"])
     xa, ya = _mean_curve(tags["trans_l2_after"])
     if xb is not None and xa is not None:
