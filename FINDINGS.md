@@ -79,9 +79,10 @@ to be the discriminating one.
 
 | Item | Value |
 |---|---|
-| Environment | `DirectionalHalfCheetah` (HalfCheetah-v5); reward's forward-velocity term flips sign |
-| Non-stationarity | 4 switches / 5 phases, direction sequence `+1, −1, +1, −1, +1` |
-| Switch interval | 614 400 env steps · total 3 072 000 steps |
+| Environments | **`DirectionalHalfCheetah`** — the *reward's* forward-velocity term flips sign at discrete boundaries (§4–§7); **`LipschitzDriftHalfCheetah`** — the reward is fixed and the *physics* drift continuously, with no boundaries (§8) |
+| Non-stationarity (switching) | 4 switches / 5 phases, direction sequence `+1, −1, +1, −1, +1`, switch interval 614 400 steps |
+| Non-stationarity (drift) | joint damping + ground friction rescaled by a smooth multiplier; three regimes — slow (period 1.23 M), fast (period 123 k) and two-timescale (slow trend + fast fluctuation). Measured Lipschitz bound reported at run time |
+| Horizon | 3 072 000 env steps per run |
 | Agents | `vanilla` (single critic), `pt` (split critic), `ewc` (online diagonal-Fisher penalty) |
 | Seeds | 0–4 (5 seeds per agent) |
 | PPO recipe | 8 async envs × 256 steps (batch 2048), 10 epochs, minibatch 64, γ=0.99, λ=0.95, clip 0.2, LR anneal, obs+reward normalisation |
@@ -119,7 +120,8 @@ return with a small, stable critic loss — the expected HalfCheetah learning cu
 The unit tests had not been updated after an earlier vectorisation refactor. Nine tests were failing
 against the current code. One was a **genuine production bug**: `_online_step_update` still passed a
 1-D observation to a `get_value` that expected a batch. Fixed, and the suite updated to the
-vectorised buffer signature. **15/15 passing** at that point (now 19/19, see §7).
+vectorised buffer signature. **15/15 passing** at that point; the suite has since grown to
+**31 tests** as each new mechanism and environment was added.
 
 ### 3.3 PT algorithm corrections
 Three defects in the PT agent were fixed before the main sweep:
@@ -153,6 +155,19 @@ number of seeds achieving a positive mean:
 End-of-phase returns show the same ordering (vanilla 1524/1350/950/1425/962; EWC
 1524/1545/1453/2739/1785; PT 1124/1456/−100/−21/−346).
 
+![Figure 4.1 — Per-phase mean return, three agents, 5 seeds. Error bars are SEM.](plots/figures/phase_means_main.png)
+
+*Figure 4.1 — Per-phase mean return, three agents, 5 seeds. Error bars are SEM.*
+
+![Figure 4.2 — Return over training with task boundaries marked. PT (blue) never recovers after the second switch.](plots/figures/return_curves.png)
+
+*Figure 4.2 — Return over training with task boundaries marked. PT (blue) never recovers after the second switch.*
+
+![Figure 4.3 — Mean x-velocity. PT's cheetah stops moving from phase 3 onward, while vanilla and EWC keep reversing direction each phase.](plots/figures/velocity_curves.png)
+
+*Figure 4.3 — Mean x-velocity. PT's cheetah stops moving from phase 3 onward, while vanilla and EWC keep reversing direction each phase.*
+
+
 > **Data source.** All per-phase means are computed from `results/*_returns.pkl`, which records one
 > point per PPO update (2 048 env steps → 1 500 points per run). The exported CSVs in
 > `numeric_logs_csv/` are a **10× subsample** of the same runs (one point per 20 480 steps, first
@@ -176,6 +191,27 @@ End-of-phase returns show the same ordering (vanilla 1524/1350/950/1425/962; EWC
   degradation (H2); the regularisation baseline does both.
 - **Offline zero-momentum evaluation** (momentum-free adaptation probe): PT *degrades over training*
   (+400 → negative); EWC climbs to ~1270; vanilla holds ~300–770.
+
+![Figure 4.4 — Relative return drop at a task switch. PT's ~117% with very large variance against a tight 52–55% for the baselines.](plots/figures/boundary_drop.png)
+
+*Figure 4.4 — Relative return drop at a task switch. PT's ~117% with very large variance against a tight 52–55% for the baselines.*
+
+![Figure 4.5 — Zero-momentum offline evaluation, which removes the carried-momentum confound at a direction reversal.](plots/figures/offline_curves.png)
+
+*Figure 4.5 — Zero-momentum offline evaluation, which removes the carried-momentum confound at a direction reversal.*
+
+![Figure 4.6 — Rollouts required to recover 90% of the previous phase's peak.](plots/figures/recovery_time.png)
+
+*Figure 4.6 — Rollouts required to recover 90% of the previous phase's peak.*
+
+![Figure 4.7 — Asymptotic versus online cumulative return.](plots/figures/asymptotic_bar.png)
+
+*Figure 4.7 — Asymptotic versus online cumulative return.*
+
+![Figure 4.8 — Critic loss. Note that PT's stays small (~0.01) throughout, which is why the failure evaded this diagnostic (§6.2).](plots/figures/td_error_curves.png)
+
+*Figure 4.8 — Critic loss. Note that PT's stays small (~0.01) throughout, which is why the failure evaded this diagnostic (§6.2).*
+
 - **Sanity check passed:** vanilla and EWC are identical in phase 1 (743) — correct, since EWC's
   penalty is inactive until the first task switch.
 - **Critic loss stayed low (~0.01) for PT throughout.** This is important: the failure is **not**
@@ -253,6 +289,11 @@ single oscillating seed.)
 vanilla-level performance — exactly as predicted, because with consolidation disabled `V_perm` is a
 frozen random network and PT degenerates into "vanilla plus a fixed offset".
 
+
+![Figure 5.1 — PT variants ordered by how much consolidation regression actually runs. Removing the regression entirely (violet, red) performs best; training it well (yellow) performs worst.](plots/figures/phase_means_ablation.png)
+
+*Figure 5.1 — PT variants ordered by how much consolidation regression actually runs. Removing the regression entirely (violet, red) performs best; training it well (yellow) performs worst.*
+
 *Interpretation discipline:* differences between `PT-no-consolidation` and vanilla in phases 2–4 sit
 **within seed noise** (σ = 350–680, n = 5). The defensible claim is **"removing consolidation restores
 vanilla-level performance"**, not "PT beats vanilla". The phase-3 *reversal* (−279 → +291, consistent
@@ -325,7 +366,7 @@ on**. Yet performance is the worst of any variant. Panel (a) of
 `plots/figures/consolidation_insitu.png` plots this directly from the run's own logs: the drift
 falls from ~3 % to ~0.006 % over training, on every seed.
 
-**Leading explanation (measured offline, in-situ confirmation pending).** The metric above is
+**Leading explanation at the time (since falsified — see §5.6).** The metric above is
 in-distribution only. With Adam, `lr_perm = 1e-3` and 6 400 gradient steps on a `[64,64]` net over a
 20 480-state buffer, the permanent net plausibly **memorises the buffer** and extrapolates badly onto
 the *new* states the policy visits immediately afterwards — worst right after a switch, when the
@@ -372,6 +413,11 @@ distribution** rather than memorising it — but it does *not* test extrapolatio
 **next** rollout, which are temporally later and, right after a switch, drawn from a shifted
 distribution. That stricter question remains open (§10h).
 
+
+![Figure 5.2 — In-situ consolidation quality from the runs' own logs. (a) Round 5: the regression converges to a near-exact transfer. (b) Round 6: held-out error tracks fitted error everywhere, falsifying the memorisation hypothesis.](plots/figures/consolidation_insitu.png)
+
+*Figure 5.2 — In-situ consolidation quality from the runs' own logs. (a) Round 5: the regression converges to a near-exact transfer. (b) Round 6: held-out error tracks fitted error everywhere, falsifying the memorisation hypothesis.*
+
 **What this leaves.** Consolidation demonstrably works: the transfer is near-exact, on fitted and
 unseen states alike, throughout training — and PT collapses anyway. The failure is therefore *not*
 in the transfer. Combined with the decay grouping in §5.5, attention moves to what happens
@@ -395,7 +441,11 @@ Round 7 ran the 2×2 — decay (0.0 vs 0.5) × resetting the transient's optimis
 | **no reset** | 369±2 / −164±73 / −69±71 / −369±37 / −299±4 | 485±10 / −567±94 / 243±52 / −619±171 / 40±62 |
 | **reset optimiser state** | 34±44 / −504±64 / −232±130 / −632±92 / −204±125 | 446±13 / −161±34 / 321±92 / −827±168 / 196±33 |
 
-Plotted in `plots/figures/r7_grid.png`, against the vanilla reference none of the cells reaches.
+
+![Figure 5.3 — Round 7: transient decay × resetting the transient's optimiser state. No cell reaches the vanilla reference (dashed). The reset helps at decay 0.5 and hurts at decay 0.0 — the reverse of the prediction.](plots/figures/r7_grid.png)
+
+*Figure 5.3 — Round 7: transient decay × resetting the transient's optimiser state. No cell reaches the vanilla reference (dashed). The reset helps at decay 0.5 and hurts at decay 0.0 — the reverse of the prediction.*
+
 
 **Both hypotheses are disconfirmed, and one runs backwards.**
 
@@ -464,6 +514,11 @@ net effect on the acting value V = V_perm + V_trans : 98.3 % destroyed
 **The value function is annihilated every `k = 10` updates — roughly 150 times per run.** The next
 rollout then collects bootstrap values from a gutted critic and feeds them to GAE, corrupting the
 advantages for that entire rollout.
+
+
+![Figure 6.1 — (a) One consolidation at the shipped settings: 0.1% of the transient absorbed, 100% deleted. (b) The target is fittable given capacity and training, but held-out error does not improve. (c) Parameter scaling is not output scaling — exact for any decay only with linear heads.](plots/figures/consolidation_mechanism.png)
+
+*Figure 6.1 — (a) One consolidation at the shipped settings: 0.1% of the transient absorbed, 100% deleted. (b) The target is fittable given capacity and training, but held-out error does not improve. (c) Parameter scaling is not output scaling — exact for any decay only with linear heads.*
 
 ### 6.2 Why this evaded detection for three rounds
 
@@ -553,8 +608,8 @@ the correct choice under deep function approximation.
 
 **Implementation status:** `SharedTrunkSplitCritic` added; selected by `critic_arch: shared_trunk`
 (default remains the original, so all prior behaviour is unchanged); permanent head zero-initialised
-so it starts empty and accumulates only through consolidation; **19/19 unit tests pass**, four of
-which assert that consolidation preserves the acting value exactly for every decay value.
+so it starts empty and accumulates only through consolidation; four unit tests assert that
+consolidation preserves the acting value exactly for every decay value (suite total: **31 tests**).
 
 **Known trade-off (should appear in the thesis discussion).** Because the trunk is shared, the
 permanent head's *weights* are frozen between consolidations but its *output* still moves as the
@@ -599,7 +654,7 @@ consolidation may add drag relative to not consolidating at all. However, the co
 in those phases is very large (σ = 576 and 684), and a two-sample comparison gives roughly *t* ≈ 2.3
 at phase 2 and *t* ≈ 1.5 at phase 4. Across five phases and several variants this does not survive
 as a reliable effect at n = 5. It is recorded as a hypothesis, **not** a finding, and we do not
-recommend spending further compute on it (§9f).
+recommend spending further compute on it (§10j).
 
 ### 7.2 What this establishes
 
@@ -713,9 +768,12 @@ Both settings, 3 seeds each, return by 614 400-step segment (mean ± SEM):
 | PT | 576 ± 28 | 1437 ± 95 | 1774 ± 303 | 2040 ± 296 | 2192 ± 315 |
 | **PT − vanilla** | **−174** | **−1133** | **−1345** | **−1336** | **−1409** |
 
-`plots/figures/drift_comparison.png` shows all three regimes side by side, annotating each gap
-that exceeds the combined SEM. **Vanilla beats PT outside the combined SEM in 9 of the 10
-segments.** The prediction is not merely
+
+![Figure 8.1 — PT versus vanilla across all three drift regimes. Bold numbers mark gaps exceeding the combined SEM: none under slow drift, large negative gaps in both harder regimes.](plots/figures/drift_comparison.png)
+
+*Figure 8.1 — PT versus vanilla across all three drift regimes. Bold numbers mark gaps exceeding the combined SEM: none under slow drift, large negative gaps in both harder regimes.*
+
+**Vanilla beats PT outside the combined SEM in 9 of the 10 segments.** The prediction is not merely
 unconfirmed — it is **reversed**. And the direction is systematic: under *slow* drift the two were
 tied (all gaps inside noise); adding real fast-timescale content turns that tie into a clear PT
 deficit, and the deficit is *larger* in `drift_fast` than in `drift_twoscale`. Giving the
@@ -747,76 +805,99 @@ the other two.
 
 | Deliverable | Status |
 |---|---|
-| Python implementation of non-stationary environments + dual-timescale agent | **Complete** (3 agents, config system, 19 unit tests) |
-| Experimental results, plots, evaluation metrics vs baselines | **Complete** — 6 figures, 15 per-seed CSVs, 5-seed benchmark + 4 ablation rounds |
-| Final thesis document | In progress |
-| Presentation slides | Pending |
+| Python implementation of the non-stationary environments + dual-timescale agent | **Complete** — 3 agents, 2 environments (directional switching and Lipschitz drift), layered config system, 31 unit tests |
+| Experimental results, plots, evaluation metrics vs baselines | **Complete** — 13 figures, 15 per-seed CSVs, a 3-agent × 5-seed benchmark, 7 ablation rounds and a 3-regime drift study |
+| Final thesis document | Results and Discussion drafted; Methodology outstanding |
+| Presentation slides | Not started |
 
 The proposal's Risk Management section anticipates this outcome explicitly: *"there is a risk of null
 results… **This outcome is not considered a failure.** The main contribution of the work is the
 systematic analysis of how split representations behave… Even if no performance improvement is
 observed, the results will still provide valuable insight into the limits of parameter-based
-plasticity."* The present work exceeds that bar: it delivers not merely a null result but a
-**measured mechanism, a mathematical explanation, a causal control, and a candidate fix.**
+plasticity."*
+
+The present work meets that bar and goes beyond it. Rather than a bare null result it delivers: a
+**measured failure mechanism** (§6.1), a **causal control** isolating it (§5.4), an **architecturally
+exact reimplementation** that removes the failure (§7), a **positive disconfirmation** under the
+regime the method targets (§8.1), and a **clean positive result** about the baseline it was compared
+against (§8, EWC's boundary dependence). Two candidate explanations were advanced and retracted after
+controlled testing (§5.7, §6.3), which is recorded rather than hidden.
 
 ---
 
 ## 10. Open issues and next steps
 
-**The PT investigation is closed.** Four ablation rounds plus a validated fix have converged on a
-consistent answer, and further hyper-parameter search would amount to fishing for a favourable seed
-draw. Remaining effort is better spent on (a) and (b).
+**The experimental programme is closed.** Seven ablation rounds, an architecturally exact
+reimplementation and a three-regime drift study have converged on a consistent answer. Every
+candidate mechanism proposed during the investigation has been tested; none survived. Further
+hyper-parameter search would amount to fishing for a favourable seed draw.
 
-**a) Scope mismatch with the proposal title — requires a decision.**
-The title promises *smooth environment non-stationarity*, but the implementation uses discrete
-directional switching. Two options: implement the Lipschitz drift wrapper, or adjust the title and
-framing to "boundary-based directional non-stationarity". *Recommendation:* implement the drift
-wrapper (estimated 1–2 days of work plus one ~3 h sweep), because it also enables (b).
+Items (a) and (b) of an earlier version of this section — implement the drift environment, and test
+whether EWC's advantage is boundary-dependent — are **both now done and reported in §8 and §8.1**.
+What remains is writing, plus a small number of genuinely open questions.
 
-**b) The most valuable remaining experiment.**
-**EWC requires task boundaries to compute its Fisher information.** Under smooth drift there are no
-boundaries — so the study's strongest performer may lose its advantage precisely where the proposal's
-identified gap lies ("most existing methods assume discrete task boundaries"). Given that EWC is
-currently the headline positive result, testing whether that advantage is *boundary-dependent* is the
-single most informative experiment left, and it directly addresses the motivating research gap.
-Prediction to test: EWC degrades markedly under boundary-free drift, while vanilla and PT are
-comparatively unaffected (PT's behaviour is already effectively vanilla's).
+### Remaining work
 
-**c) Dual-timescale actor — not recommended.**
-Extending PT to the policy suffers from the *identical* representability problem (a policy network
-cannot represent the sum of two policy networks), and policy errors are more immediately damaging
-than value errors. The shared-trunk construction would make an actor split exact, but §7.2 gives
-little reason to expect a benefit: the decomposition itself, not its implementation, is what fails to
-help. Only worth attempting if the thesis explicitly reframes toward a *policy*-decomposition
-research question.
+**a) Methodology chapter.** The only substantial writing gap. Everything needed exists: both
+environments, the three agents, the validated PPO recipe and the config system.
 
-**d) Statistical power.** With n = 5 and per-phase σ of 230–680, only large effects are detectable —
-which is precisely why the EWC advantage (gaps of 673–1047 points) is reportable while the
-PT-vs-vanilla differences are not. Per-phase means (used throughout) are markedly more stable than
-end-of-phase values. Any future fine-grained comparison should use 10 seeds.
+**b) Presentation slides.** Not started.
 
-**e) Untested minor lever.** The switch-time consolidation behaviour has never been properly isolated
-(see §5.1); doing so requires `k = 7` so that consolidation does not coincide with the boundary.
-Low expected value now that consolidation is known to be inert overall.
+### Genuinely open questions (none affect the conclusions)
 
-**i) The drift regime (§8) — now closed.** Both harder settings were run (§8.1). PT loses to
-vanilla outside the SEM in 9 of 10 segments, so no further drift setting is needed to establish the
-conclusion. What remains open is the *explanation* offered in §8.1 (that PT's transient faces a
-harder, staler regression target than vanilla's critic): it is untested, and given that two earlier
-mechanistic claims in this study were retracted after controlled testing, it should be reported as a
-hypothesis. A controlled test would compare the transient's regression target error against
-vanilla's critic loss under identical drift.
+**c) The §8.1 explanation is untested.** The account of *why* PT degrades under fast drift — that its
+transient must fit `returns − V_perm.detach()` against a baseline that goes stale quickly, giving it
+the same capacity as vanilla's critic but a more non-stationary target — is consistent with all
+observations but has not been tested directly. Given that two earlier mechanistic claims here were
+retracted after controlled testing (§5.7, §6.3), it should be reported as a hypothesis. A controlled
+test would compare the transient's regression error against vanilla's critic loss under identical
+drift.
 
-**f) Explicitly not recommended.** Further PT hyper-parameter tuning; and the "exact consolidation
-still adds drag" observation (§7.1), which does not survive multiple-comparison scrutiny at n = 5.
+**d) Temporal generalisation of the consolidation transfer (§5.6).** The held-out measurement used a
+random 20 % split of the *same* buffer, so it establishes that the permanent network interpolates
+within its recent state distribution. It does not test extrapolation to the *next* rollout's states,
+which are temporally later and, after a switch, drawn from a shifted distribution. Fitting the
+regression on one rollout's buffer and evaluating on the following rollout's states would close this;
+it needs a checkpoint and two rollouts, not a training run.
 
-**g) Open question from §6.3 (cheap, no training required).** The held-out consolidation error was
-measured on iid Gaussian probe states, which is a harder generalisation problem than genuine
-on-policy states. Repeating the same measurement on **real rollout states** — fit the consolidation
-regression on one rollout's buffer, evaluate on the next rollout's states — would put a calibrated
-number on the generalisation gap. It needs only a saved checkpoint plus two rollouts, not a training
-run. It would not change any conclusion (the shared-trunk formulation removes the regression
-entirely), but it would tighten the mechanistic account.
+**e) Statistical power.** With n = 5 and per-phase σ of 230–790, only large effects are detectable.
+That is why the EWC advantage (gaps of 673–1047) and PT's drift deficits (up to 1409) are reportable
+while PT-vs-vanilla differences on the switching benchmark are not. **Phase 2 in particular has σ =
+787, two to three times any other phase**, and no mechanism claim can be supported by it in either
+direction (§5.7). Any future fine-grained comparison should use 10 seeds.
+
+**f) Single environment.** All experiments use HalfCheetah. The failure analysis is mechanism-level
+and would be expected to transfer, but this has not been demonstrated on a second domain.
+
+**g) Drift design choices.** The schedule is sinusoidal so that earlier dynamics recur and retention
+is measurable. A monotone ramp, or drift in different physical parameters (mass and armature are
+implemented but unused), may behave differently.
+
+### Explicitly not recommended
+
+**h) Further PT hyper-parameter tuning.** Every mechanism has been eliminated; additional search
+would be seed-fishing.
+
+**i) A dual-timescale actor.** The shared-trunk construction (§7) would make an actor split exact, so
+the implementation obstacle is gone. But §7.2 gives little reason to expect a benefit — the
+decomposition itself, not its implementation, is what fails to help — and §8.1 shows it becoming
+actively harmful as the tracking demand rises. Only worth attempting if the thesis explicitly
+reframes toward a *policy*-decomposition research question.
+
+**j) The "exact consolidation still adds drag" observation (§7.1),** which does not survive
+multiple-comparison scrutiny at n = 5.
+
+**k) Switch-time consolidation in isolation (§5.1).** Would require `k = 7` so that consolidation
+does not coincide with the boundary. Low value now that consolidation is known not to be the
+discriminating variable.
+
+### A reproducibility note carried forward
+
+The instrumentation added in §5.6 changed which RNG stream the consolidation step consumed, so runs
+before and after it are not trajectory-comparable at matched seeds (§5.7). This is fixed, and the
+diagnostic path is documented as non-comparable. The general lesson: in stochastic experiments,
+"functionally equivalent" edits to code that consumes randomness are not equivalent for
+reproducibility.
 
 ---
 
