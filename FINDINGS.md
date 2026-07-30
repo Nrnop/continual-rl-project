@@ -17,12 +17,15 @@ Eight results:
 
 1. **PT fails in this setting** — it collapses to a do-nothing standstill policy from the third task
    phase onward (phase-3 mean return **−279** vs vanilla **+243**).
-2. **We identified the exact cause:** the consolidation operator destroys ~98 % of the value
-   function every *k* updates (~150× per run). At the shipped settings the permanent critic absorbs
-   **0.05 %** of the transient while the decay deletes **100 %** of it. The transfer is a regression
-   — the permanent critic must *learn* `old_V_perm + V_trans` — and at `lr_perm = 1e-5` with one
-   epoch (320 SGD steps) it barely moves, while the deletion happens regardless. See §6.3 for what
-   is and is not a fundamental limit here.
+2. **We identified the exact cause:** the consolidation operator destroys most of the value function
+   every *k* updates (~150× per run). Two defects compound. The transfer is a regression — the
+   permanent critic must *learn* `old_V_perm + V_trans` — and at `lr_perm = 1e-5` with one epoch
+   (320 SGD steps) it does not descend at all: measured over a full run, the loss at the last
+   gradient step of a cycle equals the loss at the first (**1.0×** reduction). Meanwhile the decay
+   removes far more than intended: at the configured `decay = 0.5` the transient's output norm falls
+   to **16.6 %**, not 50 %, because scaling an MLP's *parameters* does not scale its *output*
+   proportionally. Both are confirmed in situ over 3.07 M steps and 3 seeds (§6.1). See §6.3 for
+   what is and is not a fundamental limit here.
 3. **We proved causation**: disabling consolidation entirely reverses the collapse
    (phase-3 mean **−279 → +291**).
 4. **We built and validated a fix** — a shared trunk with linear heads makes consolidation
@@ -519,6 +522,44 @@ advantages for that entire rollout.
 ![Figure 6.1 — (a) One consolidation at the shipped settings: 0.1% of the transient absorbed, 100% deleted. (b) The target is fittable given capacity and training, but held-out error does not improve. (c) Parameter scaling is not output scaling — exact for any decay only with linear heads.](plots/figures/consolidation_mechanism.png)
 
 *Figure 6.1 — (a) One consolidation at the shipped settings: 0.1% of the transient absorbed, 100% deleted. (b) The target is fittable given capacity and training, but held-out error does not improve. (c) Parameter scaling is not output scaling — exact for any decay only with linear heads.*
+
+#### In-situ confirmation of both defects
+
+The two defects above were originally measured offline, on synthetic probe states. They have since
+been confirmed **during real training**, over the full 3 072 000-step horizon with three seeds, by
+recording the consolidation regression's loss and the transient's magnitude either side of the decay
+at every consolidation.
+
+| Measured over a full run | Shipped config (`decay = 0.5`, SGD, 1 epoch) | Trained regression (`decay = 0`, Adam, 20 epochs) |
+|---|---|---|
+| ‖V_trans‖₂ ratio, after ÷ before decay | **0.166** | 0.0000 (exact) |
+| …expected if the output scaled by `decay` | 0.5 | 0.0 |
+| Within-cycle loss reduction (first ÷ last gradient step) | **1.0×** | **2 996×** |
+
+**Defect (a), the decay.** With `decay = 0.5` the transient's output norm falls to **16.6 %** of its
+prior value, not 50 % — consistent across seeds (0.167 / 0.168 / 0.163). Scaling an MLP's
+*parameters* by one half shrinks its *output* by far more than half, so the decay removes roughly
+83 % of the transient where the algorithm assumes it removes 50 %. This is the in-situ counterpart
+of the offline measurement in §6.1(a). The `decay = 0` run confirms the boundary case: the ratio is
+exactly 0, because zeroing every parameter does zero the output.
+
+**Defect (b), the regression.** In the shipped configuration the loss at the *last* gradient step of
+a consolidation equals the loss at the *first* — a reduction of **1.0×**, i.e. none at all. Panel (a)
+of Figure 6.2 shows the three loss traces lying exactly on top of one another for the whole run: 320
+SGD steps at `lr_perm = 1e-5` accomplish nothing measurable. The same measurement with Adam,
+`lr_perm = 1e-3` and twenty epochs gives a **2 996×** reduction within each cycle, so the flat curve
+is a property of the shipped hyper-parameters rather than of the optimisation problem.
+
+Together these confirm, on the real system rather than on probes, that the shipped consolidation
+**deletes far more of the transient than intended while transferring essentially none of it**.
+
+![Figure 6.2 — Consolidation internals under the shipped configuration.](plots/figures/consolidation_internals_shipped.png)
+
+*Figure 6.2 — Consolidation internals, shipped configuration (`decay = 0.5`), 3 seeds. (a) The
+regression loss at the first, mean and last gradient step of each cycle are indistinguishable — the
+regression never descends. (b) The transient's mean value over the batch, showing the sawtooth as it
+re-accumulates between consolidations and resets at each task boundary. (c) Its L2 norm before and
+after the decay: the gap is far larger than the factor of two the configured decay implies.*
 
 ### 6.2 Why this evaded detection for three rounds
 
