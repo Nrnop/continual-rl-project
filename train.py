@@ -468,6 +468,8 @@ def main():
     task_idx = 0
 
     returns_curve = []
+    consol_loss_traces = []      # PT only: (global_step, within-consolidation loss curve)
+    _n_consol_seen = 0
     all_episode_returns = []
     eval_returns_curve = []
     velocity_curve = []
@@ -598,6 +600,14 @@ def main():
         # ---- PPO update (batch PPO over the flattened rollout) ----
         metrics = agent.update(obs, done, update_idx)
         update_idx += 1
+
+        # PT only: capture any consolidation loss traces produced by this update, tagging each
+        # with the step it happened at so the curves can be grouped by task phase when plotted.
+        _curves = getattr(agent, "consolidation_loss_curves", None)
+        if _curves is not None and len(_curves) > _n_consol_seen:
+            for c in _curves[_n_consol_seen:]:
+                consol_loss_traces.append((global_step, np.asarray(c, dtype=np.float32)))
+            _n_consol_seen = len(_curves)
 
         # ---- Zero-momentum offline evaluation & checkpointing ----
         eval_interval = cfg.get("eval_interval_updates")
@@ -751,6 +761,9 @@ def main():
     # Persist ALL logged scalars (jumpstart, retention, consolidation diagnostics, ...) regardless
     # of which logging backends were enabled — sweeps normally run --no-tb --no-wandb.
     scalars_file = logger.save_scalars()
+    if consol_loss_traces:
+        f = logger.save_object(consol_loss_traces, "consol_loss_traces")
+        print(f"[train] Consolidation loss traces ({len(consol_loss_traces)} cycles) -> {f}")
 
     if hasattr(env, "close"):
         env.close()

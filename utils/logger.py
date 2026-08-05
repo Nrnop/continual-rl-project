@@ -94,6 +94,17 @@ class Logger:
             pickle.dump(payload, f)
         return fname
 
+    def save_object(self, obj, suffix):
+        """Pickle an arbitrary object alongside the run's other artifacts.
+
+        For data that is not a rectangular curve — e.g. the per-consolidation loss traces, which
+        are one variable-length array per consolidation event.
+        """
+        fname = os.path.join(self.results_dir, f"{self.exp_name}_seed_{self.seed}_{suffix}.pkl")
+        with open(fname, "wb") as f:
+            pickle.dump(obj, f)
+        return fname
+
     def save_checkpoint(self, state_dict, step):
         """Save network weights to checkpoints directory."""
         import torch

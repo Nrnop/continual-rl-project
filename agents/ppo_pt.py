@@ -114,6 +114,12 @@ class PPOPT(PPOBase):
         self.last_consolidation_loss_last = None
         self.last_consolidation_loss_mean = None
         self.last_consolidation_loss_curve = None
+        # Every consolidation's FULL within-cycle loss trace, one array per event, in order.
+        # `last_consolidation_loss_*` only keep the first/last/mean, which cannot show whether the
+        # regression descends, plateaus or diverges inside a cycle. Kept in memory (25 cycles x
+        # ~1920 gradient steps at k=60 is trivial) and dumped at the end of training so the
+        # per-consolidation loss curves can be plotted.
+        self.consolidation_loss_curves = []
         # Permanent value statistics over the consolidation batch, before and after the
         # consolidation regression. The transient pair below shows what the decay REMOVES; this
         # pair shows what the transfer actually ADDS — together they are the two-defect picture.
@@ -412,6 +418,8 @@ class PPOPT(PPOBase):
             self.last_consolidation_loss_first = loss_curve[0]
             self.last_consolidation_loss_last = loss_curve[-1]
             self.last_consolidation_loss_mean = float(np.mean(loss_curve))
+            # Keep the whole trace, not just its endpoints — see __init__.
+            self.consolidation_loss_curves.append(np.asarray(loss_curve, dtype=np.float32))
 
         def _drift(t, before):
             if t is None or before is None:

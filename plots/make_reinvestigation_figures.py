@@ -347,6 +347,60 @@ def fig_consolidation_internals():
     _save(fig, "consolidation_internals")
 
 
+def fig_consolidation_loss_curves(d="jobI_results", sub="pt_zeroperm", seed=0, switch=SWITCH):
+    """One panel per consolidation cycle; x = gradient step WITHIN that cycle's regression.
+
+    The scalar log only keeps first/last/mean, which cannot distinguish "descends smoothly" from
+    "flat" from "diverges then recovers". These are the full traces.
+
+    Laid out rows = task phase, columns = consolidation index within that phase, so the grid reads
+    as the whole run. The per-minibatch loss is noisy (each gradient step sees a different
+    minibatch), so a smoothed trend is drawn over the raw trace.
+    """
+    path = glob.glob(os.path.join(WS, d, sub, f"*seed_{seed}_consol_loss_traces.pkl"))
+    if not path:
+        print(f"  SKIP consolidation_loss_curves — no traces under {d}/{sub} "
+              f"(needs a run with the trace-logging code)")
+        return
+    with open(path[0], "rb") as fh:
+        traces = pickle.load(fh)
+
+    # Derive the grid from the data rather than assuming the production schedule, so a shortened
+    # diagnostic run doesn't render four empty rows.
+    phase_of = [int(st // switch) for st, _ in traces]
+    phases = sorted(set(phase_of))
+    per_phase = {p: [i for i, q in enumerate(phase_of) if q == p] for p in phases}
+    nrow, ncol = len(phases), max(len(v) for v in per_phase.values())
+    fig, axes = plt.subplots(nrow, ncol, figsize=(2.5 * ncol, 2.0 * nrow),
+                             sharex=True, squeeze=False)
+    lo = min(float(c.min()) for _, c in traces)
+    hi = max(float(np.percentile(c, 99)) for _, c in traces)
+
+    for r, p in enumerate(phases):
+        for j in range(ncol):
+            ax = axes[r][j]
+            if j >= len(per_phase[p]):
+                ax.axis("off")
+                continue
+            step, curve = traces[per_phase[p][j]]
+            x = np.arange(1, len(curve) + 1)
+            ax.plot(x, curve, color=PAL[0], lw=0.7, alpha=0.35, zorder=2)
+            ax.plot(x, smooth(curve, max(5, len(curve) // 25)), color=PAL[0], lw=1.8, zorder=3)
+            drop = curve[:len(curve) // 10].mean() / max(curve[-len(curve) // 10:].mean(), 1e-9)
+            ax.annotate(f"×{drop:.2f}", (0.96, 0.9), xycoords="axes fraction", ha="right",
+                        fontsize=8, color=INK, fontweight="bold")
+            ax.set_ylim(lo, hi)
+            if j == 0:
+                ax.set_ylabel(f"phase {p + 1}\nregression loss", color=MUT, fontsize=8.5)
+            if p == PHASES - 1:
+                ax.set_xlabel("gradient step", color=MUT, fontsize=8.5)
+            _style(ax)
+            ax.tick_params(labelsize=7)
+    fig.suptitle("Consolidation regression, one panel per cycle — ×N is first-decile ÷ last-decile "
+                 "loss (>1 = descending)", fontsize=11.5, color=INK, x=0.01, ha="left", y=1.005)
+    _save(fig, "consolidation_loss_curves")
+
+
 if __name__ == "__main__":
     fig_return_curves()
     fig_phase_means(MAIN, "phase_means_main",
@@ -359,4 +413,5 @@ if __name__ == "__main__":
     fig_phase_means(ABLATION, "phase_means_ablation",
                     "Diagnostic ladder — each suspect removed in turn", figsize=(9.6, 4.6))
     fig_consolidation_internals()
+    fig_consolidation_loss_curves()
     print("done")
