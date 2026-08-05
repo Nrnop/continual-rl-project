@@ -284,27 +284,39 @@ phase therefore starts the transient with a larger correction to make — and `k
 
 ## 6c. Figures
 
-Generated from `workspace/` by `plots/make_reinvestigation_figures.py`.
+The standard figure set (the same figures as `plots/figures/`), rebuilt against the corrected
+re-run data by `plots/make_reinvestigation_figures.py`, reading `workspace/` directly.
 
-![Per-phase medians, four arms](plots/figures_reinvestigation/phase_medians.png)
+![Return curves](plots/figures_reinvestigation/return_curves.png)
 
-*All four arms sit together in phase 1, before any switch. The gap opens at the first boundary.*
+![Per-phase mean return](plots/figures_reinvestigation/phase_means_main.png)
 
-![Mechanism contrast](plots/figures_reinvestigation/mechanism_contrast.png)
+*All four arms are together through phase 1; the gap opens at the first switch and never closes.*
 
-*`absorbed_frac` per seed, log scale. The two arms never overlap — the mechanism verifiably ran on
-one and verifiably did not on the other, and returns were indistinguishable (p=0.597).*
+![Boundary drop](plots/figures_reinvestigation/boundary_drop.png)
+![Recovery time](plots/figures_reinvestigation/recovery_time.png)
+![Velocity](plots/figures_reinvestigation/velocity_curves.png)
+![Critic loss](plots/figures_reinvestigation/td_error_curves.png)
+![Asymptotic vs whole-run](plots/figures_reinvestigation/asymptotic_bar.png)
 
-![Diagnostic ladder](plots/figures_reinvestigation/diagnostic_ladder.png)
+![Diagnostic ladder](plots/figures_reinvestigation/phase_means_ablation.png)
 
-*Each suspect removed in turn. Phase 1 stays at parity throughout (−48 → +109); the post-switch gap
-narrows (−617 → −401) but never closes. Mechanism, capacity and initialisation are each ruled out
-as the sole cause.*
+*Each suspect removed in turn — mechanism, capacity, initialisation. Phase 1 is flat across all six
+arms; no removal closes the post-switch gap.*
 
-![Task-sign asymmetry](plots/figures_reinvestigation/task_sign_asymmetry.png)
+![Consolidation internals](plots/figures_reinvestigation/consolidation_internals.png)
 
-*Vanilla earns twice as much running backward as forward. PT is the reverse — and the asymmetry
-exists only when the mechanism is live (696/552 with it off, 629/346 with it on).*
+*The mechanism's own telemetry, which the original study had no way to see. (a) the working arm
+sits in the target band and the inert control a decade below, on every seed, for the whole run;
+(c) the permanent moves 0.50 from its initialisation while the inert control's moves 0.03.*
+
+**Not reproducible from `workspace/`:**
+
+| figure | why |
+|---|---|
+| `offline_curves` | needs `*_eval_returns.pkl`; every re-run used `--no-eval` because the offline eval was corrupting the training RNG (defect #14). `_isolated_rng()` has since fixed that, so a future run can restore it. |
+| `consolidation_insitu` panel (b) | the held-out drift measurement needs `consolidation_holdout_frac > 0`, never set on a re-run |
+| `drift_comparison` | the three drift regimes were not re-run under the corrected code; `FINDINGS.md` §8 is superseded |
 
 ---
 
