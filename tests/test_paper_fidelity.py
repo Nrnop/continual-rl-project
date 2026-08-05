@@ -66,6 +66,30 @@ def test_perm_zero_init_makes_the_pt_loss_identical_to_vanilla():
     assert vp.abs().mean() > 0
 
 
+def test_theorem1_second_condition_can_now_be_met():
+    """Theorem 1 needs V^(TD)_0 = V^(P) as well as V^(T)_0 = 0.
+
+    With perm_zero_init the PT acting value starts at exactly 0, so the TD baseline must start
+    there too or the two agents never begin from the same function — which is what the theorem
+    asserts equivalence between. `critic_zero_init` supplies that.
+    """
+    torch.manual_seed(0)
+    probe = torch.randn(256, 17)
+
+    default = VanillaCritic(17, hidden_sizes=(64, 64))
+    matched = VanillaCritic(17, hidden_sizes=(64, 64), zero_init=True)
+    pt = SplitCritic(17, hidden_sizes=(64, 64), perm_zero_init=True)
+
+    with torch.no_grad():
+        v_default, v_matched = default(probe), matched(probe)
+        p, t = pt(probe)
+
+    assert v_default.abs().mean() > 0, "the default baseline starts at a random function"
+    assert torch.all(v_matched == 0), "critic_zero_init must give V(s) == 0 exactly"
+    # ...and that now equals the PT agent's acting value at t=0.
+    assert torch.allclose(v_matched, p + t)
+
+
 def test_perm_zero_init_still_lets_the_permanent_learn():
     """Zeroing only the output layer must not freeze theta_P — consolidation still moves it."""
     torch.manual_seed(0)

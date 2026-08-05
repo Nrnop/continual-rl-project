@@ -25,9 +25,23 @@ from .actor import mlp
 class VanillaCritic(nn.Module):
     """Single undivided state-value V(s) (the baseline)."""
 
-    def __init__(self, obs_dim, hidden_sizes=(256, 256)):
+    def __init__(self, obs_dim, hidden_sizes=(256, 256), zero_init=False):
         super().__init__()
         self.net = mlp(obs_dim, list(hidden_sizes), 1, out_gain=1.0)
+        # zero_init: V(s) = 0 at t=0, matching a PT agent run with perm_zero_init.
+        #
+        # Theorem 1 has TWO conditions: V^(T)_0 = 0 AND V^(TD)_0 = V^(P) — the TD baseline must
+        # start from the SAME function as the permanent. We enforced only the first. With
+        # perm_zero_init the PT acting value starts at exactly 0 while this critic starts at a
+        # random function of magnitude ~0.4, so the two agents have never begun from the same
+        # place and the equivalence the theorem asserts has never actually been tested.
+        #
+        # This is a systematic offset, not a variance source, and it matches the signature of the
+        # residual: theorem1_zeroperm vs vanilla was whole-run p=0.008 with NO individual phase
+        # significant — a small consistent difference everywhere.
+        if zero_init:
+            nn.init.constant_(self.net[-1].weight, 0.0)
+            nn.init.constant_(self.net[-1].bias, 0.0)
 
     def forward(self, obs):
         return self.net(obs).squeeze(-1)
