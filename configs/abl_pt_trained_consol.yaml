@@ -55,7 +55,6 @@ async_envs: true
 n_steps: 256
 
 # --- PT critic: separate trunks (the insulated variant), with real consolidation training ---
-critic_arch: "separate"
 lr_trans: 0.0003
 lr_perm: 0.001               # <== was 1e-5
 perm_optimizer: "adam"       # <== was sgd

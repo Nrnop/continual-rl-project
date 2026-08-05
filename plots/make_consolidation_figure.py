@@ -15,7 +15,8 @@ Every number in the figure is MEASURED here, not asserted:
 
   (c) The decay step. decay_transient(d) scales the PARAMETERS of the transient MLP by d, which does
       not scale its OUTPUT by d (nonlinear activations + biases) -- so the value-preserving identity
-      holds only at d=0. With a shared trunk and linear heads the same operation is exact for all d.
+      holds only at d=0. Plotted against the algorithm's assumption (a flat 0%), since the operator
+      is `for params in T_Net.parameters(): params.data *= args.decay` verbatim from the reference.
 
 Caveat stated in FINDINGS.md 6.3: probe states here are iid Gaussian, which is a harder
 generalisation problem than real on-policy states; treat panel (b)'s held-out floor as indicative.
@@ -35,9 +36,9 @@ import torch
 import torch.nn as nn
 
 from ..agents.ppo_pt import PPOPT
-from ..models.critic import SplitCritic, SharedTrunkSplitCritic
+from ..models.critic import SplitCritic
 
-C_SEP, C_SHARED, C_ALT = "#1baf7a", "#e34948", "#2a78d6"
+C_SEP, C_ASSUMED, C_ALT = "#1baf7a", "#8a8a86", "#2a78d6"
 INK, MUT, GRID = "#0b0b0b", "#52514e", "#d9d8d4"
 D, NBUF = 17, 20480
 
@@ -122,10 +123,14 @@ def panel_b(epochs=200, lr=1e-3, bs=256):
 
 
 def panel_c(decays=(0.0, 0.25, 0.5, 0.75)):
-    """Value error introduced by the decay step: two MLPs vs shared trunk + linear heads."""
+    """How far `theta_T *= d` lands from the V_trans <- d * V_trans the algorithm assumes.
+
+    Also reports the fraction of the transient's OUTPUT that actually survives, which is the
+    quantity the consolidation identity depends on.
+    """
     torch.manual_seed(0); np.random.seed(0)
     probe = torch.randn(512, D)
-    sep, sh = [], []
+    sep, survive = [], []
     for d in decays:
         sc = SplitCritic(D, hidden_sizes=[64, 64])
         with torch.no_grad():
@@ -137,18 +142,8 @@ def panel_c(decays=(0.0, 0.25, 0.5, 0.75)):
         with torch.no_grad():
             _, Ta = sc2(probe)
         sep.append((Ta - d * Tb).abs().mean().item() / Tb.abs().mean().item() * 100)
-
-        c = SharedTrunkSplitCritic(D, (64, 64))
-        with torch.no_grad():
-            c.trans.weight.add_(torch.randn_like(c.trans.weight) * 0.8)
-            c.trans.bias.add_(0.3)
-        with torch.no_grad():
-            p0, t0 = c(probe)
-        c.consolidate(d)
-        with torch.no_grad():
-            p1, t1 = c(probe)
-        sh.append(((p1 + t1) - (p0 + t0)).abs().mean().item() / (p0 + t0).abs().mean().item() * 100)
-    return list(decays), sep, sh
+        survive.append(Ta.abs().mean().item() / Tb.abs().mean().item())
+    return list(decays), sep, survive
 
 
 def _style(ax):
@@ -169,11 +164,12 @@ def main():
 
     absorbed, deleted, dV = panel_a()
     curves = panel_b(epochs=args.epochs)
-    decays, sep, sh = panel_c()
+    decays, sep, survive = panel_c()
     print(f"(a) absorbed {absorbed:.2f}%  deleted {deleted:.1f}%  net dV {dV:.1f}%")
     for k, (xs, tr, ho) in curves.items():
         print(f"(b) {k}: final train {tr[-1]:.1f}%  held-out {ho[-1]:.1f}%")
-    print(f"(c) separate {['%.1f' % v for v in sep]}   shared {['%.4f' % v for v in sh]}")
+    print(f"(c) error vs d*V_trans {['%.1f%%' % v for v in sep]}   "
+          f"output surviving {['%.3f' % v for v in survive]}  (assumed {list(decays)})")
 
     fig, axes = plt.subplots(1, 3, figsize=(15.5, 4.2))
 
@@ -204,22 +200,22 @@ def main():
 
     ax = axes[2]
     x = np.arange(len(decays)); w = 0.36
-    ax.bar(x - w / 2, sep, w * 0.92, label="Two separate MLPs (current)", color=C_SEP, zorder=3)
-    ax.bar(x + w / 2, sh, w * 0.92, label="Shared trunk + linear heads (fix)", color=C_SHARED, zorder=3)
-    ax.scatter(x + w / 2, np.zeros_like(x, dtype=float), s=46, marker="_",
-               linewidths=2.6, color=C_SHARED, zorder=5)
-    for xi, v in zip(x - w / 2, sep):
-        ax.annotate(f"{v:.0f}%", (xi, v), textcoords="offset points", xytext=(0, 3),
+    ax.bar(x - w / 2, list(decays), w * 0.92, label=r"assumed: $V_T \leftarrow d\,V_T$",
+           color=C_ASSUMED, zorder=3)
+    ax.bar(x + w / 2, survive, w * 0.92, label=r"measured: output surviving $\theta_T \!\times\! d$",
+           color=C_SEP, zorder=3)
+    for xi, v in zip(x + w / 2, survive):
+        ax.annotate(f"{v:.2f}", (xi, v), textcoords="offset points", xytext=(0, 3),
+                    ha="center", fontsize=8, color=INK, fontweight="bold")
+    for xi, v in zip(x - w / 2, decays):
+        ax.annotate(f"{v:g}", (xi, v), textcoords="offset points", xytext=(0, 3),
                     ha="center", fontsize=8, color=MUT)
-    for xi in x + w / 2:
-        ax.annotate("0.00%", (xi, 0), textcoords="offset points", xytext=(0, 7),
-                    ha="center", fontsize=8, color=C_SHARED, fontweight="bold")
     ax.set_xticks(x); ax.set_xticklabels([f"{d:g}" for d in decays])
-    ax.set_xlabel("decay", color=MUT, fontsize=10)
-    ax.set_ylabel("value error from the decay step (%)", color=MUT, fontsize=10)
+    ax.set_xlabel("decay $d$", color=MUT, fontsize=10)
+    ax.set_ylabel(r"fraction of $V_{trans}$ retained", color=MUT, fontsize=10)
     ax.set_title("(c) Parameter scaling is not output scaling\n"
-                 "exact for any decay only with linear heads", fontsize=11, color=INK, loc="left")
-    ax.set_ylim(0, max(sep) * 1.42)     # headroom so the legend clears the bar labels
+                 "the decay removes far more than $d$ implies", fontsize=11, color=INK, loc="left")
+    ax.set_ylim(0, max(list(decays) + survive) * 1.42)
     ax.legend(frameon=False, fontsize=8.5, labelcolor=MUT, loc="upper left", bbox_to_anchor=(0.0, 1.0))
 
     for ax in axes:

@@ -1,0 +1,84 @@
+# THEOREM 1 EQUIVALENCE TEST — the hard bug test PT has never been given.
+#
+# Theorem 1: "If V^(TD)_0 = V^(P), V^(T)_0 = 0 and the two algorithms train on the same samples
+# using the same learning rates, then for all t, V^(PT)_t = V^(TD)_t."
+#
+# PT is a STRICT GENERALISATION of TD. With lambda = 1 (no decay) and consolidation switched off,
+# PT *is* TD-learning: theta_P stays at its initialisation, theta_T learns the residual
+# (returns - V_perm), and the acting value V = V_perm + V_trans tracks the returns exactly as a
+# single critic does. There is therefore a setting at which PT CANNOT be worse than vanilla.
+#
+# THE TEST. Run this against vanilla_paper on identical seeds:
+#
+#   * pt ~= vanilla  ->  the implementation is sound. Any deficit in the full method is then the
+#                        COST OF THE MECHANISM (decay + consolidation), not a defect, and the
+#                        (k, lambda) sweep is where the answer lives.
+#   * pt <  vanilla  ->  an implementation defect remains, in a configuration where the theory
+#                        forbids one. That localises the bug to the split-critic plumbing itself
+#                        (initialisation, the semi-gradient in critic_loss, GAE over V_perm+V_trans,
+#                        or the optimiser split) and rules out decay/consolidation as the cause.
+#
+# Either outcome is decisive, which is what makes this worth running before any more sweeps.
+#
+# HOW THE MECHANISM IS DISABLED
+#   decay: 1.0          -> theta_T is never shrunk (lambda = 1)
+#   k: 100000           -> 100000 * 2048 env steps between consolidations = never, in a 3.07M run
+#   on_switch: "none"   -> and no boundary consolidation either (Alg. 2's pure timer, never firing)
+#
+# The only remaining differences from vanilla are structural and expected: PT holds two [43,43]
+# nets against vanilla's one [64,64] (parameter-matched, 5420 vs 5377), and its critic loss is the
+# semi-gradient MSE(V_perm.detach() + V_trans, returns) rather than MSE(V, returns). Theorem 1 says
+# those should be equivalent; this run measures whether they are, in practice, under deep FA.
+#
+#   python -m src_continuous_control.train --agent pt      --config abl_pt_theorem1  --seed 0
+#   python -m src_continuous_control.train --agent vanilla --config vanilla_paper    --seed 0
+#
+# Expect the INERT PERMANENT banner to fire — with consolidation disabled the permanent never
+# updates at all, which is correct and is the point.
+
+agent: "pt"
+
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: false
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+lr_critic: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+joint_grad_clip: false
+critic_hidden_sizes: [43, 43]
+lr_trans: 0.0003
+
+# --- the mechanism, switched OFF: this is Theorem 1's condition ---
+decay: 1.0                 # lambda = 1: the transient is never decayed
+k: 100000                  # consolidation never fires in a 3.07M-step run
+on_switch: "none"          # no boundary consolidation either
+lr_perm: 0.0002            # irrelevant here (theta_P is never updated), kept for config parity
+perm_optimizer: "sgd"
+alpha_p_rm_power: 0.6
+consolidation_epochs: 1
+consolidation_buffer_size: 49152
+value_preserving_consolidation: false
+
+jumpstart_window_updates: 20
+probe_states: 256
+
+tasks: [1, -1]
+switch: 614400
+total_steps: 3072000

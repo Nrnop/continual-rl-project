@@ -78,3 +78,17 @@ VASTAI_SETUP.md
 
 # Thesis chapter drafts — kept local until reviewed by the supervisors.
 THESIS_*.md
+
+# --- Remote-run artifacts (regenerable; several hundred MB) ---
+# Raw per-seed results pulled back from the vast.ai box. The figures in
+# plots/figures_reinvestigation/ are committed; the inputs that produce them are not.
+workspace/
+gate_results/
+gate_runs/
+gate_logs/
+rerun_results/
+rerun_runs/
+rerun_logs/
+
+# Box-specific run playbook — machine/session specific, not part of the method.
+VASTAI_RERUN.md

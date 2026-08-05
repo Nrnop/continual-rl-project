@@ -1,0 +1,63 @@
+# CAPACITY CONTROL: vanilla with a [43,43] critic instead of [64,64].
+#
+# WHY THIS EXISTS. Job A ran the Theorem 1 equivalence test — PT with the mechanism entirely off
+# (decay=1.0, no consolidation) — and PT still lost to vanilla on the stationary phase 1, 5/5
+# seeds, t = -3.60. Theorem 1 forbids that, so something structural is wrong. The leading
+# candidate is not "plumbing" at all, but CAPACITY:
+#
+#     PT trainable critic (theta_T only, [43,43])   = 2 710 params
+#     vanilla critic                     ([64,64])  = 5 377 params   <- PT has 50.4%
+#
+# theta_P is FROZEN in the Theorem 1 config, and is a slow component by design in every other
+# config, so at any given moment PT is fitting the returns with HALF of vanilla's learning
+# capacity. The "parameter parity" of PT-0.5x (5 420 vs 5 377) counts both nets, including the one
+# that is not learning.
+#
+# This config gives VANILLA the same trainable capacity PT actually has. If
+#
+#     vanilla_narrow ~= pt_theorem1   ->  the deficit is capacity; the split-critic plumbing is
+#                                         clean, and PT-0.5x's parameter matching is what costs it.
+#     vanilla_narrow >  pt_theorem1   ->  a genuine plumbing defect remains on top of capacity.
+#
+# Run for PHASE 1 ONLY (614 400 steps) — that is the confound-free stationary window, and it is
+# where the deficit is measurable. No switch occurs, so the rest of the run adds only noise.
+#
+#   python -m src_continuous_control.train --agent vanilla --config abl_vanilla_narrow \
+#       --seed 0 --total-steps 614400
+#
+# NOTE: this is a DIAGNOSTIC arm, not a baseline. The thesis baseline remains vanilla at [64,64].
+
+agent: "vanilla"
+
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: false
+hidden_sizes: [64, 64]          # ACTOR unchanged — identical across every arm
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+lr_critic: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+joint_grad_clip: false
+critic_hidden_sizes: [43, 43]   # <== THE ONLY DIFFERENCE from vanilla_paper.yaml
+
+jumpstart_window_updates: 20
+probe_states: 256
+
+tasks: [1, -1]
+switch: 614400
+total_steps: 3072000

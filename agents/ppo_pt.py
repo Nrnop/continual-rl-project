@@ -9,15 +9,19 @@ stays apples-to-apples and any difference is attributable to the split critic.
 - V_perm  (θ_P): slow head, NOT trained on returns each step. Every k updates it *consolidates*
                  by absorbing the transient (see _consolidate), then θ_T is decayed.
 
-Consolidation is value-preserving for any decay: θ_P regresses to old_θ_P + (1-decay)·V_trans,
-so after θ_T ← decay·θ_T the acting value V = V_perm + V_trans is unchanged (no drift). At a task
+Consolidation follows Eq. (4): θ_P regresses onto the full acting value old_V_perm + V_trans, then
+θ_T ← decay·θ_T. That target is what gives θ_P the fixed point E_τ[v_τ] (Theorem 5), the mean value
+function over the task distribution, which optimises the jumpstart objective (Theorem 6). At a task
 boundary we consolidate first (locking the just-learned task value into θ_P) then let θ_T re-adapt.
+
+Initialisation follows Theorem 1: θ_P gets the ordinary value-head init, θ_T starts at the ZERO
+function, so V = V_perm + V_trans begins identical to a single vanilla critic.
 """
 import numpy as np
 import torch
 
 from .ppo_base import PPOBase
-from ..models.critic import SplitCritic, SharedTrunkSplitCritic
+from ..models.critic import SplitCritic
 from ..utils.buffers import ConsolidationBuffer
 
 
@@ -27,40 +31,39 @@ class PPOPT(PPOBase):
     def __init__(self, obs_dim, act_dim, cfg, device):
         super().__init__(obs_dim, act_dim, cfg, device)
 
-        hidden = list(cfg.get("hidden_sizes", [256, 256]))
+        # Width for EACH of the two critics. Set `critic_hidden_sizes` below the actor's
+        # `hidden_sizes` to reproduce the paper's parameter-matched PT-0.5x (see _critic_hidden).
+        hidden = self._critic_hidden()
         adam_eps = cfg.get("adam_eps", 1e-8)
         lr_trans = cfg.get("lr_trans", cfg["lr_actor"])
 
-        # "separate" (default) = two independent MLP trunks, consolidation by regression (lossy).
-        # "shared_trunk"       = one trunk + two linear heads, consolidation by exact weight arithmetic.
-        self.critic_arch = str(cfg.get("critic_arch", "separate")).lower()
-        self.shared_trunk = self.critic_arch == "shared_trunk"
-
-        if self.shared_trunk:
-            self.critic = SharedTrunkSplitCritic(obs_dim, hidden_sizes=hidden).to(device)
-            # The shared trunk is learned together with the fast transient head; the permanent head
-            # receives NO gradients (v_perm is detached in critic_loss) and moves only at
-            # consolidation, via exact weight arithmetic. So lr_perm is unused in this variant.
-            self.trans_optim = torch.optim.Adam(
-                list(self.critic.trunk.parameters()) + list(self.critic.trans.parameters()),
-                lr=lr_trans, eps=adam_eps,
-            )
-            self.perm_optim = None
+        # TWO FULLY SEPARATE NETWORKS, as in the reference (T_Net / P_Net in PT_DQN_half.py).
+        # No shared trunk: the timescale separation is the point of the decomposition, and sharing
+        # features would couple the two components through the fast learner's gradients.
+        # perm_zero_init: start theta_P at the zero function instead of a random one. See
+        # SplitCritic's docstring — under function approximation a frozen random V_perm is a fixed
+        # unstructured offset the transient must cancel on every state, and it fails to cancel it
+        # on the NEW states visited after a task switch.
+        self.critic = SplitCritic(
+            obs_dim, hidden_sizes=hidden,
+            perm_zero_init=bool(cfg.get("perm_zero_init", False)),
+            # trans_zero_init=False reproduces the REFERENCE's initialisation (both nets random).
+            # Default True is Theorem 1's condition — a deviation from the code, see SplitCritic.
+            trans_zero_init=bool(cfg.get("trans_zero_init", True)),
+        ).to(device)
+        # Fast optimizer for the transient net (task-specific). Reference: optim.Adam, --lr2.
+        self.trans_optim = torch.optim.Adam(
+            self.critic.trans.parameters(), lr=lr_trans, eps=adam_eps
+        )
+        # Slow optimizer for the permanent net (task-invariant). Reference: optim.SGD, --lr1.
+        lr_perm = cfg.get("lr_perm", 3e-5)
+        perm_opt_name = cfg.get("perm_optimizer", "adam").lower()
+        if perm_opt_name == "sgd":
+            self.perm_optim = torch.optim.SGD(self.critic.perm.parameters(), lr=lr_perm)
         else:
-            self.critic = SplitCritic(obs_dim, hidden_sizes=hidden).to(device)
-            # Fast optimizer for the transient head (task-specific)
-            self.trans_optim = torch.optim.Adam(
-                self.critic.trans.parameters(), lr=lr_trans, eps=adam_eps
+            self.perm_optim = torch.optim.Adam(
+                self.critic.perm.parameters(), lr=lr_perm, eps=adam_eps
             )
-            # Slow optimizer for the permanent head (task-invariant)
-            lr_perm = cfg.get("lr_perm", 3e-5)
-            perm_opt_name = cfg.get("perm_optimizer", "adam").lower()
-            if perm_opt_name == "sgd":
-                self.perm_optim = torch.optim.SGD(self.critic.perm.parameters(), lr=lr_perm)
-            else:
-                self.perm_optim = torch.optim.Adam(
-                    self.critic.perm.parameters(), lr=lr_perm, eps=adam_eps
-                )
 
         # NOTE: PT is critic-only. The actor is the single GaussianActor built by
         # PPOBase.__init__ (lr = lr_actor), identical to vanilla/EWC. We deliberately do NOT
@@ -68,8 +71,16 @@ class PPOPT(PPOBase):
         # consolidation just resets the policy at each boundary. Keeping one actor makes the
         # vanilla/PT/EWC comparison clean (only the critic differs).
 
-        # Decay factor for the transient critic head at consolidation / task boundaries.
+        # Decay factor lambda for the transient critic at consolidation / task boundaries.
         self.transient_decay = cfg.get("decay", 0.0)
+        # "params" = reference behaviour (over-decays: 0.75 leaves ~0.42 of V_trans on a 3-layer
+        # MLP). "output" = exact V_trans <- decay*V_trans, which is what Alg. 2 line 9 specifies.
+        # Default "params" so pre-2026-08-04 runs reproduce.
+        self.decay_mode = str(cfg.get("decay_mode", "params")).lower()
+        # False (default) = the paper's Eq. (4) target, old_V_perm + V_trans.
+        # True            = the old keep=(1-decay) target; not the paper, kept for reproducibility.
+        self.value_preserving_consolidation = bool(
+            cfg.get("value_preserving_consolidation", False))
         # Scaling theta_T only touches the PARAMETERS: Adam's exp_avg / exp_avg_sq for those same
         # parameters survive untouched, so the next step displaces the freshly-decayed weights using
         # momentum from a network that no longer exists — undoing the consistency consolidation just
@@ -115,6 +126,21 @@ class PPOPT(PPOBase):
         self.last_trans_mean_after = None
         self.last_trans_l2_before = None
         self.last_trans_l2_after = None
+        # Fraction of the transient the permanent ACTUALLY absorbed at the last consolidation, and
+        # how well that movement aligned with the transient's direction. ~0 means the permanent is
+        # inert and PT has no slow timescale — the defect that went undetected across this whole
+        # project, because returns and critic_loss both look healthy while it is happening.
+        self.last_absorbed_frac = None
+        self.last_absorbed_align = None
+        # Printed once, loudly, the first time a consolidation transfers essentially nothing.
+        self._warned_inert_permanent = False
+        # --- Robbins-Monro alpha_P (Theorem 5's premise; see _apply_robbins_monro_alpha_p) ---
+        # 0.0 = constant step size (the old behaviour, kept as default so earlier runs reproduce).
+        self.rm_power = float(cfg.get("alpha_p_rm_power", 0.0))
+        self._n_consolidations = 0
+        self.last_alpha_p = self.perm_optim.param_groups[0]["lr"]
+        for group in self.perm_optim.param_groups:
+            group["_base_lr_perm"] = group["lr"]
 
     # ------------------------------------------------------------------
     # Hook implementations
@@ -144,61 +170,76 @@ class PPOPT(PPOBase):
 
     def post_update(self, update_idx):
         """After each PPO update: bank this rollout's states, consolidate every k updates."""
-        # The shared-trunk variant consolidates by weight arithmetic, so it needs no state buffer.
-        if not self.shared_trunk:
-            # Snapshot visited states with the CURRENT permanent value. theta_P is frozen
-            # between consolidations, so this is old_V_perm at visit time. The rollout
-            # buffer is (n_steps, num_envs, obs_dim); flatten to a batch of states.
-            states = self.buffer.obs.reshape(-1, self.obs_dim)
-            with torch.no_grad():
-                s_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
-                old_v_perm, _ = self.critic(s_t)
-            self.consolidation_buffer.add_batch(states, old_v_perm.cpu().numpy())
+        # Snapshot visited states with the CURRENT permanent value. theta_P is frozen
+        # between consolidations, so this is old_V_perm at visit time. The rollout
+        # buffer is (n_steps, num_envs, obs_dim); flatten to a batch of states.
+        # (Reference: exp_replay_PM.store(cs, c_action, val_p) at action-selection time.)
+        states = self.buffer.obs.reshape(-1, self.obs_dim)
+        with torch.no_grad():
+            s_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+            old_v_perm, _ = self.critic(s_t)
+        self.consolidation_buffer.add_batch(states, old_v_perm.cpu().numpy())
 
         self._updates_since_consolidation += 1
         if self._updates_since_consolidation >= self.k:
+            self._apply_robbins_monro_alpha_p()
             self._consolidate()
             self._updates_since_consolidation = 0
+
+    def _apply_robbins_monro_alpha_p(self):
+        """alpha_P <- lr_perm / (1 + n)^rm_power, with n = consolidations so far.
+
+        Theorem 5 ("the sequence of updates computed by Eq. (4) contracts to a unique fixed point
+        E_tau[v_tau]") holds *under Robbins-Monro step-size conditions* — sum(a) = inf,
+        sum(a^2) < inf — i.e. a DECREASING step size. We were using a constant one, which violates
+        the theorem's premise: with a fixed step the permanent TRACKS the most recent task instead
+        of converging to the average over tasks, so it arrives at each switch confidently wrong and
+        the transient has to cancel it.
+
+        rm_power = 0.0 disables this and restores the constant-alpha behaviour (the default, so
+        earlier runs reproduce). rm_power in (0.5, 1.0] satisfies the conditions; 0.6 is a common
+        choice that decays slowly enough to keep learning over a finite run.
+        """
+        if self.rm_power <= 0.0:
+            return
+        self._n_consolidations += 1
+        scale = 1.0 / ((1.0 + self._n_consolidations) ** self.rm_power)
+        for group in self.perm_optim.param_groups:
+            group["lr"] = group.get("_base_lr_perm", group["lr"]) * scale
+        self.last_alpha_p = self.perm_optim.param_groups[0]["lr"]
 
     def _consolidate(self):
         """Absorb the transient value into the permanent critic, then decay the transient.
 
-        For each stored state s: regress V_perm(s) -> old_V_perm(s) + (1-decay)*V_trans(s).detach().
-        Decaying V_trans by `decay` afterwards then leaves the acting value EXACTLY preserved for
-        any decay:  V_new = P_new + decay*T = old_P + (1-decay)*T + decay*T = old_P + T = V_old.
-        (The earlier target old_P + T with a >0 decay double-counted the transient and inflated V
-        by decay*T every cycle.)  decay=0 => hard reset, P absorbs all of T.
-        """
-        # Shared-trunk variant: exact, O(1), no regression and no value drift.
-        if self.shared_trunk:
-            # No regression here — the transfer is weight arithmetic — so there is no loss curve.
-            # The transient statistics are still meaningful and are recorded.
-            probe = None
-            if len(self.consolidation_buffer):
-                st, _ = self.consolidation_buffer.as_arrays()
-                probe = torch.as_tensor(st[: min(4096, len(st))], dtype=torch.float32,
-                                        device=self.device)
-            self.last_trans_mean_before, self.last_trans_l2_before = self._trans_stats(probe)
-            self.last_perm_mean_before, self.last_perm_l2_before = self._perm_stats(probe)
-            self.critic.consolidate(self.transient_decay)
-            if self.reset_trans_optim_on_decay:
-                self._decay_transient(1.0)               # weights unchanged; clears optimiser state
-            self.last_trans_mean_after, self.last_trans_l2_after = self._trans_stats(probe)
-            self.last_perm_mean_after, self.last_perm_l2_after = self._perm_stats(probe)
-            self.last_consolidation_loss_first = None    # not applicable: no regression
-            self.last_consolidation_loss_last = None
-            self.last_consolidation_loss_mean = None
-            self.last_consolidation_loss_curve = None
-            self.last_consolidation_error = 0.0          # exact by construction
-            self.last_consolidation_error_holdout = 0.0  # ...on every state, not just fitted ones
-            return
+        DEFAULT (`value_preserving_consolidation: false`) is the paper's Eq. (4):
 
+            theta <- theta + alpha_bar * (V^(PT)(S) - V^(P)(S)) * grad V^(P)(S)
+
+        i.e. the permanent regresses onto the FULL acting value old_V_perm + V_trans (keep = 1),
+        which is also Alg. 4 line 15 (`y_hat = Q^(P)(S,A) + Q^(T)(S,A;w)`). This is what gives the
+        permanent its fixed point E_tau[v_tau] (Theorem 5) — the mean value function over the task
+        distribution, which optimises the jumpstart objective (Theorem 6). Using keep = 1-decay
+        instead shrinks every consolidation step toward a different, biased fixed point, so the
+        theory no longer applies.
+
+        The paper's transfer is therefore NOT value-preserving: right after consolidation
+        V = P_new + decay*T = old_P + T + decay*T, an overshoot of decay*T that the fast transient
+        corrects over the following updates. That is by design.
+
+        Set `value_preserving_consolidation: true` for the old behaviour (keep = 1-decay, exactly
+        value-preserving for any decay) — kept only so earlier runs remain reproducible.
+        """
         if len(self.consolidation_buffer) == 0:
             return
 
         # Measure how much the acting value V = V_perm + V_trans actually moves across this
-        # consolidation. Ideally 0 (the transfer is meant to be value-preserving); in practice it is
-        # bounded by how well the regression below fits. Reported as a % of |V|.
+        # consolidation, as a % of |V|.
+        #
+        # NOTE: under Eq. (4) (keep = 1, the default) a NON-ZERO reading is CORRECT, not a fault.
+        # The paper's operator overshoots by decay*V_trans by design, and the fast transient
+        # corrects it over the following updates. Read this number as "how far the acting value was
+        # displaced", not as an error to be driven to zero — only the old
+        # `value_preserving_consolidation: true` path targets 0.
         #
         # TWO measurements, because they answer different questions:
         #   - FITTED states: error on the states the regression trained on (in-distribution).
@@ -212,7 +253,9 @@ class PPOPT(PPOBase):
         states_np, oldvp_np = self.consolidation_buffer.as_arrays()
         n_total = len(states_np)
         holdout_frac = float(self.cfg.get("consolidation_holdout_frac", 0.0))
-        keep = 1.0 - self.transient_decay
+        # keep = 1 is Eq. (4) / Alg. 4 line 15 (the paper). keep = 1-decay is the old
+        # value-preserving variant, retained behind a flag for reproducing earlier runs.
+        keep = (1.0 - self.transient_decay) if self.value_preserving_consolidation else 1.0
         loss_curve = []          # regression loss, one entry per gradient step of this consolidation
 
         def _probe(arr):
@@ -228,6 +271,14 @@ class PPOPT(PPOBase):
                 a, b = self.critic(t)
             return a + b
 
+        def _components(t):
+            """(V_perm, V_trans) as detached vectors, for the absorbed-fraction diagnostic."""
+            if t is None:
+                return None, None
+            with torch.no_grad():
+                a, b = self.critic(t)
+            return a.clone(), b.clone()
+
         if holdout_frac <= 0.0:
             # DEFAULT PATH — must consume RNG exactly as the original implementation did, so runs
             # stay comparable across this refactor. iter_minibatches uses np.random.shuffle; adding
@@ -237,6 +288,7 @@ class PPOPT(PPOBase):
             v_fit_before, v_hold_before = _value(fit_probe), None
             self.last_trans_mean_before, self.last_trans_l2_before = self._trans_stats(fit_probe)
             self.last_perm_mean_before, self.last_perm_l2_before = self._perm_stats(fit_probe)
+            v_perm_before_vec, v_trans_before_vec = _components(fit_probe)
             for _ in range(self.consolidation_epochs):
                 for s_mb, old_vp_mb in self.consolidation_buffer.iter_minibatches(
                         self.minibatch_size, self.device):
@@ -260,6 +312,7 @@ class PPOPT(PPOBase):
             v_fit_before, v_hold_before = _value(fit_probe), _value(hold_probe)
             self.last_trans_mean_before, self.last_trans_l2_before = self._trans_stats(fit_probe)
             self.last_perm_mean_before, self.last_perm_l2_before = self._perm_stats(fit_probe)
+            v_perm_before_vec, v_trans_before_vec = _components(fit_probe)
             s_train = torch.as_tensor(states_np[train_idx], dtype=torch.float32, device=self.device)
             v_train = torch.as_tensor(oldvp_np[train_idx], dtype=torch.float32, device=self.device)
             mb = self.minibatch_size
@@ -279,6 +332,44 @@ class PPOPT(PPOBase):
 
         # Permanent statistics AFTER the regression (the decay below touches only the transient).
         self.last_perm_mean_after, self.last_perm_l2_after = self._perm_stats(fit_probe)
+
+        # ---- DID THE TRANSFER ACTUALLY HAPPEN? ----
+        # This is the number whose absence hid the project's central defect for its entire history.
+        # `absorbed_frac`  = ||V_perm_after - V_perm_before|| / ||keep * V_trans||  -> 1.0 = the
+        #                    permanent took on the whole transient; 0.0 = it did not move.
+        # `absorbed_align` = the same movement PROJECTED onto the transient direction. A permanent
+        #                    can drift (nonzero frac) while learning nothing useful (align ~ 0).
+        # At the inherited sgd/lr_perm=1e-5 these read 0.0004 and 0.000: the dual-timescale
+        # mechanism is not running at all, while returns and critic_loss both look healthy.
+        self.last_absorbed_frac = None
+        self.last_absorbed_align = None
+        if fit_probe is not None and v_perm_before_vec is not None:
+            with torch.no_grad():
+                p_after, _ = self.critic(fit_probe)
+                moved = p_after - v_perm_before_vec
+                wanted = keep * v_trans_before_vec
+                wn = float(wanted.pow(2).sum())
+                if wn > 1e-12:
+                    self.last_absorbed_frac = float(moved.norm() / wanted.norm())
+                    self.last_absorbed_align = float((moved * wanted).sum() / wn)
+                    if (not self._warned_inert_permanent
+                            and self.last_absorbed_frac < 0.01):
+                        self._warned_inert_permanent = True
+                        lr = self.perm_optim.param_groups[0]["lr"]
+                        print(
+                            "\n" + "!" * 78 +
+                            "\n[PT] INERT PERMANENT: this consolidation transferred "
+                            f"{self.last_absorbed_frac * 100:.3f}% of the transient "
+                            f"(alignment {self.last_absorbed_align:+.3f}).\n"
+                            f"[PT] theta_P is not learning, so PT has NO slow timescale and is "
+                            "equivalent to\n[PT] vanilla plus a frozen random offset plus a "
+                            "periodic decay. Results from this\n[PT] configuration say nothing "
+                            "about the permanent-transient method.\n"
+                            f"[PT] current: perm_optimizer={self.cfg.get('perm_optimizer')} "
+                            f"lr_perm={lr:g} consolidation_epochs={self.consolidation_epochs}\n"
+                            "[PT] alpha_P must be TUNED PER DOMAIN (the paper's own ranges span "
+                            "7 orders of\n[PT] magnitude). Sweep it before trusting any PT "
+                            "number.\n" + "!" * 78 + "\n", flush=True)
 
         # The transient head has been absorbed into the permanent; decay it back down.
         self._decay_transient(self.transient_decay)
@@ -323,10 +414,8 @@ class PPOPT(PPOBase):
         Without the reset, Adam carries momentum for parameters that were just scaled (to zero, when
         decay=0), so the very next update pushes them straight back out — see FINDINGS.md 5.6.
         """
-        self.critic.decay_transient(decay)
+        self.critic.decay_transient(decay, mode=self.decay_mode)
         if self.reset_trans_optim_on_decay:
-            # Drop only the state for the transient parameters (the shared-trunk variant's optimiser
-            # also holds the trunk, whose state must be preserved).
             trans_params = set(id(p) for p in self.critic.trans.parameters())
             for group in self.trans_optim.param_groups:
                 for p in group["params"]:
@@ -361,20 +450,15 @@ class PPOPT(PPOBase):
     # ------------------------------------------------------------------
     def _zero_critic_grads(self):
         self.trans_optim.zero_grad()
-        if self.perm_optim is not None:
-            self.perm_optim.zero_grad()
+        self.perm_optim.zero_grad()
 
     def _step_critic_optims(self):
         self.trans_optim.step()
-        if self.perm_optim is not None:
-            self.perm_optim.step()
+        # No-op during PPO updates: v_perm is detached in critic_loss, so theta_P has no gradient
+        # (zero_grad leaves p.grad as None and every torch optimizer skips such params). theta_P
+        # moves only inside _consolidate. Kept for symmetry with _zero_critic_grads.
+        self.perm_optim.step()
 
     def _critic_parameters(self):
-        """Critic params that receive gradients (for grad clipping in the main PPO update).
-
-        Shared-trunk: trunk + transient head (the permanent head is updated only by consolidation).
-        Separate:     both trunks.
-        """
-        if self.shared_trunk:
-            return list(self.critic.trunk.parameters()) + list(self.critic.trans.parameters())
+        """Both trunks, for grad clipping in the main PPO update (only theta_T carries grads)."""
         return list(self.critic.trans.parameters()) + list(self.critic.perm.parameters())

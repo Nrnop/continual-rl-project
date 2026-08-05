@@ -47,7 +47,6 @@ num_envs: 8
 async_envs: true
 n_steps: 256
 
-critic_arch: "separate"
 lr_trans: 0.0003
 lr_perm: 0.00001
 perm_optimizer: "sgd"

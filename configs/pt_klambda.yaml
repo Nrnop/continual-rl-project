@@ -1,0 +1,88 @@
+# BASE for the (k, lambda) sweep — the region Figure 4 of the paper is about, and the one region
+# this project has never searched.
+#
+# WHY. The paper's claim about k and lambda is EXISTENTIAL, not universal (Sec. 6):
+#
+#   "if the frequency of the permanent updates is significantly higher or significantly lower than
+#    the frequency of task changes, the overall performance is marginally affected, but remains
+#    better than for Q-learning for most k and lambda values. In fact, FOR EACH k, THERE IS AT
+#    LEAST ONE lambda VALUE for which the performance of the proposed algorithm exceeds the
+#    Q-learning baseline."
+#
+# and the co-dependence has a direction:
+#
+#   "For small values of k, LARGE values of lambda yield better performance [...] For large values
+#    of k, the transient value function receives enough updates before the permanent value function
+#    is trained [...] therefore the transient predictions can be decayed more aggressively."
+#
+# What we have actually tested, across the entire project: lambda in {0.5, 0.75} and k in {10, 24}.
+# The paper's own JBW runs use lambda up to 0.95 (Table C.13) and its k analysis goes to k=100.
+# We have never run large lambda, and never swept the two jointly.
+#
+# EXACT DECAY IS ON HERE. `decay_mode: output` makes V_trans <- lambda*V_trans exact. With the old
+# parameter-scaling, "lambda = 0.95" actually deletes ~9% and "lambda = 0.75" deletes ~41-58%
+# (scale-dependent), so a lambda sweep run with mode="params" would not be sweeping lambda at all —
+# it would be sweeping some uncontrolled function of it. This is a precondition for the sweep to
+# mean anything.
+#
+# WHY THIS MATTERS FOR THE DEFICIT WE MEASURED. Phase 1 of the corrected sweep is stationary (no
+# switch has happened yet) and vanilla beats pt there by 220 return points, 10/10 seeds, t=3.83,
+# p<0.005 — with `pt` and `pt_inert` indistinguishable, so the permanent is irrelevant to it. That
+# is the decay's fixed cost, paid every k updates whether or not there is anything to gain. At
+# lambda = 0.95 with exact decay the cost is ~5% per cycle instead of ~58%.
+#
+# SWEEP GRID (drive from the CLI; everything else fixed):
+#   lambda in {0.75, 0.9, 0.95, 0.99}   x   k in {24, 60}
+#
+#   python -m src_continuous_control.train --agent pt --config pt_klambda --seed 0 \
+#       --decay 0.95 --k 60 --total-steps 1843200
+#
+# NOTE k also sets the consolidation buffer size in env steps (k * n_steps * num_envs). The buffer
+# below is sized for k=60; smaller k simply fills less of it, which is harmless.
+
+agent: "pt"
+
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: false
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+lr_critic: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+joint_grad_clip: false
+critic_hidden_sizes: [43, 43]
+lr_trans: 0.0003
+lr_perm: 0.0002
+perm_optimizer: "sgd"
+alpha_p_rm_power: 0.6
+
+decay_mode: "output"       # EXACT V_trans <- lambda*V_trans. Without this the sweep is meaningless.
+decay: 0.95                # SWEEP THIS
+k: 60                      # SWEEP THIS
+consolidation_epochs: 1
+consolidation_buffer_size: 122880    # = 60 * 256 * 8
+value_preserving_consolidation: false
+on_switch: "consolidate"
+
+jumpstart_window_updates: 20
+probe_states: 256
+
+tasks: [1, -1]
+switch: 614400
+total_steps: 3072000

@@ -76,16 +76,16 @@ def test_reset_stops_the_weights_springing_back_from_stale_momentum():
         f"vs reset {moved[True]:.2e})")
 
 
-def test_shared_trunk_reset_preserves_trunk_state():
-    """The shared-trunk optimiser also holds the trunk; only the head's state may be dropped."""
-    agent = PPOPT(17, 6, _cfg(critic_arch="shared_trunk", decay=0.5,
-                              reset_trans_optim_on_decay=True), torch.device("cpu"))
-    for _ in range(6):
+def test_reset_leaves_the_permanent_optimiser_state_alone():
+    """theta_P lives in its own optimiser and must not be touched by a transient decay."""
+    agent = PPOPT(17, 6, _cfg(reset_trans_optim_on_decay=True), torch.device("cpu"))
+    # Give the permanent optimiser some state, as a consolidation would.
+    for _ in range(3):
         obs = torch.randn(16, 17)
-        v_perm, v_trans = agent.critic(obs)
-        loss = ((v_perm.detach() + v_trans - torch.randn(16)) ** 2).mean()
-        agent.trans_optim.zero_grad(); loss.backward(); agent.trans_optim.step()
-    assert any(agent.trans_optim.state.get(p) for p in agent.critic.trunk.parameters())
-    agent._decay_transient(0.5)
-    assert any(agent.trans_optim.state.get(p) for p in agent.critic.trunk.parameters()), \
-        "trunk optimiser state must survive a transient-head reset"
+        v_perm, _ = agent.critic(obs)
+        loss = ((v_perm - torch.randn(16)) ** 2).mean()
+        agent.perm_optim.zero_grad(); loss.backward(); agent.perm_optim.step()
+    assert any(agent.perm_optim.state.get(p) for p in agent.critic.perm.parameters())
+    agent._decay_transient(0.0)
+    assert any(agent.perm_optim.state.get(p) for p in agent.critic.perm.parameters()), \
+        "permanent optimiser state must survive a transient decay"

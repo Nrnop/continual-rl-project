@@ -16,8 +16,7 @@ class PPOVanilla(PPOBase):
     def __init__(self, obs_dim, act_dim, cfg, device):
         super().__init__(obs_dim, act_dim, cfg, device)
 
-        hidden = list(cfg.get("hidden_sizes", [256, 256]))
-        self.critic = VanillaCritic(obs_dim, hidden_sizes=hidden).to(device)
+        self.critic = VanillaCritic(obs_dim, hidden_sizes=self._critic_hidden()).to(device)
         lr_critic = cfg.get("lr_critic", cfg["lr_actor"])
         self.critic_optim = torch.optim.Adam(
             self.critic.parameters(), lr=lr_critic, eps=cfg.get("adam_eps", 1e-8)

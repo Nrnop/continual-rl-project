@@ -1,0 +1,141 @@
+# PT-PPO, FAITHFUL TO Anand & Precup (2023) — the recipe every earlier PT run got wrong.
+#
+# Read alongside configs/vanilla_paper.yaml, which is the matched baseline. Run BOTH: this config
+# changes anneal_lr and the critic width, so a comparison against the old vanilla runs is invalid.
+#
+#   python -m src_continuous_control.train --agent pt      --config pt_paper      --seed 0
+#   python -m src_continuous_control.train --agent vanilla --config vanilla_paper --seed 0
+#
+# WHAT CHANGED, AND THE LINE OF THE PAPER IT COMES FROM
+# -----------------------------------------------------------------------------------------------
+# 1. theta_T is ZERO-INITIALISED (code: models/critic.py).  Theorem 1: "If V^(TD)_0 = V^(P),
+#    V^(T)_0 = 0 [...] then for all t, V^(PT)_t = V^(TD)_t."  We previously initialised BOTH nets
+#    randomly, so the acting value started as the sum of two random functions — strictly noisier
+#    than the single critic it is compared against, and not the algorithm in the paper.
+#
+# 2. The consolidation target is old_V_perm + V_trans, i.e. keep = 1 (code: agents/ppo_pt.py).
+#    Eq. (4) regresses V^(P) onto V^(PT); Alg. 4 line 15 is "y_hat = Q^(P)(S,A) + Q^(T)(S,A;w)".
+#    We had been using keep = 1-decay as a "value-preserving fix"; that is a different operator
+#    with a different fixed point, so Theorem 5 (theta_P -> E_tau[v_tau]) no longer applies to it.
+#
+# 3. decay = 0.95 and k = 60, TUNED (FINDINGS 8.7), not the original decay = 0.5 / k = 10.
+#    Section 6: "For small values of k, large values of lambda yield better performance [...] For
+#    large values of k [...] the transient predictions can be decayed more aggressively."  The
+#    original config paired a SMALL k with a SMALL lambda — the one combination the paper argues
+#    against — and lambda was not even controllable until decay_mode="output" (below).
+#
+#    k = 60 PPO updates = 122 880 env steps between consolidations; 5 consolidations per 614 400-
+#    step phase, and 300/60 = 5 divides evenly, so periodic consolidation lands ON the boundary.
+#    (`on_switch` therefore hits an empty buffer and is inert here, as it was at k=10 — see
+#    FINDINGS.md 5.1. That is a known limitation of this setting, not an oversight: k was selected
+#    on the phase-1 cost measurement, and no k in the tested grid both avoids the divisor and wins.)
+#    Transient gradient steps between consolidations: 60 x 10 epochs x 32 minibatches = 19 200.
+#
+# 4. anneal_lr: false.  The reference does not anneal.  Annealing lr_trans to zero means the
+#    transient's ability to rebuild after each decay degrades monotonically over the run — a
+#    PT-specific handicap manufactured by our PPO recipe, not by the method.
+#
+# 5. critic_hidden_sizes: [43, 43]  -> PT-0.5x.  Section 6.1: "we use half the number of
+#    parameters as that of DQN for both permanent and transient value networks to ensure the total
+#    number of parameters across all baselines are same".  Two [43,43] critics = 5 420 params
+#    against vanilla's single [64,64] = 5 377 (1.008x).  This matters: Appendix C.3 finds that once
+#    the agent's capacity is large relative to the environment "there's no additional benefit
+#    (neither there is any downside) to our method" — PT is a big-world/small-agent method, and our
+#    old 2x-capacity PT was sitting in exactly the regime where the paper predicts a tie.
+#    The ACTOR keeps hidden_sizes [64,64] and stays identical across all three agents.
+#
+# WHAT TO MEASURE
+# -----------------------------------------------------------------------------------------------
+# NOT the per-phase mean return.  Theorem 8 gives PT a tighter error bound only for k <= k0 after a
+# switch and says the bounds "collapse to 0" as k -> infinity; averaging over a 614k-step phase
+# integrates the predicted effect away.  Read instead:
+#   boundary/jumpstart_*   - return in the 20 updates after each switch (Thm 6/8)
+#   retention/mse_perm vs retention/mse_full - error against the INACTIVE task's converged values
+#                            (Thm 7; the paper's dotted "MSE on other tasks" line in Fig. 2)
+#   boundary/value_drift, boundary/return_drop - the thesis's stability measures
+#
+# CAVEAT ON THIS BENCHMARK, worth stating in the thesis regardless of the outcome.  Theorem 5 puts
+# theta_P's fixed point at E_tau[v_tau].  Under a symmetric reward-sign flip,
+#   r_{+1} = +w*v_x + ctrl,  r_{-1} = -w*v_x + ctrl  =>  E_tau[r_tau] = ctrl
+# the entire task-discriminative term cancels, so the permanent component's optimal content here is
+# the control cost and nothing else.  Contrast JBW (rewards alternate -1 / +2) and MinAtar (three
+# different games), where E_tau[v_tau] is richly informative.  A jumpstart benefit should still
+# exist — PT enters a new task from ~0 rather than from -v_tau — but the retention benefit is
+# structurally capped.  configs/ with an asymmetric task set are the follow-up.
+
+agent: "pt"
+
+# --- validated PPO base (identical to vanilla_paper.yaml except for the critic) ---
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: false          # (4) the reference does not anneal
+hidden_sizes: [64, 64]    # ACTOR — identical across vanilla / pt / ewc
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# --- dual-timescale critic: two fully separate networks (T_Net / P_Net) ---
+critic_hidden_sizes: [43, 43]   # (5) PT-0.5x: 2 x 5420/2 params ~= vanilla's 5377
+lr_trans: 0.0003                # alpha_T
+# alpha_P: TUNED FOR THIS DOMAIN IN TWO PASSES (FINDINGS 8.4 and 8.6).
+#
+#   pass 1 selected sgd/1e-2 for absorbing 96% of the transient per consolidation. That was
+#   BACKWARDS. Theorem 5 puts theta_P's fixed point at E_tau[v_tau], the AVERAGE over tasks;
+#   absorbing ~100% every cycle makes the permanent a lagged copy of the CURRENT task, so at a
+#   switch it is confidently wrong and the transient must cancel it — worse than vanilla, which
+#   simply adapts. ("Too eager", symmetric to the inert 1e-5 that preceded it.)
+#
+#   pass 2 derived the target instead of guessing: exponential averaging with per-consolidation
+#   step alpha has an effective window of ~1/alpha; at k=24 there are 12.5 consolidations per
+#   phase, so averaging across BOTH tasks needs >= 2 phases = 25  =>  alpha* ~ 0.04. The grid
+#   searched the band [0.02, 0.15] that pass 1 had jumped straight over (0.005 -> 0.547, nothing
+#   between), and sgd/2e-4 landed closest at 0.0303.
+#
+# Selected on MECHANISM, not return: the return ranking at n=3 is seed noise, demonstrated twice
+# (in pass 1 the INERT control topped it; in pass 2 the highest single return came from a config
+# outside the band on the wrong side).
+lr_perm: 0.0002                 # alpha_P (median absorbed_frac 0.0303)
+perm_optimizer: "sgd"           # reference: P_opt = optim.SGD (T_opt stays Adam)
+# EXACT decay: V_trans <- decay*V_trans, by scaling only the transient's final (affine) layer.
+# The old "params" mode scaled EVERY weight, which on a nonlinear net deletes far more than
+# `decay` says (~0.42 retained at decay=0.75 instead of 0.75) and made lambda uncontrollable —
+# a lambda sweep in that mode sweeps an uncontrolled function of lambda. See FINDINGS 8.7.
+decay_mode: "output"
+# Theorem 5 holds "under Robbins-Monro step-size conditions" — a DECREASING alpha_P. Every run
+# before 2026-08-04 used a constant one, violating the theorem's premise: with a fixed step the
+# permanent TRACKS rather than converges, whatever value is chosen. Verified bit-exact in situ.
+alpha_p_rm_power: 0.6           # alpha_P = lr_perm / (1 + n_consolidations)^0.6
+# Actor and critic gradients are clipped SEPARATELY. With the old joint clip the critic's gradient
+# magnitude changed the ACTOR's effective step size, so the arms never shared an identical actor —
+# the premise the whole comparison rests on. This invalidates all cross-arm results before
+# 2026-08-04.
+joint_grad_clip: false
+k: 60                           # tuned: FINDINGS 8.7 (Job B/B2)
+decay: 0.95                     # tuned: FINDINGS 8.7 (Job B/B2)
+consolidation_epochs: 1
+consolidation_buffer_size: 122880   # = k * n_steps * num_envs = 60*256*8
+value_preserving_consolidation: false   # (2) use Eq. (4): target = old_V_perm + V_trans
+on_switch: "consolidate"
+
+# --- metrics ---
+jumpstart_window_updates: 20    # ~41k env steps, short against a 614k phase
+probe_states: 256
+
+# --- continual task-switching: 5 phases / 4 switches (+,-,+,-,+) ---
+tasks: [1, -1]
+switch: 614400
+total_steps: 3072000

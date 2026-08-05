@@ -11,8 +11,10 @@ Usage:
 Config resolution: default.yaml ← agent-specific YAML ← CLI overrides.
 """
 import argparse
+import contextlib
 import copy
 import os
+import random
 import sys
 import time
 
@@ -30,7 +32,8 @@ from .envs.directional_half_cheetah import (
 )
 from .envs.drift_half_cheetah import make_drift_env, make_drift_vector_env
 from .utils.logger import Logger
-from .utils.metrics import ValueDriftProbe, BoundaryReturnTracker
+from .utils.metrics import (ValueDriftProbe, BoundaryReturnTracker,
+                            JumpstartTracker, RetentionProbe)
 from .utils.seeding import seed_everything, seed_env
 
 
@@ -121,6 +124,18 @@ def parse_args():
     # PT-specific
     p.add_argument("--lr-trans", type=float, default=None)
     p.add_argument("--lr-perm", type=float, default=None)
+    # alpha_P must be TUNED PER DOMAIN. The paper's own search ranges span seven orders of
+    # magnitude (tabular 0.8..1e-3, deep prediction 1e-3..3e-5, MinAtar 1e-7..1e-9), and at
+    # HalfCheetah's value scale the inherited sgd/1e-5 transfers 0.04% per consolidation, i.e. the
+    # permanent never learns. These two flags exist so the sweep can be driven from the CLI.
+    p.add_argument("--perm-optimizer", type=str, default=None, choices=["sgd", "adam"])
+    p.add_argument("--consolidation-epochs", type=int, default=None)
+    # Settable from the CLI so a missing/stale config cannot SILENTLY disable Robbins-Monro
+    # annealing (it defaults to 0.0 = off, which reproduces the very defect it exists to fix).
+    p.add_argument("--alpha-p-rm-power", type=float, default=None)
+    # "output" = exact V_trans <- decay*V_trans (Alg. 2 line 9). "params" = the reference's
+    # p.data *= decay, which over-decays badly on a nonlinear net.
+    p.add_argument("--decay-mode", type=str, default=None, choices=["params", "output"])
     p.add_argument("--k", type=int, default=None)
     p.add_argument("--decay", type=float, default=None)
     p.add_argument("--lr-critic", type=float, default=None)
@@ -151,8 +166,38 @@ def parse_args():
     return argparse.Namespace(**normalised)
 
 
+@contextlib.contextmanager
+def _isolated_rng():
+    """Run a block without disturbing the training RNG streams.
+
+    WHY THIS EXISTS. `_run_offline_eval` samples actions with `actor.act()`, which draws from the
+    GLOBAL torch generator — up to 5 episodes x 1000 steps = 5000 draws, every 50 updates. Those
+    draws advance the same generator that produces training actions, so the evaluation silently
+    rewrote the trajectory it was supposed to be observing. Concretely: the same (agent, config,
+    seed) produced different results with and without `--no-eval`, because the eval fires at
+    update_idx == 1 and every subsequent training action is shifted.
+
+    That broke reproducibility for every paired-per-seed comparison in this project whenever two
+    runs were launched with different eval settings. Snapshotting and restoring the RNG state makes
+    the evaluation a true read-only probe: identical training trajectories with eval on or off.
+    """
+    t_state = torch.get_rng_state()
+    n_state = np.random.get_state()
+    p_state = random.getstate()
+    try:
+        yield
+    finally:
+        torch.set_rng_state(t_state)
+        np.random.set_state(n_state)
+        random.setstate(p_state)
+
+
 def _run_offline_eval(agent, eval_env, n_episodes=5):
-    """Run standardized zero-momentum offline evaluation from stationary standstill."""
+    """Run standardized zero-momentum offline evaluation from stationary standstill.
+
+    Caller MUST wrap this in `_isolated_rng()` — it samples actions and would otherwise perturb
+    the training RNG stream (see that context manager's docstring).
+    """
     eval_returns = []
     for _ in range(n_episodes):
         obs, _ = eval_env.reset()
@@ -387,8 +432,34 @@ def main():
     n_steps = cfg["n_steps"]
 
     drift_probe = ValueDriftProbe()
-    boundary_tracker = BoundaryReturnTracker(post_window_steps=n_steps * 5)
+    # NOTE: the window MUST be measured in whole PPO updates. It used to be `n_steps * 5`, written
+    # when n_steps was the entire batch (single env). Under vectorised envs the batch is
+    # n_steps * num_envs, so `n_steps * 5` = 1280 < one 2048-step update: the tracker finalised on
+    # its first post-switch sample and reported drop = 0.00 by construction. Every boundary_drop
+    # number produced before 2026-08-04 is an artifact of that, not a measurement.
+    boundary_window = int(cfg.get("boundary_window_updates", 5)) * n_steps * num_envs
+    boundary_tracker = BoundaryReturnTracker(post_window_steps=boundary_window,
+                                             min_useful_steps=n_steps * num_envs)
+    # Theorem 8's advantage lives in a window right after a switch and decays to nothing, so this
+    # window must be SHORT relative to the phase (default 20 updates ~= 41k env steps vs a 614k
+    # phase). Theorem 7's retention measure needs a snapshot of each task's converged values.
+    jumpstart_window = int(cfg.get("jumpstart_window_updates", 20)) * n_steps * num_envs
+    jumpstart_tracker = JumpstartTracker(window_steps=jumpstart_window)
+    retention_probe = RetentionProbe()
     probe_states = None  # sampled lazily
+
+    def _v_perm(s):
+        return agent.get_value(s)[0]
+
+    def _v_full(s):
+        vp, vt = agent.get_value(s)
+        return vp + vt
+
+    # Both are scored against the same reference (the converged acting value of the finished task),
+    # which is the comparison Theorem 7 makes. Vanilla/EWC put the whole value in the perm slot and
+    # zero in trans, so the two coincide there — a single critic has no separately retained
+    # component, which is exactly what the theorem contrasts against.
+    _value_fns = {"perm": _v_perm, "full": _v_full}
 
     # --- Training state ---  (obs/done initialized from env.reset above)
     avg_return = 0.0
@@ -434,6 +505,25 @@ def main():
     print(f"[train] total_steps={total_steps}  switch={switch_interval}  n_steps={n_steps}  "
           f"num_envs={num_envs}  async={async_envs and num_envs > 1}  batch={n_steps * num_envs}")
     print(f"[train] step_by_step={cfg.get('step_by_step', False)}")
+    print(f"[train] grad_clip={'JOINT (actor+critic together)' if cfg.get('joint_grad_clip', False) else 'separate (actor | critic)'}")
+    if cfg["agent"] == "pt":
+        # Print the settings that decide whether the PT mechanism runs at all. Every silent
+        # misconfiguration this project has hit (inert permanent, constant alpha_P, a config file
+        # that never arrived on the box) would have been visible in one line of the log.
+        _rm = float(cfg.get("alpha_p_rm_power", 0.0))
+        _dm = str(cfg.get("decay_mode", "params")).lower()
+        print(f"[train] PT: lr_perm={cfg.get('lr_perm')} opt={cfg.get('perm_optimizer')} "
+              f"k={cfg.get('k')} decay={cfg.get('decay')} decay_mode={_dm} "
+              f"critic_hidden={cfg.get('critic_hidden_sizes', cfg.get('hidden_sizes'))} "
+              f"alpha_p_rm_power={_rm}")
+        # Both of these silently change what the run MEANS, so say so in words, not just values.
+        if _rm <= 0.0:
+            print("[train] PT:   ^ CONSTANT alpha_P (Robbins-Monro OFF) — Theorem 5's premise "
+                  "is not satisfied")
+        if _dm != "output":
+            print("[train] PT:   ^ decay_mode=params — scaling PARAMETERS, not the value "
+                  "function. V_trans does NOT shrink by `decay`; a lambda sweep in this mode "
+                  "sweeps an uncontrolled function of lambda, not lambda.")
     if drift_mode:
         print(f"[train] env_mode=drift  targets={drift_kwargs['drift_targets']}  "
               f"amplitude={drift_kwargs['amplitude']}  period={drift_kwargs['period']}  "
@@ -461,6 +551,12 @@ def main():
         if not drift_mode and not cfg.get("disable_task_switch", False):
             next_switch = (task_idx + 1) * switch_interval
             if global_step >= next_switch:
+                # Snapshot the FINISHING task's converged values first (Theorem 7's v_i). Must
+                # happen before on_task_switch, which consolidates and decays and so moves V.
+                if probe_states is not None:
+                    retention_probe.snapshot(tasks[task_idx % len(tasks)],
+                                             _v_full, probe_states)
+
                 task_idx += 1
                 direction = tasks[task_idx % len(tasks)]
                 env.unwrapped.call("set_task", direction)  # propagates to every sub-env
@@ -481,6 +577,7 @@ def main():
                         logger.log_scalar("boundary/value_drift", drift, global_step)
 
                 boundary_tracker.on_switch(global_step, avg_return)
+                jumpstart_tracker.on_switch(global_step)
                 print(f"[train] step {global_step}: SWITCH to task {direction}  avg_return={avg_return:.1f}")
 
         # ---- Collect rollout ----
@@ -512,7 +609,8 @@ def main():
             else:
                 _set_env_task(eval_env, tasks[task_idx % len(tasks)])  # match current train task
             _sync_obs_stats(env, eval_env)  # evaluate with the training normalizer's stats
-            clean_eval_ret = _run_offline_eval(agent, eval_env, n_episodes=5)
+            with _isolated_rng():          # the eval must not perturb the training RNG stream
+                clean_eval_ret = _run_offline_eval(agent, eval_env, n_episodes=5)
             eval_returns_curve.append((global_step, clean_eval_ret))
             logger.log_scalar("eval/zero_momentum_return", clean_eval_ret, global_step)
             if cfg.get("save_checkpoints", False):
@@ -538,7 +636,10 @@ def main():
             if consol_ho is not None:
                 scalars["train/consolidation_error_holdout_pct"] = consol_ho
             # Consolidation-regression diagnostics (PT, separate-trunk variant only).
-            for attr, tag in (("last_consolidation_loss_first", "consol/loss_first"),
+            for attr, tag in (("last_alpha_p", "consol/alpha_p"),
+                              ("last_absorbed_frac", "consol/absorbed_frac"),
+                              ("last_absorbed_align", "consol/absorbed_align"),
+                              ("last_consolidation_loss_first", "consol/loss_first"),
                               ("last_consolidation_loss_last", "consol/loss_last"),
                               ("last_consolidation_loss_mean", "consol/loss_mean"),
                               ("last_perm_mean_before", "consol/perm_mean_before"),
@@ -563,6 +664,26 @@ def main():
             flat_obs = agent.buffer.obs.reshape(-1, obs_dim)
             n_probe = min(cfg.get("probe_states", 256), flat_obs.shape[0])
             probe_states = flat_obs[:n_probe].copy()
+            # Control baselines for the retention metric — see RetentionProbe's docstring.
+            # Without these, an INERT permanent scores better than an adapted one on a
+            # sign-flip task pair and reads as a false confirmation of Theorem 7.
+            retention_probe.set_baseline("perm_init", _v_perm(probe_states))
+            retention_probe.set_baseline("zero", np.zeros(len(probe_states), dtype=np.float32))
+
+        # Is the permanent component doing ANYTHING? `perm_frac` is its share of |V|; `perm_drift`
+        # is how far it has moved from its initialisation. A permanent with drift ~0 means the
+        # dual-timescale mechanism is not running, whatever the returns say.
+        if probe_states is not None and update_idx % 10 == 0:
+            vp_now = np.asarray(_v_perm(probe_states), dtype=np.float32)
+            vt_now = np.asarray(agent.get_value(probe_states)[1], dtype=np.float32)
+            denom = np.abs(vp_now).mean() + np.abs(vt_now).mean() + 1e-8
+            logger.log_scalars({
+                "perm/frac_of_value": float(np.abs(vp_now).mean() / denom),
+                "perm/drift_from_init": float(np.sqrt(np.mean(
+                    (vp_now - retention_probe.baselines["perm_init"]) ** 2))),
+                "perm/abs_mean": float(np.abs(vp_now).mean()),
+                "trans/abs_mean": float(np.abs(vt_now).mean()),
+            }, step=global_step)
 
         # Boundary return tracker
         rec = boundary_tracker.update(global_step, avg_return)
@@ -572,6 +693,25 @@ def main():
                 "boundary/pre_return": rec["pre"],
                 "boundary/post_trough": rec["trough"],
             }, step=rec["step"])
+
+        # Jumpstart window (Thm 6/8): return in the short window right after each switch.
+        jrec = jumpstart_tracker.update(global_step, avg_return)
+        if jrec is not None:
+            logger.log_scalars({
+                "boundary/jumpstart_first": jrec["first"],
+                "boundary/jumpstart_mean": jrec["mean"],
+                "boundary/jumpstart_end": jrec["end"],
+                "boundary/jumpstart_gain": jrec["gain"],
+            }, step=jrec["step"])
+
+        # Retention (Thm 7): squared error against the converged values of the INACTIVE task(s).
+        # Reported for the permanent component and for the full acting value; the paper predicts
+        # the permanent degrades less. Silent until the first task has finished.
+        if probe_states is not None and retention_probe.snapshots:
+            ret = retention_probe.measure(tasks[task_idx % len(tasks)], _value_fns, probe_states)
+            if ret:
+                logger.log_scalars(
+                    {f"retention/mse_{name}": v for name, v in ret.items()}, step=global_step)
 
         # Progress
         elapsed = time.time() - t0
@@ -594,12 +734,28 @@ def main():
     if mean_drop is not None:
         logger.log_scalar("boundary/mean_drop", mean_drop, global_step)
         print(f"[train] mean boundary drop: {mean_drop:.2f}")
+    mean_js = jumpstart_tracker.mean_jumpstart()
+    if mean_js is not None:
+        logger.log_scalar("boundary/mean_jumpstart", mean_js, global_step)
+        print(f"[train] mean post-switch jumpstart return "
+              f"({cfg.get('jumpstart_window_updates', 20)}-update window): {mean_js:.2f}")
+    if retention_probe.snapshots and probe_states is not None:
+        final_ret = retention_probe.measure(tasks[task_idx % len(tasks)],
+                                            _value_fns, probe_states)
+        if final_ret:
+            print("[train] final retention MSE vs inactive task(s): "
+                  + "  ".join(f"{k}={v:.4f}" for k, v in final_ret.items()))
+
+    # Persist ALL logged scalars (jumpstart, retention, consolidation diagnostics, ...) regardless
+    # of which logging backends were enabled — sweeps normally run --no-tb --no-wandb.
+    scalars_file = logger.save_scalars()
 
     if hasattr(env, "close"):
         env.close()
     if eval_env is not None and hasattr(eval_env, "close"):
         eval_env.close()
     logger.close()
+    print(f"[train] Scalars ({len(logger.history)} series) saved to {scalars_file}")
     elapsed = time.time() - t0
     print(f"[train] Done. {global_step} steps in {elapsed:.0f}s ({global_step/elapsed:.0f} sps). "
           f"Returns saved to {fname}")

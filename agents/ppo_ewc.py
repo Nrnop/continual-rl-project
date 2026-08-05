@@ -136,9 +136,7 @@ class PPOEWC(PPOVanilla):
                 self.actor_optim.zero_grad()
                 self._zero_critic_grads()
                 loss.backward()
-                # Grad clip over all trainable params
-                all_params = list(self.actor.parameters()) + list(self._critic_parameters())
-                torch.nn.utils.clip_grad_norm_(all_params, self.max_grad_norm)
+                self._clip_grads()      # actor and critic clipped SEPARATELY — see PPOBase
                 self.actor_optim.step()
                 self._step_critic_optims()
 

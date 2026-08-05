@@ -1,0 +1,74 @@
+# PT with the PERMANENT COMPONENT SWITCHED OFF — the mechanism control.
+#
+# Identical to configs/pt_paper.yaml except `lr_perm`, which is set back to the untuned 1e-5 that
+# every run of this project used before 2026-08-04. At that value the consolidation regression
+# transfers 0.04% of the transient with directional alignment 0.000: theta_P never leaves its
+# random initialisation, so this agent is
+#
+#     vanilla  +  a frozen random offset  +  a periodic transient decay
+#
+# with no slow timescale whatsoever. The `INERT PERMANENT` banner fires on every run of it; that is
+# expected and is the point.
+#
+# WHY THIS IS AN ARM AND NOT A FOOTNOTE. The alpha_P grid (FINDINGS 8.4) found no detectable effect
+# of alpha_P on return -- the between-config spread was smaller than the within-config SEM, and
+# this inert configuration in fact posted the HIGHEST mean return of the six tested (687 vs 479 for
+# the tuned pt_paper). At n=3 that is noise, not a result. But it means the central question is no
+# longer "does PT beat vanilla" -- it is:
+#
+#     Does a permanent value function that DEMONSTRABLY WORKS do anything for return that a
+#     permanent value function that demonstrably does NOT work fails to do?
+#
+# `pt` vs `pt_inert` at 10 seeds answers exactly that, with everything else held identical and the
+# mechanism instrumented (consol/absorbed_frac, retention/mse_perm vs mse_perm_init). A null here
+# is a real finding about the method under PPO, and a much stronger one than "PT tied vanilla",
+# because the mechanism's operation is measured rather than assumed.
+#
+#   python -m src_continuous_control.train --agent pt --config abl_pt_inert --seed 0
+
+agent: "pt"
+
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: false
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+critic_hidden_sizes: [43, 43]
+lr_trans: 0.0003
+lr_perm: 0.00001              # <== THE ONLY DIFFERENCE from pt_paper.yaml (2e-4 there)
+perm_optimizer: "sgd"
+# EXACT decay: V_trans <- decay*V_trans. The old 'params' mode scaled every weight, which on a
+# nonlinear net deletes far more than `decay` says and made lambda uncontrollable. See FINDINGS 8.7.
+decay_mode: "output"
+alpha_p_rm_power: 0.6         # identical to pt_paper — only lr_perm differs between the arms
+joint_grad_clip: false
+k: 60                           # tuned: FINDINGS 8.7 (Job B/B2)
+decay: 0.95                     # tuned: FINDINGS 8.7 (Job B/B2)
+consolidation_epochs: 1
+consolidation_buffer_size: 122880   # = k * n_steps * num_envs = 60*256*8
+value_preserving_consolidation: false
+on_switch: "consolidate"
+
+jumpstart_window_updates: 20
+probe_states: 256
+
+tasks: [1, -1]
+switch: 614400
+total_steps: 3072000

@@ -1,0 +1,85 @@
+# ASYMMETRIC task set — the one regime where PT's own theory leaves it room to work.
+#
+# Identical to configs/pt_paper.yaml except `tasks: [1.0, -0.5]` instead of `[1, -1]`.
+#
+# WHY. Theorem 5 puts the permanent value function's fixed point at E_tau[v_tau], the mean value
+# function over the task distribution, and Theorem 6 says that fixed point optimises the jumpstart
+# objective. Under the SYMMETRIC sign flip used in every experiment so far,
+#
+#     r_{+1} = +w*v_x + ctrl ,  r_{-1} = -w*v_x + ctrl   =>   E_tau[r_tau] = ctrl
+#
+# the entire task-discriminative term CANCELS. The permanent component's optimal content is the
+# control cost and nothing else — it has essentially nothing to store, by construction. Every PT
+# result in this project has therefore been measured in the one regime where the method's own
+# theory predicts it has no room to help, which is a property of the benchmark WE chose, not of
+# the method.
+#
+# The paper's benchmarks are asymmetric throughout: JBW alternates red/blue rewards between -1 and
+# +2 (plus always-+0.1 green items); MinAtar samples three different games with all-positive
+# rewards and heavy shared structure; the gridworlds use 0/1 reward patterns (Table C.1). In all of
+# them E_tau[v_tau] is richly informative.
+#
+# With tasks [1.0, -0.5]:  E_tau[r_tau] = 0.25*w*v_x + ctrl  — a non-degenerate permanent target,
+# while keeping the same physics, the same reversal structure, and the same phase schedule. The
+# agent still has to reverse direction; it just is not a perfectly balanced reversal.
+#
+# WHAT THIS IS NOT. This is not another bug hunt and not a hyper-parameter search. The mechanism is
+# already verified running (consol/absorbed_frac 0.94 vs the inert arm's 0.01, zero overlap across
+# 10 seeds). This changes the TASK DISTRIBUTION to one where the theory's central quantity is
+# non-degenerate. If PT still shows nothing here, the negative result is about the method rather
+# than about our benchmark, and the study is finished.
+#
+# NOTE: requires the set_task float fix (2026-08-04). Older code coerced the coefficient to
+# int(np.sign(...)) and would silently run this config as a symmetric +-1 flip — verify at startup
+# that the log prints `SWITCH to task -0.5`, not `SWITCH to task -1`.
+#
+#   python -m src_continuous_control.train --agent pt      --config pt_paper_asym --seed 0
+#   python -m src_continuous_control.train --agent vanilla --config pt_paper_asym --seed 0
+#     (the vanilla/ewc arms need `tasks` too, so run them from THIS file with --agent)
+
+agent: "pt"
+
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: false
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+lr_critic: 0.0003          # used only when --agent vanilla/ewc is run from this file
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# --- PT critic: the tuned, verified-working configuration (FINDINGS 8.4) ---
+critic_hidden_sizes: [43, 43]
+lr_trans: 0.0003
+lr_perm: 0.0002            # the pass-2 tuned value (FINDINGS 8.6), not the retracted 1e-2
+perm_optimizer: "sgd"
+alpha_p_rm_power: 0.6      # Robbins-Monro, as Theorem 5 requires
+joint_grad_clip: false     # actor identical across arms
+k: 24
+decay: 0.75
+consolidation_epochs: 1
+consolidation_buffer_size: 49152
+value_preserving_consolidation: false
+on_switch: "consolidate"
+
+jumpstart_window_updates: 20
+probe_states: 256
+
+# --- THE ONLY EXPERIMENTAL CHANGE ---
+tasks: [1.0, -0.5]         # asymmetric: E_tau[r_tau] no longer cancels
+switch: 614400
+total_steps: 3072000

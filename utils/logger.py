@@ -27,6 +27,12 @@ class Logger:
         self.results_dir = results_dir
         os.makedirs(results_dir, exist_ok=True)
 
+        # Every scalar is ALSO kept here and dumped by save_scalars(), independently of any
+        # backend. Without this, a sweep run with --no-tb --no-wandb (the normal way we run on a
+        # remote box) silently discards everything log_scalar touches — including the jumpstart and
+        # retention curves, which are the primary metrics for the PT comparison.
+        self.history = {}          # name -> list[(step, value)]
+
         self.tb = None
         self.wandb = None
 
@@ -57,6 +63,7 @@ class Logger:
 
     def log_scalar(self, name, value, step):
         value = float(value)
+        self.history.setdefault(name, []).append((int(step), value))
         if self.tb is not None:
             self.tb.add_scalar(name, value, step)
         if self.wandb is not None:
@@ -73,6 +80,18 @@ class Logger:
         fname = os.path.join(self.results_dir, f"{self.exp_name}_seed_{self.seed}_{suffix}.pkl")
         with open(fname, "wb") as f:
             pickle.dump(np.asarray(returns_array, dtype=np.float32), f)
+        return fname
+
+    def save_scalars(self, suffix="scalars"):
+        """Dump every logged scalar as {name: np.ndarray[(step, value)]}.
+
+        Backend-independent, so `--no-tb --no-wandb` runs still keep boundary/jumpstart_*,
+        retention/mse_*, train/consol/* and everything else. Written once at the end of training.
+        """
+        fname = os.path.join(self.results_dir, f"{self.exp_name}_seed_{self.seed}_{suffix}.pkl")
+        payload = {k: np.asarray(v, dtype=np.float64) for k, v in self.history.items()}
+        with open(fname, "wb") as f:
+            pickle.dump(payload, f)
         return fname
 
     def save_checkpoint(self, state_dict, step):

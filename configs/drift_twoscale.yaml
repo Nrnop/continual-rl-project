@@ -57,11 +57,19 @@ num_envs: 8
 async_envs: true
 n_steps: 256
 
-# --- PT knobs: the shared-trunk variant, i.e. the one where consolidation is exact ---
-critic_arch: "shared_trunk"
+# --- PT knobs: TWO FULLY SEPARATE NETWORKS (T_Net / P_Net), as in the reference ---
+# NOTE: these runs previously used a shared-trunk / two-linear-head critic. That variant was removed
+# as unfaithful to the algorithm being ported — PT_DQN_half.py holds two INDEPENDENT networks. With
+# two separate trunks the transfer is a regression and the decay scales parameters, so the operator
+# is lossy (FINDINGS.md 6.1). The drift numbers in FINDINGS.md 8.1 were produced by the removed
+# variant and DO NOT correspond to this config; re-run before citing them.
 lr_trans: 0.0003
+lr_perm: 0.00001
+perm_optimizer: "sgd"
 k: 10
 decay: 0.5
+consolidation_epochs: 1
+consolidation_buffer_size: 20480
 on_switch: "consolidate"   # never fires under drift (no boundaries); consolidation is on the timer
 
 # --- horizon: same as the main sweep, so results are directly comparable ---

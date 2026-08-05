@@ -1,26 +1,20 @@
-"""Critics: VanillaCritic, SplitCritic (two trunks), and SharedTrunkSplitCritic (two linear heads).
+"""Critics: VanillaCritic (single trunk) and SplitCritic (two fully separate trunks).
 
 The acting/bootstrapping value is always V = V_perm + V_trans.
 
-Two PT variants, both present in the reference implementation:
+`SplitCritic` mirrors the reference implementation we are porting — `T_Net` / `P_Net` in
+control/minatar_crl/PT_DQN_half.py, which are TWO INDEPENDENT networks
+(`T_Net = CNN_half(...)`, `P_Net = CNN_half(...)`) whose outputs are added. There is no shared
+trunk and no weight sharing of any kind: the whole point of the decomposition is that the two
+components live on separate timescales, which a shared trunk would couple.
 
-- `SplitCritic` — TWO SEPARATE trunks, mirroring P_Net / T_Net in the paper's
-  control/minatar_crl/PT_DQN_half.py. Consolidation must make V_perm *learn* old_V_perm + V_trans by
-  regression. At the shipped settings (lr_perm=1e-5, SGD, 1 epoch = 320 steps) that transfers only
-  ~0.05% while the decay deletes 100% of the transient, so ~98% of the acting value is destroyed —
-  repeated ~150x per run, this wrecks the value function. NOTE: the target IS fittable given enough
-  capacity and training (Adam, [256,256], 200 epochs reaches ~3% error on the consolidation batch);
-  an earlier comment here wrongly called it unrepresentable. What does not improve is generalisation
-  — held-out error floors near 38-40% — and the states that matter are the NEW ones visited in the
-  next rollout. See FINDINGS.md 6.3.
-
-- `SharedTrunkSplitCritic` — ONE shared feature trunk with two LINEAR heads (the shared-trunk
-  two-head variant the reference uses for minigrid). Because
-      V = w_P·phi(s) + w_T·phi(s) = (w_P + w_T)·phi(s)
-  the sum of the two heads is itself linear in phi, so consolidation is EXACT weight arithmetic
-  (w_P += (1-decay)·w_T ; w_T *= decay) with zero regression and zero value drift, for ANY decay.
-  Decaying a linear head also scales its output exactly, unlike scaling the parameters of an MLP.
-  This is the correct variant under deep function approximation.
+Consequence, stated plainly because it is the mechanism's cost: with two separate trunks,
+consolidation cannot be weight arithmetic. The permanent net has to *learn* `old_V_perm + V_trans`
+by regression over a buffer of visited states (see `agents/ppo_pt.py::_consolidate`), and the decay
+scales the transient's PARAMETERS, which for a nonlinear net does not scale its OUTPUT by the same
+factor. Both are properties of the reference algorithm, not of this port; both are measured in
+FINDINGS.md 6.1. Anything that removes them (e.g. sharing a trunk so the transfer becomes exact)
+is a different architecture, not this one.
 """
 import torch
 import torch.nn as nn
@@ -40,12 +34,76 @@ class VanillaCritic(nn.Module):
 
 
 class SplitCritic(nn.Module):
-    """Dual-timescale state-value: V(s) = V_perm(s; theta_P) + V_trans(s; theta_T)."""
+    """Dual-timescale state-value: V(s) = V_perm(s; theta_P) + V_trans(s; theta_T).
 
-    def __init__(self, obs_dim, hidden_sizes=(256, 256)):
+    Two fully separate MLPs, exactly as P_Net / T_Net in the reference.
+
+    INITIALISATION follows Theorem 1 of the paper, which is the condition under which PT is a
+    *strict generalisation* of TD learning:
+
+        "If V^(TD)_0 = V^(P), V^(T)_0 = 0 [...] then for all t, V^(PT)_t = V^(TD)_t."
+
+    So the PERMANENT gets the ordinary value-head initialisation (it plays the role of TD's own
+    init), and the TRANSIENT starts at the ZERO FUNCTION. Zeroing the transient's output layer makes
+    V_trans(s) == 0 exactly for every s, so at t=0 the acting value V = V_perm + V_trans is
+    identical to a single vanilla critic's — no extra initialisation noise, and the transient only
+    ever represents the residual it has actually learned.
+
+    (Initialising theta_T randomly instead — which this class used to do — makes the acting value
+    the sum of two independent random functions, strictly noisier than the baseline it is compared
+    against, and breaks the equivalence in Theorem 1.)
+    """
+
+    def __init__(self, obs_dim, hidden_sizes=(256, 256), perm_zero_init=False,
+                 trans_zero_init=True):
         super().__init__()
         self.perm = mlp(obs_dim, list(hidden_sizes), 1, out_gain=1.0)
         self.trans = mlp(obs_dim, list(hidden_sizes), 1, out_gain=1.0)
+
+        # trans_zero_init: V^(T)_0 = 0, Theorem 1's condition.
+        #
+        # NOTE THIS IS A DEVIATION FROM THE REFERENCE CODE, not a restoration of it. The paper does
+        # not specify initialisation at all — Algs. 1/2/4 say only "Initialize theta, w", and §3.3
+        # says "The initialization and resets are done appropriately based on the function
+        # approximation used." The reference implementation random-initialises BOTH nets
+        # (`T_Net = CNN_half(...)`, `P_Net = CNN_half(...)`), so its own deep agent does not satisfy
+        # V^(T)_0 = 0 either.
+        #
+        # Zeroing is defensible — it stops the acting value starting as the sum of two independent
+        # random functions — but it is a choice made toward a TABULAR theorem, and the paper's
+        # positive empirical results come from the code, which does not make it. Set False to run
+        # the reference's actual initialisation.
+        #
+        # Note also that Theorem 1 requires V^(TD)_0 = V^(P) as well: the TD baseline must start
+        # from the SAME function as the permanent. Vanilla's critic here is an independent random
+        # draw, so the equivalence never strictly applies whatever we do here.
+        if trans_zero_init:
+            nn.init.constant_(self.trans[-1].weight, 0.0)
+            nn.init.constant_(self.trans[-1].bias, 0.0)
+
+        # perm_zero_init: V^(P)_0 = 0 as well.
+        #
+        # Theorem 1's condition is V^(TD)_0 = V^(P), V^(T)_0 = 0. In the TABULAR setting that
+        # licenses any initialisation of V^(P), because a table represents an arbitrary offset
+        # exactly and the equivalence with TD is free. UNDER FUNCTION APPROXIMATION IT IS NOT
+        # FREE. With alpha_P small by design, theta_P barely moves (measured drift_from_init ~0.3
+        # against value magnitudes of O(1)), so V_perm stays dominated by its random init for the
+        # whole run. The transient's regression target is then R - V_perm: the value function minus
+        # a FIXED, unstructured, high-frequency function it must cancel on every state it visits.
+        # It can memorise that cancellation on states it trains on; it cannot on NEW ones — which
+        # is precisely the post-switch regime, where the state distribution shifts.
+        #
+        # Measured consequence (Job D): with the mechanism entirely off, theta_P frozen, and the
+        # transient given capacity exactly matching vanilla's critic, PT was still significantly
+        # worse than vanilla after a switch (whole-run p=0.001, phase 2 p=0.001, phase 4 p=0.008)
+        # while being indistinguishable before one (phase 1 p=0.940).
+        #
+        # With V_perm == 0 the critic loss (V_perm.detach() + V_trans - R)^2 reduces EXACTLY to
+        # vanilla's (V - R)^2, so this is also the only configuration in which the Theorem 1
+        # equivalence test is meaningful under deep FA.
+        if perm_zero_init:
+            nn.init.constant_(self.perm[-1].weight, 0.0)
+            nn.init.constant_(self.perm[-1].bias, 0.0)
 
     def forward(self, obs):
         """Returns (v_perm, v_trans), each shape (batch,)."""
@@ -56,73 +114,31 @@ class SplitCritic(nn.Module):
         return v_perm + v_trans
 
     @torch.no_grad()
-    def decay_transient(self, decay):
-        """theta_T <- decay * theta_T  (decay=0 ~= reset). Mirrors `params.data *= args.decay`.
+    def decay_transient(self, decay, mode="params"):
+        """Decay the transient. Algorithm 2 line 9 is `w <- lambda*w` on the VALUE FUNCTION.
 
-        NOTE: for this two-MLP variant, scaling the PARAMETERS by `decay` does NOT scale the OUTPUT
-        V_trans by `decay` (nonlinear activations + biases) — only decay=0 is exact. See
-        SharedTrunkSplitCritic, where the head is linear and this operation is exact for any decay.
+        mode="params" (default, reproduces every run before 2026-08-04, and the reference):
+            `for p in trans.parameters(): p.data *= decay` — verbatim the reference's
+            `for params in T_Net.parameters(): params.data *= args.decay`.
+            For a nonlinear net this does NOT scale the output by `decay`. Measured on [43,43]:
+            decay=0.75 leaves ~0.42 of V_trans, not 0.75 — we delete 58% where the algorithm
+            says 25%. Only decay=0 is exact.
+
+        mode="output" (EXACT):
+            scale only the final Linear layer. Because that layer is affine,
+                W*h + b  ->  decay*W*h + decay*b  =  decay*(W*h + b)
+            so V_trans <- decay * V_trans EXACTLY, for any decay, which is what Alg. 2 specifies.
+            The hidden features are left intact — the transient keeps its learned representation
+            and only its magnitude is reduced, which is also the natural reading of "decay the
+            transient value function" rather than "decay the transient network's weights".
+
+        Why this matters: the decay is a FIXED COST paid every k updates whether or not there is
+        non-stationarity to exploit. Over-decaying by 40% inflates that cost throughout training.
+        See FINDINGS.md 6.1(a) and 8.7.
         """
-        for p in self.trans.parameters():
-            p.data.mul_(decay)
-
-
-class SharedTrunkSplitCritic(nn.Module):
-    """V(s) = w_P·phi(s) + w_T·phi(s), with a shared trunk phi and two LINEAR heads.
-
-    The point of this variant is that consolidation becomes exact. Since both heads are linear in the
-    same features, their sum is linear in those features too, so absorbing the transient into the
-    permanent is pure weight arithmetic — no regression, no consolidation buffer, no lr_perm:
-
-        w_P <- w_P + (1-decay)·w_T ;   w_T <- decay·w_T
-        =>  V_new = (w_P + (1-decay)·w_T + decay·w_T)·phi = (w_P + w_T)·phi = V_old   (EXACT)
-
-    The trunk is shared, so the permanent head's *function* still moves as the features are learned;
-    the timescale separation lives in the heads. That is the trade-off of this variant.
-    """
-
-    def __init__(self, obs_dim, hidden_sizes=(64, 64)):
-        super().__init__()
-        layers = []
-        last = obs_dim
-        for h in hidden_sizes:
-            lin = nn.Linear(last, h)
-            nn.init.orthogonal_(lin.weight, 2 ** 0.5)
-            nn.init.constant_(lin.bias, 0.0)
-            layers += [lin, nn.Tanh()]
-            last = h
-        self.trunk = nn.Sequential(*layers)
-        self.perm = nn.Linear(last, 1)
-        self.trans = nn.Linear(last, 1)
-        # The transient is the active learner -> standard PPO value-head init (orthogonal, gain 1).
-        nn.init.orthogonal_(self.trans.weight, 1.0)
-        nn.init.constant_(self.trans.bias, 0.0)
-        # The permanent starts EMPTY and only ever accumulates via consolidation. Initialising it to a
-        # random function would force the transient to spend capacity cancelling an arbitrary offset,
-        # so zero it: V = V_perm + V_trans starts as pure transient, exactly the intended semantics.
-        nn.init.constant_(self.perm.weight, 0.0)
-        nn.init.constant_(self.perm.bias, 0.0)
-
-    def forward(self, obs):
-        """Returns (v_perm, v_trans), each shape (batch,)."""
-        f = self.trunk(obs)
-        return self.perm(f).squeeze(-1), self.trans(f).squeeze(-1)
-
-    def value(self, obs):
-        v_perm, v_trans = self.forward(obs)
-        return v_perm + v_trans
-
-    @torch.no_grad()
-    def consolidate(self, decay):
-        """Absorb the transient head into the permanent head and decay it — exactly value-preserving."""
-        keep = 1.0 - decay
-        self.perm.weight.add_(keep * self.trans.weight)
-        self.perm.bias.add_(keep * self.trans.bias)
-        self.trans.weight.mul_(decay)
-        self.trans.bias.mul_(decay)
-
-    @torch.no_grad()
-    def decay_transient(self, decay):
-        """w_T <- decay·w_T. Exact output scaling here, because the head is linear."""
-        self.trans.weight.mul_(decay)
-        self.trans.bias.mul_(decay)
+        if mode == "output":
+            self.trans[-1].weight.data.mul_(decay)
+            self.trans[-1].bias.data.mul_(decay)
+        else:
+            for p in self.trans.parameters():
+                p.data.mul_(decay)

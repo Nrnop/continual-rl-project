@@ -51,6 +51,47 @@ class PPOBase(ABC):
         self.target_kl = cfg.get("target_kl", None)
         self.normalize_advantage = cfg.get("normalize_advantage", True)
 
+    def _clip_grads(self):
+        """Clip the actor and the critic SEPARATELY.
+
+        This used to be one joint `clip_grad_norm_(actor_params + critic_params, max_grad_norm)`.
+        `clip_grad_norm_` scales EVERY gradient by one factor derived from the TOTAL norm, so with
+        a joint clip the critic's gradient magnitude changes the actor's effective step size. That
+        silently breaks the premise the entire study rests on — "all three agents share an identical
+        actor, only the critic differs" — because PT's critic (two [43,43] nets, a different loss
+        surface) contributes a different norm than vanilla's single [64,64]. The actors were
+        therefore NOT being trained identically across arms.
+
+        Clipping the two groups independently makes the actor's update depend only on the actor's
+        own gradient, so vanilla / pt / ewc actors really are trained the same way.
+
+        `joint_grad_clip: true` restores the old behaviour for reproducing pre-2026-08-04 runs.
+        """
+        if self.cfg.get("joint_grad_clip", False):
+            all_params = list(self.actor.parameters()) + list(self._critic_parameters())
+            torch.nn.utils.clip_grad_norm_(all_params, self.max_grad_norm)
+            return
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+        critic_params = list(self._critic_parameters())
+        if critic_params:
+            torch.nn.utils.clip_grad_norm_(critic_params, self.max_grad_norm)
+
+    def _critic_hidden(self):
+        """Hidden widths for the CRITIC, which may differ from the actor's.
+
+        The paper's headline agent is `PT-DQN-0.5x`: theta_P and theta_T are each built at half the
+        baseline's width so the TOTAL parameter count matches DQN's ("we use half the number of
+        parameters as that of DQN for both permanent and transient value networks to ensure the
+        total number of parameters across all baselines are same"). Appendix C.3 shows why this
+        matters: once the agent's capacity is large relative to the environment, the baseline
+        catches up and the decomposition confers no benefit.
+
+        `critic_hidden_sizes` lets a config shrink the critic without touching the actor, so the
+        actor stays byte-identical across vanilla / pt / ewc and the comparison stays attributable.
+        """
+        return list(self.cfg.get("critic_hidden_sizes",
+                                 self.cfg.get("hidden_sizes", [256, 256])))
+
     # ------------------------------------------------------------------
     # Abstract hooks
     # ------------------------------------------------------------------
@@ -221,8 +262,7 @@ class PPOBase(ABC):
         self.actor_optim.zero_grad()
         self._zero_critic_grads()
         loss.backward()
-        all_params = list(self.actor.parameters()) + list(self._critic_parameters())
-        torch.nn.utils.clip_grad_norm_(all_params, self.max_grad_norm)
+        self._clip_grads()
         self.actor_optim.step()
         self._step_critic_optims()
 
@@ -294,9 +334,7 @@ class PPOBase(ABC):
                 self.actor_optim.zero_grad()
                 self._zero_critic_grads()
                 loss.backward()
-                # Grad clip over all trainable params
-                all_params = list(self.actor.parameters()) + list(self._critic_parameters())
-                torch.nn.utils.clip_grad_norm_(all_params, self.max_grad_norm)
+                self._clip_grads()
                 self.actor_optim.step()
                 self._step_critic_optims()
 

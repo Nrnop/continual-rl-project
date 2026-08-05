@@ -56,12 +56,28 @@ class DirectionalHalfCheetah(gym.Wrapper):
     ):
         env = make_base_env(env_id, max_episode_steps=max_episode_steps, render_mode=render_mode)
         super().__init__(env)
-        self.direction = int(np.sign(direction)) or 1
+        self.direction = float(direction)
         self.forward_reward_weight = float(forward_reward_weight)
 
     def set_task(self, direction):
-        """Flip the running direction. direction in {+1, -1}."""
-        self.direction = int(np.sign(direction)) or 1
+        """Set the forward-velocity coefficient. Any float; +1 / -1 give the symmetric flip.
+
+        This used to coerce to `int(np.sign(direction)) or 1`, which made ASYMMETRIC task sets
+        impossible to express. That mattered more than it looks: Theorem 5 puts the permanent value
+        function's fixed point at E_tau[v_tau], and under a symmetric +-1 flip
+
+            r_{+1} = +w*v_x + ctrl ,  r_{-1} = -w*v_x + ctrl   =>   E_tau[r_tau] = ctrl
+
+        the entire task-discriminative term cancels, so the permanent component has essentially
+        nothing to store and the method is being tested in the one regime where its own theory says
+        it has no room to work. The paper's benchmarks are asymmetric by construction (JBW
+        alternates -1 / +2; MinAtar samples three different games).
+
+        With floats allowed, `tasks: [1.0, -0.5]` gives E_tau[r_tau] = 0.25*w*v_x + ctrl — a
+        non-degenerate permanent target — while keeping the same physics and the same reversal
+        structure. See configs/pt_paper_asym.yaml.
+        """
+        self.direction = float(direction)
         return self.direction
 
     def _directional_reward(self, info):

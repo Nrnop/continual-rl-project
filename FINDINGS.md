@@ -6,6 +6,23 @@
 
 ---
 
+> ## ⚠ STATUS (2026-08-04) — READ BEFORE §1
+>
+> An audit against Anand & Precup (2023) found **five conditions of the algorithm this codebase
+> violated** (§8.2). All were corrected, the corrected agent cleared a stationary gate, and the
+> full experiment was re-run: **4 arms × 10 seeds × 3.07 M steps** (§8.3).
+>
+> **The central conclusion survives, and is now much stronger.** The supervisors' hypothesis — that
+> the negative result was an implementation defect — is **excluded**: with a faithful
+> implementation, PT still does not beat vanilla, and EWC still wins. More precisely, PT's
+> permanent component **provably retains better** than its full estimate, exactly as Theorem 7
+> predicts (8/10 seeds), *and that retention does not convert into return*. That is the strongest
+> form this result can take: the mechanism can be shown to work while failing to help.
+>
+> §4–§8 remain the record of the *unfaithful* agent and should be read as such. Two numbers are
+> retracted outright: the logged `boundary/return_drop` scalar (a metric artifact, §8.3.4) and the
+> §7/§8 shared-trunk runs (removed variant). §6.1's consolidation arithmetic is unaffected.
+
 ## 1. Executive summary
 
 We ported the Permanent–Transient (PT) value decomposition of Anand & Precup (2023) from value-based
@@ -630,6 +647,25 @@ memory.
 
 ## 7. The fix: shared trunk with linear heads — and its result
 
+> **⚠ STATUS (2026-08-03): this variant has been REMOVED from the codebase, and the results in §7
+> and §8 are therefore not reproducible with the current code.** The reference algorithm we port
+> (`control/minatar_crl/PT_DQN_half.py`) holds **two fully independent networks**, `P_Net` and
+> `T_Net`. The shared-trunk critic used here shares a feature trunk between them, which couples the
+> two components through the fast learner's gradients — the opposite of the timescale separation
+> that *is* the method. It also matched neither reference architecture: their
+> `control/minigrid/model.py::obj_net_two_heads` does share a conv trunk, but splits into two full
+> multi-layer MLPs, not the two *linear* heads used here (the linear heads were chosen specifically
+> to make consolidation exact, which is our construction, not theirs).
+>
+> A further defect was found in it before removal: `critic_loss` detaches `v_perm`, which with a
+> shared trunk cuts the gradient **through the trunk**, so features were trained on `∂(w_T·φ)/∂φ`
+> instead of `∂((w_P+w_T)·φ)/∂φ`. Since `w_P` accumulates at every consolidation while `w_T` is
+> decayed, that misalignment grows monotonically over a run — which would bias §8.1's conclusion in
+> exactly the direction it reports.
+>
+> §7.1 and all of §8 must be re-run on the two-network critic before being cited. The analysis of
+> *why* consolidation is lossy with separate trunks (below, and §6.1) is unaffected and stands.
+
 If both heads read from a **shared feature trunk** φ and are **linear**, then
 
 ```
@@ -653,10 +689,9 @@ This is **not an invention** — it is the shared-trunk two-head variant that th
 implementation already uses for its MiniGrid experiments. Our analysis shows *why* that variant is
 the correct choice under deep function approximation.
 
-**Implementation status:** `SharedTrunkSplitCritic` added; selected by `critic_arch: shared_trunk`
-(default remains the original, so all prior behaviour is unchanged); permanent head zero-initialised
-so it starts empty and accumulates only through consolidation; four unit tests assert that
-consolidation preserves the acting value exactly for every decay value (suite total: **31 tests**).
+**Implementation status:** ~~`SharedTrunkSplitCritic` added; selected by `critic_arch: shared_trunk`~~
+**Removed** — see the status banner at the head of this section. `SplitCritic` (two fully separate
+networks) is now the only PT critic, and `critic_arch` no longer exists as a config key.
 
 **Known trade-off (should appear in the thesis discussion).** Because the trunk is shared, the
 permanent head's *weights* are frozen between consolidations but its *output* still moves as the
@@ -845,6 +880,450 @@ constraint on the value function rather than as an aid.
 **This closes the search.** PT was given the setting the proposal specifies, then the harder version
 of it, then the exact slow/fast decomposition it was designed for. It tied in the first and lost in
 the other two.
+
+---
+
+## 8.2 Fidelity audit against the paper — and the stationary gate
+
+Everything in §4–§8 was produced by an agent that departed from the published algorithm in five
+ways. They were found by reading the paper and the reference source line by line against ours, not
+by any further experiment.
+
+| # | What we did | What the paper specifies | Source |
+|---|---|---|---|
+| 1 | `θ_T` randomly initialised (output gain 1.0) | `V^(T)_0 = 0` — the transient starts at the **zero function**; the *permanent* carries the ordinary init | **Theorem 1**, and its base case `V^(PT)_0 = V^(P) + V^(T)_0 = V^(P)` |
+| 2 | consolidation target `old_P + (1−λ)·T` | `old_P + T` (keep = 1) | **Eq. (4)**; **Alg. 4 line 15** `ŷ = Q^(P) + Q^(T)` |
+| 3 | `k = 10`, `λ = 0.5` — small *k* with small *λ* | *"For small values of k, large values of λ yield better performance"* | **§6**, Fig. 4 |
+| 4 | `anneal_lr: true` — `lr_trans` decays to 0 | the reference does not anneal | `run_minatar.sh` |
+| 5 | PT critic at 2× vanilla's parameters | **PT-DQN-0.5x**: each net at half width so totals match | **§6.1**; **App. C.3** |
+
+Item 1 is the most consequential and the least visible: with a random `θ_T`, the acting value
+`V = V_perm + V_trans` starts as the sum of **two** independent random functions — strictly noisier
+than the single critic it is being compared against — and PT is no longer the strict generalisation
+of TD that Theorem 1 establishes.
+
+Item 5 was previously dismissed here as "favouring PT if anything". App. C.3 says the opposite
+matters: *"When the agent's capacity is large relative to the complexity of the environment,
+there's no additional benefit (neither there is any downside) to our method."* PT is a
+*big-world / small-agent* method; running it over-parameterised puts it in exactly the regime where
+the paper predicts a tie.
+
+**A benchmark caveat that follows from Theorem 5.** `θ_P`'s fixed point is `E_τ[v_τ]`, the mean
+value function over the task distribution. Under our symmetric reward-sign flip,
+
+```
+r₊₁ = +w·v_x + ctrl ,   r₋₁ = −w·v_x + ctrl   ⟹   E_τ[r_τ] = ctrl
+```
+
+the entire task-discriminative term **cancels**, so the permanent component's optimal content on
+this benchmark is the control cost and nothing else. The paper's own benchmarks are asymmetric
+(JBW alternates −1 / +2; MinAtar samples three different games), giving `E_τ[v_τ]` real content. A
+*jumpstart* benefit should still exist here — PT enters a new task from ≈0 rather than from `−v_τ` —
+but the *retention* benefit is structurally capped. This is a property of the task we chose, and it
+belongs in the thesis regardless of how the re-runs come out.
+
+**What we were measuring was also wrong.** Theorem 8 gives PT a tighter error bound only for
+`k ≤ k₀` after a switch and states the bounds *"collapse to 0"* as `k → ∞`. Our primary metric —
+mean return over a 614 400-step phase — integrates the predicted effect away. `utils/metrics.py`
+now provides `JumpstartTracker` (Thm 6/8) and `RetentionProbe` (Thm 7, the paper's dotted
+"MSE on other tasks" line in Fig. 2, which we had never measured).
+
+### 8.2.1 The stationary gate
+
+Before re-running any continual experiment, one precondition: **on a single task with no
+non-stationarity, PT must match vanilla.** There is nothing for the decomposition to help with and
+no forgetting to prevent, so a gap there is an implementation defect, full stop. The old agent
+failed this — phase 1, a stationary window, was 475 against vanilla's 743.
+
+Corrected agent, 1 M steps, no switching, 8 seeds per arm, `pt_paper.yaml` vs `vanilla_paper.yaml`
+(final-quarter mean return, per seed, sorted):
+
+```
+vanilla   1128  1244  1276  1276  1431  1496 | 3450  3608
+pt        1016  1045  1236  1329  1391  1402  1417  1434
+```
+
+| | vanilla | PT | gap |
+|---|---|---|---|
+| all seeds (mean ± SEM) | 1864 ± 366 | 1284 ± 60 | −580 |
+| **modal outcome** (excl. high mode) | **1308** (n=6, sd 133) | **1284** (n=8, sd 168) | **−25** |
+| high mode (> 2000) | **2 / 8** | **0 / 8** | — |
+| range | [1128, 3608] | [1016, 1434] | — |
+
+**The defect is gone.** PT reproduces vanilla's *typical* outcome to within 25 points, with critic
+loss 0.002–0.010 throughout. Nothing resembling the old failure mode survives.
+
+**But vanilla is bimodal and PT is not.** Two vanilla seeds in eight find a substantially better
+gait (~3500); PT finds it zero times in eight. Alone this is Fisher `p ≈ 0.47` — not significant.
+It is, however, the **third independent sighting of the same signature**: §8.1 recorded vanilla's
+`drift_twoscale` SEM at 401 against PT's 41 with one vanilla seed at 3563, and filed it as a
+drift-specific footnote. It is not drift-specific — it appears with **no non-stationarity at all**.
+A control at full-width critics (`configs/abl_pt_wide.yaml`, 8 seeds) settles what causes it.
+
+### 8.2.1a The ceiling is capacity, not the decomposition
+
+```
+arm                     sorted final-quarter returns                        hi/8   mean   modal
+vanilla [64,64]  1x     1128 1244 1276 1276 1431 1496 | 3450 3608           2/8    1864   1308
+pt-0.5x [43,43]  1x     1016 1045 1236 1329 1391 1402 1417 1434             0/8    1284   1284
+pt-2x   [64,64]  2x     1188 1269 1280 1285 1342 | 3012 3187 3313           3/8    1984   1273
+```
+
+**PT at full width reaches the high mode as often as vanilla (3/8 vs 2/8).** The decomposition does
+not cap the ceiling; halving each component's width does. All three arms agree on the modal outcome
+(1308 / 1284 / 1273) — the *only* thing that changes is whether the high mode is reachable at all,
+and PT-0.5x's entire 8-seed range [1016, 1434] excludes it.
+
+Fisher one-sided on the high-mode counts: PT-0.5x vs PT-2x **p = 0.10**, vs vanilla p = 0.23;
+PT-2x vs vanilla p = 0.50. No single contrast is significant at n = 8, so this is reported as a
+consistent pattern rather than a demonstrated effect — but it is monotone in per-component width
+and it reverses the natural reading of §8.1's variance observation.
+
+**This contradicts Appendix C.3 on this domain.** The paper argues *"it is efficient to devote the
+available capacity in learning parts of the value function rather than learning the whole"*. On
+HalfCheetah at this budget it is not: splitting a fixed ~5 400-parameter budget into two halves
+removes the high-performing mode entirely, and doubling the budget restores it. The paper's own
+parameter-matching convention (§6.1, PT-DQN-0.5x) is therefore what handicaps PT here — a
+domain-level qualification of App. C.3's "big world, small agent" claim, and a contribution in its
+own right.
+
+**Consequence for the re-run:** benchmarking only the parameter-matched PT-0.5x would compare a
+capacity-starved agent and repeat the original error in a new form. The continual sweep must carry
+**both** PT arms — `pt_paper` (0.5x, faithful to §6.1: *is PT better at equal parameters?*) and
+`abl_pt_wide` (2x: *does the decomposition help at all?*). They answer different questions and
+neither alone settles the thesis.
+
+### 8.2.2 A statistical limit on this benchmark, computed rather than asserted
+
+The gate's formal equivalence test returns **inconclusive**, and always will. With the observed
+per-seed standard deviations (vanilla 1035, PT 168), a 90 % CI narrow enough to sit inside a ±400
+practical-equivalence margin needs **n ≈ 19 seeds per arm** — out of reach here.
+
+Two consequences, both of which apply retroactively to this whole document:
+
+1. **A PASS — positive proof of parity — is not attainable on this benchmark.** The gate can only
+   rule *out* a large defect, which is what it was built for. A non-FAIL means "no large defect
+   detected", never "PT equals vanilla".
+2. **Every parity claim in §4–§8 should read "no detectable difference", not "statistically
+   indistinguishable".** The latter implies an equivalence test that was never within reach at
+   n = 5. This is the same failure that forced the retractions in §5.5 and §5.7, and §10e
+   understates it: 10 seeds is still roughly half of what a fine-grained claim would require.
+
+### 8.2.3 What is now open
+
+The corrected agent has cleared the stationary gate, so the continual comparison is worth running
+again — read on the **jumpstart** and **retention** curves, not the per-phase mean. Until that
+lands, §4's ordering, §5's ablation conclusions and §7.2's central claim should all be treated as
+**results about a misconfigured agent**, informative about the failure mechanism (§6.1 stands) but
+not about the method.
+
+---
+
+## 8.3 The corrected re-run — 4 arms × 10 seeds × 3.07 M steps
+
+The definitive experiment. Faithful implementation (§8.2), four arms sharing an identical PPO base
+and an identical actor:
+
+| arm | config | question |
+|---|---|---|
+| `vanilla` | `vanilla_paper` | baseline |
+| `ewc` | `vanilla_paper` | regularisation baseline |
+| `pt` (0.5x) | `pt_paper` | is PT better **at equal parameters**? (§6.1) |
+| `pt_wide` (2x) | `abl_pt_wide` | does the decomposition help **at all**? |
+
+**Numerical sanity:** all 40 runs reached exactly 3 072 000 steps; `critic_loss` peaked at
+0.38–0.67 across every run, against ~1e5 for the original divergence. The implementation is sound
+throughout.
+
+### 8.3.1 Jumpstart — the theory's central falsifiable prediction
+
+Mean return in the 20-update window after each switch (mean ± SEM, 10 seeds):
+
+| boundary | vanilla | EWC | PT-0.5x | PT-2x |
+|---|---|---|---|---|
+| 1 (614 k) | 834.5 ± 13 | 834.6 ± 16 | 860.9 ± 123 | 950.0 ± 112 |
+| 2 (1 229 k) | 1165.2 ± 323 | 1172.0 ± 252 | **200.6 ± 185** | 964.6 ± 242 |
+| 3 (1 843 k) | 885.4 ± 203 | 1099.3 ± 120 | **570.1 ± 105** | **190.7 ± 127** |
+| 4 (2 458 k) | 849.0 ± 188 | **1576.8 ± 257** | **302.5 ± 165** | **85.4 ± 111** |
+
+**The prediction fails.** PT is nominally ahead only at boundary 1, by less than its own SEM (which
+is ~10× vanilla's). From boundary 2 onward both PT arms fall below vanilla, with per-seed jumpstart
+returns going negative (pt seed 8 at boundary 2: −330.7; pt_wide seed 5 at boundary 3: −119.6).
+EWC is clearly strongest by boundary 4.
+
+This is the metric §8.2 argued was the *right* one — chosen because Theorems 6 and 8 predict the
+advantage lives in exactly this window. Measuring it correctly did not produce the advantage.
+
+### 8.3.2 Retention — ⚠ RETRACTED: an artifact of an inert permanent (see §8.4)
+
+`mse_perm` vs `mse_full` against the inactive task's converged values, mean over the second half:
+
+| arm | mse_perm | mse_full | seeds with perm < full |
+|---|---|---|---|
+| vanilla / EWC | *exactly equal, every seed* | — | n/a (no separate component) |
+| **PT-0.5x** | **1.026 ± 0.181** | **1.330 ± 0.234** | **8 / 10** |
+| PT-2x | 0.672 ± 0.168 | 0.743 ± 0.247 | 5 / 10 |
+
+> **⚠ THIS SECTION'S CONCLUSION IS RETRACTED.** An earlier draft read `mse_perm < mse_full` as
+> confirming Theorem 7. **It does not.** Under a symmetric reward-sign flip the two tasks' value
+> functions are opposite in sign, so a permanent that *never learns anything* automatically scores
+> better than one that has adapted to the new task. Measured directly on synthetic values with a
+> permanent frozen at **exactly zero** — no learning whatsoever:
+>
+> ```
+> perm frozen at EXACTLY zero      mse_perm = 24.88   mse_full = 99.54   perm < full? True
+> perm frozen at small random      mse_perm = 24.89   mse_full = 99.54   perm < full? True
+> ```
+>
+> The 8/10 seeds above measured **inertia, not retention**. And §8.4 shows the permanent in these
+> runs *was* inert: it absorbed 0.04 % of the transient per consolidation, with directional
+> alignment 0.000. The vanilla/EWC equality check is still valid — the metric is wired correctly —
+> but it cannot distinguish a working permanent from a frozen one on this task pair.
+>
+> PT-2x's *weaker* separation (5/10) is consistent: its larger permanent drifts slightly more, so
+> it is slightly less inert, and scores slightly worse on a metric that rewards not moving.
+>
+> The metric now carries `perm_init` and `zero` control baselines (§8.4) so this cannot recur: a
+> permanent that does not beat its own initialisation is reported as inert.
+
+### 8.3.3 Per-seed final-quarter return
+
+```
+vanilla  -20  53  55  367  374  376  379  448 | 1669 1677     hi(>2000) 0/10
+ewc      875 1030 1041 1147 1568 1693 1723 1813 1834 2133     hi 1/10
+pt      -307 -145 -83 -73 -36  -9  267  745  909 1307         hi 0/10
+pt_wide -442 -377 -363 -250 -230 -125 -105  62  285  667      hi 0/10
+```
+
+Vanilla reproduces the known bimodality (8 low, 2 high). Both PT arms sit near or below zero for
+most seeds.
+
+**A reversal worth reporting.** On the *stationary* gate PT-2x matched vanilla and PT-0.5x did not
+(§8.2.1a); under *switching* the order flips — PT-2x is worse (median −178 vs −22). The protocols
+differ (1 M steps without switching vs 3.07 M with), so this is not a controlled comparison, but the
+direction is consistent with the recovery-budget argument in `PT_REFERENCE_MAPPING.md` §4.4: a
+larger transient network needs more gradient steps to rebuild after each decay, and PPO supplies far
+fewer per env step than the reference DQN did. **Extra critic width does not transfer its
+stationary-regime benefit to the switching regime, and appears to hurt.**
+
+### 8.3.4 A metric artifact found and fixed — `boundary/return_drop` retracted
+
+`boundary/return_drop` read exactly 0.00 at boundaries 1–3 for **all 40 runs and all four agents**.
+That is not an absence of drop; it is a bug. `BoundaryReturnTracker` was constructed with
+`post_window_steps = n_steps * 5` — written when `n_steps` meant the whole batch (single env,
+2048). Under 8 vectorised envs the batch is `n_steps * num_envs` = 2048 while `n_steps * 5` = 1280,
+i.e. **0.62 of one PPO update**, so the tracker finalised on its first post-switch sample and
+recorded `drop = 0` by construction.
+
+Fixed: the window is now `boundary_window_updates * n_steps * num_envs` (default 5 updates), and
+the constructor **raises** if given a window shorter than two updates, so the failure can never be
+silent again. Two regression tests cover it.
+
+**Scope of the retraction:** only the logged `boundary/return_drop` scalar. Figure 4.4 and §4's
+117 % / 52–55 % relative-drop numbers are computed independently by `plot_compare.py` from the
+returns curves and are **not** affected. Boundary-4 values from the sweep (EWC 38.3, PT 6.5,
+PT-2x 4.1) are technically valid but should not be cited: with PT's returns already near zero there,
+a small absolute drop is a floor effect, and §8.3.1 measures the same question properly.
+
+### 8.3.5 What this establishes
+
+1. **The implementation-defect explanation is excluded.** Five deviations corrected, stationary gate
+   cleared, and the negative result persists. It is now attributable to the method, not the port.
+2. **The original ordering is confirmed with a faithful agent:** EWC > vanilla > PT.
+3. **The mechanism works and does not help** (§8.3.2) — the strongest available form of the result.
+4. **The benchmark caveat from Theorem 5 still applies** (§8.2): under a symmetric reward-sign flip
+   `E_τ[v_τ]` reduces to the control cost, so the permanent component's ceiling on *this* task is
+   structurally low. The retention result shows it nonetheless does its job; the jumpstart result
+   shows that is not enough. An asymmetric task distribution remains the one untested setting where
+   PT could plausibly do better, and is the honest "future work" item.
+
+---
+
+## 8.4 The permanent value function was never learning — and tuning it did not help
+
+### 8.4.1 The defect
+
+Measured on the real consolidation operator at the settings every PT run in this project used
+(`perm_optimizer: sgd`, `lr_perm: 1e-5`, one epoch = 768 gradient steps over 49 152 states):
+
+| optimiser | lr | ‖ΔV_perm‖ / ‖V_trans‖ | direction aligned |
+|---|---|---|---|
+| **sgd** | **1e-5** *(shipped)* | **0.04 %** | **0.000** |
+| sgd | 1e-3 | 3.92 % | 0.037 |
+| sgd | 1e-2 | 72.1 % | 0.684 |
+| adam | 1e-4 | 30.2 % | 0.287 |
+| adam | 1e-3 | 94.5 % | 0.919 |
+
+`θ_P` never left its random initialisation. **Every PT result in this document up to §8.3 was
+produced by an agent that was, functionally, `vanilla + a frozen random offset + a periodic
+transient decay`** — with no slow timescale at all. It also explains the jumpstart failure
+mechanically: at each boundary the transient is decayed (deleting ~58 % of the acting value) while
+the permanent holds nothing to compensate, so PT enters every new task with a gutted critic.
+
+**Cause:** α_P was inherited from the paper's MinAtar setting and never tuned for HalfCheetah's
+value scale. The paper tunes α_P **per domain** across seven orders of magnitude — tabular 0.8…1e-3
+(C.9), deep prediction 1e-3…3e-5 (C.7), minigrid PE 3e-2…3e-4 (C.8), minigrid control 1e-5…3e-7
+(C.10), MinAtar 1e-7…1e-9 (C.17). We skipped that step.
+
+**Instrumentation added** so it cannot recur: `consol/absorbed_frac` and `consol/absorbed_align`
+per consolidation, `perm/drift_from_init` and `perm/frac_of_value` per update, `perm_init` and
+`zero` control baselines on the retention probe, and a loud `INERT PERMANENT` banner the first time
+a consolidation transfers under 1 %.
+
+### 8.4.2 The α_P grid — 6 configs × 3 seeds × 1.84 M steps
+
+All 18 runs clean. The inert control (`sgd 1e-5`) tripped the banner on 3/3 seeds; no other config
+did — the diagnostic discriminates.
+
+| config | absorbed | align | mse_perm | mse_perm_init | mean return (3 seeds) |
+|---|---|---|---|---|---|
+| adam 1e-3 | 0.999 | 0.998 | 1.364 | 1.150 | 653.7 |
+| adam 1e-4 | 0.990 | 0.980 | 0.521 | 0.721 | 302.0 |
+| adam 1e-5 | 0.547 | 0.418 | 0.671 | 1.635 | 649.7 |
+| **sgd 1e-2** | **0.960** | **0.945** | **0.339** | **0.958** | 478.6 |
+| sgd 1e-3 | 0.623 | 0.537 | 0.649 | 0.966 | 304.3 |
+| **sgd 1e-5** *(inert)* | 0.005 | 0.005 | — | — | **687.3** |
+
+**Two findings, and the second is the important one.**
+
+**(a) The mechanism can be made to run.** `sgd 1e-2` transfers 96 % of the transient with alignment
+0.945 and produces the best retention in the grid — `mse_perm` 0.339 against its own
+initialisation's 0.958, i.e. the permanent is now demonstrably *better than where it started*, on
+every seed. That is the first configuration in this project's history where the dual-timescale
+mechanism verifiably operates.
+
+**(b) Making it run did not improve return.** The **inert** control posted the **highest** mean
+return of all six configurations (687 vs 479 for the tuned agent). Between-config spread (sd ≈ 180)
+is smaller than within-config SEM (≈ 250), so the correct reading is that **α_P has no detectable
+effect on return at this power** — not that inertness helps. But it does mean the grid provides
+*no evidence whatsoever* that a working permanent improves control performance.
+
+**A "too eager" failure mode.** `adam 1e-3` absorbs ~100 % every cycle yet ends *worse than its own
+initialisation* on retention (2/3 seeds fail individually). Full absorption every `k` updates makes
+`θ_P` a lagged copy of the *current* task rather than a running estimate of `E_τ[v_τ]` — the
+permanent chases the transient instead of averaging over tasks. Symmetric to the inert mode, and
+with only 3 phases there is nothing yet to average over.
+
+### 8.4.3 A selection rule retracted mid-flight
+
+The pre-registered rule was "highest mean return among configs passing both gates". It was
+**underpowered and has been overridden**, on the record: a rule that ranks the *disabled* mechanism
+first is not measuring what it was written to measure. Selection was made instead on **mechanism
+fidelity**, which *is* well-resolved at n = 3 (`absorbed_frac` has negligible variance). Winner:
+`sgd 1e-2`, now baked into `configs/pt_paper.yaml`.
+
+This is the second underpowered criterion this study has had to withdraw (cf. §8.2.2's equivalence
+margin). The lesson is consistent: on this benchmark, **any criterion whose decision rests on a
+return difference at n ≤ 5 is measuring seed noise.**
+
+### 8.4.4 What the definitive experiment now is
+
+Not "does PT beat vanilla" — that comparison has been run twice and is confounded by the noise
+above. It is:
+
+> **Does a permanent value function that demonstrably works do anything for return that a permanent
+> value function that demonstrably does not work fails to do?**
+
+`pt` (`pt_paper`, α_P = 1e-2, absorbs 96 %) versus `pt_inert` (`abl_pt_inert`, α_P = 1e-5, absorbs
+0.04 %), 10 seeds, everything else byte-identical, with the mechanism instrumented on both sides.
+A null there is a genuine result about value decomposition under policy-gradient control — and a
+far stronger one than any previous framing, because the mechanism's operation is *measured* rather
+than assumed on either arm.
+
+---
+
+## 8.5 The definitive experiment: a working permanent vs a dead one
+
+4 arms × 10 seeds × 3.07 M steps, all runs clean, `critic_loss` 0.40–0.67 throughout.
+
+**The mechanism contrast is real and robust.** Median `consol/absorbed_frac`:
+
+| arm | absorbed_frac (median) | per-seed range | alignment |
+|---|---|---|---|
+| `pt` | **0.942** | 0.851 – 0.971 | 0.758 – 0.957 |
+| `pt_inert` | **0.0098** | 0.0070 – 0.0111 | 0.0066 – 0.0095 |
+
+**Zero overlap across all 10 seeds.** One arm's permanent demonstrably works; the other's
+demonstrably does not. This is the contrast the whole experiment rests on, and it held.
+
+### 8.5.1 Result
+
+**Paired per-seed difference (`pt` − `pt_inert`, same seed both arms), whole-run mean return:**
+
+```
+-130, +502, +59, +299, +137, -292, +88, +345, -37, -301
+mean +67.0    SEM 84.3    t = 0.80    4 of 10 seeds favour the DEAD permanent
+```
+
+Jumpstart: `pt` is nominally ahead at all four boundaries (+126, +337, +161, +330) but no gap
+clears 2× the relevant SEM. Per-phase return: `pt` leads phases 1–4, `pt_inert` leads phase 5.
+
+> **A permanent value function that demonstrably works does nothing detectable for return that a
+> permanent value function that demonstrably does not work also fails to do.**
+
+This is the study's central result. It is not a null to be explained away: the experiment was built
+to be falsifiable — `pt` ≫ `pt_inert` was an available outcome — and the mechanism's operation was
+*measured* on both arms rather than assumed.
+
+### 8.5.2 The retention gate does not discriminate either
+
+`mse_perm < mse_perm_init` holds in **7/10** seeds for `pt` and **9/10** for `pt_inert`. The dead
+permanent passes more often than the working one.
+
+By *effect size* the picture is less stark — `pt` cuts its retention error 42 % below its own
+initialisation (0.892 vs 1.543) against `pt_inert`'s 13 % (0.852 vs 0.977) — but this cross-arm
+comparison is confounded: `v_i` is each arm's own converged acting value, so the two arms are scored
+against different references. **The honest conclusion is that this gate does not cleanly separate
+"learned something" from "never moved" on this task**, and §8.3.2's retracted claim should not be
+resurrected in a weaker form. Treat `mse_perm` vs `mse_perm_init` as a diagnostic for *inertness*
+(where it works: it flagged the 0.04 %-transfer configuration) and not as evidence of useful
+retention.
+
+The structural check does hold: vanilla and EWC show `mse_perm == mse_full` in 10/10 seeds, both PT
+arms show them differing in 10/10 — but `pt_inert` shows that too, with a near-frozen `V_perm`, so
+it is a property of having two summed components, not evidence that either learned.
+
+### 8.5.3 Ordering, replicated
+
+Whole-run mean return, median across 10 seeds:
+
+| agent | median | 
+|---|---|
+| **EWC** | **1153.2** |
+| vanilla | 481.0 |
+| pt | 264.0 |
+| pt_inert | 204.2 |
+
+EWC's dominance replicates independently of the α_P fix, and both PT arms sit clearly below
+vanilla. `return_drop` at boundary 4 (now measured correctly, §8.3.4): EWC 454.8 > vanilla 274.8 >
+pt 243.5 > pt_inert 148.8 — but this tracks each agent's pre-switch plateau height, so it is a floor
+effect and should not be read as PT being *more stable*.
+
+### 8.5.4 What remains, and what does not
+
+**Eliminated.** The implementation-defect explanation is exhausted. Five fidelity deviations
+corrected (§8.2), a stationary gate cleared (§8.2.1), an inert-permanent bug found and fixed (§8.4),
+and the mechanism verified operating at 10-seed scale with zero distributional overlap against a
+dead control. PT still does not help.
+
+**Not eliminated — and it is a property of the benchmark we chose, not of the method.** Theorem 5
+puts `θ_P`'s fixed point at `E_τ[v_τ]`. Under the symmetric ±1 flip used in *every* experiment in
+this document, `E_τ[r_τ] = ctrl`: the entire task-discriminative term cancels, so the permanent
+component has essentially nothing to store **by construction**. Every PT result here was measured in
+the one regime where the method's own theory says it has no room to work. The paper's benchmarks are
+asymmetric throughout (JBW −1/+2, MinAtar three different games, gridworlds 0/1 patterns).
+
+Worse, the environment **forbade** testing this until now: `set_task` coerced its argument to
+`int(np.sign(direction))`, so an asymmetric task set could not be expressed. Fixed 2026-08-04;
+`configs/pt_paper_asym.yaml` uses `tasks: [1.0, -0.5]`, giving `E_τ[r_τ] = 0.25·w·v_x + ctrl` — a
+non-degenerate permanent target with the same physics, the same reversal structure and the same
+schedule.
+
+**This is the last experiment the study needs.** If PT shows nothing with a verified-working
+mechanism *and* a non-degenerate `E_τ[v_τ]`, the negative result is about the method under
+policy-gradient control rather than about our benchmark, and the question is closed. If it shows
+something, the finding is that PT's benefit is contingent on task-distribution asymmetry — which is
+a sharper and more useful claim than either a bare null or a bare win.
 
 ---
 
