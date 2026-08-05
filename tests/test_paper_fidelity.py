@@ -302,6 +302,43 @@ def test_absorbed_frac_detects_an_inert_permanent():
     assert working > 0.5, f"adam/1e-3 should transfer most of it, got {working:.4f}"
 
 
+def test_absorbed_frac_is_also_measured_off_distribution():
+    """With a holdout, absorbed_frac must be reported on states the regression never saw.
+
+    absorbed_frac alone is in-distribution: a permanent that memorised the consolidation buffer
+    reports a healthy number while being wrong on the NEW states the next rollout bootstraps from.
+    Offline, the target is fittable to 3.2% train error while held-out error floors at 38-44%
+    (FINDINGS 6.3) — this is the in-situ version of that measurement.
+    """
+    states = np.random.randn(2048, 17).astype(np.float32)
+    agent = PPOPT(17, 6, _cfg(lr_perm=1e-3, perm_optimizer="adam", k=1,
+                              consolidation_buffer_size=4096,
+                              consolidation_holdout_frac=0.25), torch.device("cpu"))
+    with torch.no_grad():
+        for p in agent.critic.trans[-1].parameters():
+            p.add_(torch.randn_like(p) * 3.0)
+        old_vp, _ = agent.critic(torch.as_tensor(states))
+    agent.consolidation_buffer.add_batch(states, old_vp.numpy())
+    agent._consolidate()
+
+    assert agent.last_absorbed_frac is not None
+    assert agent.last_absorbed_frac_holdout is not None, \
+        "holdout absorbed_frac must be measured when consolidation_holdout_frac > 0"
+    assert agent.last_absorbed_align_holdout is not None
+
+    # ...and it must stay None when no holdout is requested, so the default path is unchanged.
+    plain = PPOPT(17, 6, _cfg(lr_perm=1e-3, perm_optimizer="adam", k=1,
+                              consolidation_buffer_size=4096), torch.device("cpu"))
+    with torch.no_grad():   # theta_T is zero-initialised; with V_trans == 0 there is nothing to
+        for p in plain.critic.trans[-1].parameters():   # absorb and the diagnostic is undefined.
+            p.add_(torch.randn_like(p) * 3.0)
+        plain_vp, _ = plain.critic(torch.as_tensor(states))
+    plain.consolidation_buffer.add_batch(states, plain_vp.numpy())
+    plain._consolidate()
+    assert plain.last_absorbed_frac is not None
+    assert plain.last_absorbed_frac_holdout is None
+
+
 def test_boundary_tracker_rejects_a_sub_update_window():
     """A window shorter than 2 updates reports drop=0 by construction — must fail loudly.
 

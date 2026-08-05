@@ -639,6 +639,8 @@ def main():
             for attr, tag in (("last_alpha_p", "consol/alpha_p"),
                               ("last_absorbed_frac", "consol/absorbed_frac"),
                               ("last_absorbed_align", "consol/absorbed_align"),
+                              ("last_absorbed_frac_holdout", "consol/absorbed_frac_holdout"),
+                              ("last_absorbed_align_holdout", "consol/absorbed_align_holdout"),
                               ("last_consolidation_loss_first", "consol/loss_first"),
                               ("last_consolidation_loss_last", "consol/loss_last"),
                               ("last_consolidation_loss_mean", "consol/loss_mean"),

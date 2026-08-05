@@ -132,6 +132,10 @@ class PPOPT(PPOBase):
         # project, because returns and critic_loss both look healthy while it is happening.
         self.last_absorbed_frac = None
         self.last_absorbed_align = None
+        # Same, on states EXCLUDED from the regression (needs consolidation_holdout_frac > 0).
+        # Decides whether the transfer generalises or is memorised — see _consolidate.
+        self.last_absorbed_frac_holdout = None
+        self.last_absorbed_align_holdout = None
         # Printed once, loudly, the first time a consolidation transfers essentially nothing.
         self._warned_inert_permanent = False
         # --- Robbins-Monro alpha_P (Theorem 5's premise; see _apply_robbins_monro_alpha_p) ---
@@ -257,6 +261,7 @@ class PPOPT(PPOBase):
         # value-preserving variant, retained behind a flag for reproducing earlier runs.
         keep = (1.0 - self.transient_decay) if self.value_preserving_consolidation else 1.0
         loss_curve = []          # regression loss, one entry per gradient step of this consolidation
+        hp_before_vec = ht_before_vec = None   # only filled on the holdout path
 
         def _probe(arr):
             if arr is None or len(arr) == 0:
@@ -310,6 +315,8 @@ class PPOPT(PPOBase):
             hold_idx, train_idx = perm_idx[:n_hold], perm_idx[n_hold:]
             fit_probe, hold_probe = _probe(states_np[train_idx]), _probe(states_np[hold_idx])
             v_fit_before, v_hold_before = _value(fit_probe), _value(hold_probe)
+            # Components on the HELD-OUT states, so absorbed_frac can be measured off-distribution.
+            hp_before_vec, ht_before_vec = _components(hold_probe)
             self.last_trans_mean_before, self.last_trans_l2_before = self._trans_stats(fit_probe)
             self.last_perm_mean_before, self.last_perm_l2_before = self._perm_stats(fit_probe)
             v_perm_before_vec, v_trans_before_vec = _components(fit_probe)
@@ -341,17 +348,43 @@ class PPOPT(PPOBase):
         #                    can drift (nonzero frac) while learning nothing useful (align ~ 0).
         # At the inherited sgd/lr_perm=1e-5 these read 0.0004 and 0.000: the dual-timescale
         # mechanism is not running at all, while returns and critic_loss both look healthy.
+        #
+        # `_holdout` is the SAME quantity on states deliberately EXCLUDED from the regression
+        # (needs consolidation_holdout_frac > 0). This is the number that decides whether the
+        # transfer is real or memorised: after consolidating, the agent immediately collects a NEW
+        # rollout and bootstraps GAE from V_perm + V_trans on states it never consolidated on. A
+        # healthy fitted absorbed_frac with a near-zero held-out one means the permanent memorised
+        # the buffer and the acting value is corrupted exactly where it is next used — worst right
+        # after a switch, when the state distribution has just moved.
+        #
+        # Offline, the target IS fittable (FINDINGS 6.3: a [256,256] net reaches 3.2% train error)
+        # but held-out error floors at 38-44% and gets WORSE the harder it is fitted. This measures
+        # whether that gap appears in situ. It has never been measured on a permanent that actually
+        # moves — the one earlier holdout run was made when theta_P was inert, so both numbers were
+        # trivially near zero.
         self.last_absorbed_frac = None
         self.last_absorbed_align = None
-        if fit_probe is not None and v_perm_before_vec is not None:
+        self.last_absorbed_frac_holdout = None
+        self.last_absorbed_align_holdout = None
+
+        def _absorbed(probe, p_before, t_before):
+            if probe is None or p_before is None:
+                return None, None
             with torch.no_grad():
-                p_after, _ = self.critic(fit_probe)
-                moved = p_after - v_perm_before_vec
-                wanted = keep * v_trans_before_vec
-                wn = float(wanted.pow(2).sum())
-                if wn > 1e-12:
-                    self.last_absorbed_frac = float(moved.norm() / wanted.norm())
-                    self.last_absorbed_align = float((moved * wanted).sum() / wn)
+                p_after, _ = self.critic(probe)
+            moved, wanted = p_after - p_before, keep * t_before
+            wn = float(wanted.pow(2).sum())
+            if wn <= 1e-12:
+                return None, None
+            return float(moved.norm() / wanted.norm()), float((moved * wanted).sum() / wn)
+
+        self.last_absorbed_frac, self.last_absorbed_align = _absorbed(
+            fit_probe, v_perm_before_vec, v_trans_before_vec)
+        if holdout_frac > 0.0:
+            self.last_absorbed_frac_holdout, self.last_absorbed_align_holdout = _absorbed(
+                hold_probe, hp_before_vec, ht_before_vec)
+
+        if self.last_absorbed_frac is not None:
                     if (not self._warned_inert_permanent
                             and self.last_absorbed_frac < 0.01):
                         self._warned_inert_permanent = True
