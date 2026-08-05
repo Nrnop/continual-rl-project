@@ -14,8 +14,15 @@ Consolidation follows Eq. (4): θ_P regresses onto the full acting value old_V_p
 function over the task distribution, which optimises the jumpstart objective (Theorem 6). At a task
 boundary we consolidate first (locking the just-learned task value into θ_P) then let θ_T re-adapt.
 
-Initialisation follows Theorem 1: θ_P gets the ordinary value-head init, θ_T starts at the ZERO
-function, so V = V_perm + V_trans begins identical to a single vanilla critic.
+Initialisation is CONFIGURABLE, because the reference is not consistent about it and the choice
+turns out to cost return either way (see models/critic.py and REINVESTIGATION.md §6a):
+
+  θ_T   zero by default (`trans_zero_init`) — Theorem 1's `V^(T)_0 = 0`.
+  θ_P   orthogonal gain 1.0 by default; `perm_zero_init` gives the tabular reference's
+        `w_1 = np.zeros`; `perm_init_std: 0.01` gives the deep reference's `normal_(0, 0.01)`.
+
+Theorem 1 also requires `V^(TD)_0 = V^(P)` — the baseline must start from the SAME function. Use
+`critic_zero_init` on the vanilla arm to satisfy it; without that the equivalence is untested.
 """
 import numpy as np
 import torch
@@ -50,6 +57,9 @@ class PPOPT(PPOBase):
             # trans_zero_init=False reproduces the REFERENCE's initialisation (both nets random).
             # Default True is Theorem 1's condition — a deviation from the code, see SplitCritic.
             trans_zero_init=bool(cfg.get("trans_zero_init", True)),
+            # perm_init_std reproduces the deep reference's normal_(0, 0.01); ignored when
+            # perm_zero_init is set. Neither is the default.
+            perm_init_std=cfg.get("perm_init_std", None),
         ).to(device)
         # Fast optimizer for the transient net (task-specific). Reference: optim.Adam, --lr2.
         self.trans_optim = torch.optim.Adam(

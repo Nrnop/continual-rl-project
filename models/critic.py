@@ -69,7 +69,7 @@ class SplitCritic(nn.Module):
     """
 
     def __init__(self, obs_dim, hidden_sizes=(256, 256), perm_zero_init=False,
-                 trans_zero_init=True):
+                 trans_zero_init=True, perm_init_std=None):
         super().__init__()
         self.perm = mlp(obs_dim, list(hidden_sizes), 1, out_gain=1.0)
         self.trans = mlp(obs_dim, list(hidden_sizes), 1, out_gain=1.0)
@@ -118,6 +118,22 @@ class SplitCritic(nn.Module):
         if perm_zero_init:
             nn.init.constant_(self.perm[-1].weight, 0.0)
             nn.init.constant_(self.perm[-1].bias, 0.0)
+        elif perm_init_std is not None:
+            # The reference's DEEP code uses neither exactly zero nor our orthogonal gain 1.0:
+            #
+            #   prediction_semi_crl/minigrid/model.py
+            #       def weight_init(m):
+            #           if isinstance(m, nn.Linear):
+            #               nn.init.normal_(m.weight, 0, 0.01); m.bias.data.fill_(0.0)
+            #
+            # Only the tabular/linear versions use w_1 = np.zeros. That distinction matters here
+            # because Job H showed zero-initialising a critic costs ~300 return points on this
+            # task — it hits vanilla just as hard — so "exactly zero" is not a free choice. This
+            # reproduces the deep reference: small but non-zero.
+            for m in self.perm:
+                if isinstance(m, nn.Linear):
+                    nn.init.normal_(m.weight, 0.0, perm_init_std)
+                    nn.init.constant_(m.bias, 0.0)
 
     def forward(self, obs):
         """Returns (v_perm, v_trans), each shape (batch,)."""
