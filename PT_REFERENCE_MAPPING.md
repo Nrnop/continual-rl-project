@@ -335,8 +335,24 @@ Because α_P is small *by design* — it is the slow timescale — `θ_P` barely
 initialisation for the whole run. The transient's target is then `R − V_perm`: the value function
 minus a fixed unstructured function it must cancel on every state.
 
-`perm_zero_init` / `trans_zero_init` (both default `true`) now reproduce the reference. See
-`REINVESTIGATION.md` §6a–§6b for the measurement and the re-run.
+Three initialisations are now selectable, and **none of them is free** — Job H measured that
+zero-initialising a critic costs ~300 return points on this task, and it hits *vanilla* just as
+hard (phase 2, p=0.047). So this is a genuine choice with a cost, not a bug fix:
+
+| setting | `\|V_perm\|` at t=0 | matches |
+|---|---|---|
+| default (orthogonal, gain 1.0) | 0.4046 | nothing in the reference |
+| `perm_init_std: 0.01` | 0.000165 | the **deep** reference (`normal_(0, 0.01)`) |
+| `perm_zero_init: true` | 0.000000 | the **tabular/linear** reference (`w_1 = np.zeros`) |
+
+**Theorem 1 has a second condition we had never enforced: `V^(TD)_0 = V^(P)`** — the TD baseline must
+start from the *same function* as the permanent. `critic_zero_init` on the vanilla arm supplies it.
+Without it the equivalence the theorem asserts is simply not being tested: PT started at exactly 0
+while the baseline started at a random function of magnitude 0.4.
+
+That mattered. Against a randomly-initialised baseline the mechanism-off PT arm was whole-run
+**p=0.008**; against a matched one it is **p=0.175**, with 5 of 6 comparisons not significant.
+**Theorem 1 holds.** See `REINVESTIGATION.md` §6a–§6d.
 
 ### 4.2 Consolidation is only *approximate* with two separate trunks — and we keep it that way
 
@@ -419,6 +435,8 @@ the reference's own behaviour. They are listed here so the distinction is never 
 | decay | all parameters (`params`) | output layer (`output`) | Alg. 2 line 9 says `λw` on the *parameters*, §3.2 prose says the *value function* — ambiguous under FA. **This is an interpretation, not a bug fix.** |
 | λ | 0.75 | 0.95 | tuned (Job B) |
 | k | 50 000 env steps | 122 880 | tuned |
+| `θ_T` init | random | **zero** | Theorem 1's `V^(T)_0 = 0`. The reference's own deep code does **not** satisfy it. |
+| `θ_P` init | zero (tabular) / `normal(0,0.01)` (deep) | orthogonal gain 1.0 by default | all three now selectable; **each costs return differently** (Job H) |
 
 **One structural infidelity cannot be configured away.** Their `train_T_Net` runs once per env step,
 so the transient gets **1.0 gradient steps per env step**; PPO's arithmetic

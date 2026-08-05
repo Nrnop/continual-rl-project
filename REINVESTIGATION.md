@@ -5,10 +5,11 @@ counter-intuitive and most likely an implementation defect. This document record
 followed, every defect it found, every experiment run to test them, and what in `FINDINGS.md` is
 retracted as a result.
 
-**Status: the experimental programme is complete.** Every hypothesis generated during the audit has
-been tested. §6b carries the final result. The one validation that remains is not a further
-hyper-parameter search but a reproduction of the authors' own published result on their own
-benchmark — see §9.
+**Status: the experimental programme is complete at the configuration level.** Every hypothesis
+generated during the audit has been tested and closed. §6b–§6d carry the results, including one
+conclusion of our own that had to be retracted (§6d.1). What remains is not a further
+hyper-parameter search but a reproduction of the authors' own published result, used as a
+bug-finding tool — see §9.
 
 **Scope.** `FINDINGS.md` §1–§8.1 describes the *original* investigation. Everything here supersedes
 it where they conflict. Nothing in `FINDINGS.md` was deleted; retractions are listed in §5.
@@ -32,13 +33,23 @@ The current state, measured cleanly at n=10 with rank statistics:
 | `ewc` vs `pt` | 1191.1 vs 415.1 | U=5, **p=0.001** |
 | `vanilla` vs `ewc` | 929.3 vs 1191.1 | U=28, p=0.096 (n.s.) |
 
-Two findings that are new and did not exist in the original study:
+Four findings that are new and did not exist in the original study:
 
-1. **The deficit is entirely post-switch.** Phase 1 (before any task change) is at parity in
-   *every* clean measurement — three independent tests, p=0.290/0.940/0.10. The gap opens at the
-   first boundary and never closes.
-2. **A working permanent is indistinguishable from a dead one**, with the mechanism contrast
-   verified on all 10 seeds (`absorbed_frac` 0.10 vs 0.005, ≥15× separation, zero overlap).
+1. **A working permanent is indistinguishable from a dead one** (p=0.597), with the mechanism
+   contrast verified on all 10 seeds (`absorbed_frac` 0.10 vs 0.005, ≥15× separation, zero overlap).
+   This is the result nothing has moved.
+2. **The split-critic implementation is correct.** Theorem 1's equivalence holds once *both* its
+   conditions are enforced (§6d.1); the consolidation regression descends in all 75 measured cycles
+   (§6d) and generalises to states it never trained on (ratio 0.999, §6d).
+3. **The deficit is post-switch, and it belongs to the mechanism, not the architecture.** Phase 1 is
+   at parity in every clean measurement (p=0.290 / 0.940 / 1.000). With the mechanism switched off
+   *and* the baseline matched, the whole run is at parity too.
+4. **Zero-initialising a critic costs ~300 return points** on this task, and costs *vanilla* the
+   same (§6d.2). Some of what earlier read as a PT deficit was this.
+
+**One conclusion of ours is retracted.** Jobs C–E built a case for a post-switch *architectural*
+defect in the split critic. It was an artifact of comparing against a differently-initialised
+baseline, and it does not survive a matched one (§6d.1).
 
 ---
 
@@ -111,6 +122,9 @@ All runs: HalfCheetah, `DirectionalHalfCheetah`, 8 async envs × 256 steps, seed
 | **Job C** | is the cost the mechanism? | mechanism **off**, 10 seeds × 3.07M | still loses post-switch (whole-run p=0.008; phase 1 p=0.290). **Mechanism ruled out.** |
 | **Job D** | is the cost capacity? | `[43,43]` vanilla + full-width PT, 10 seeds × 3.07M | `pt_theorem1_wide` vs vanilla **p=0.001**. **Capacity ruled out.** |
 | **Job E** | is it the random `θ_P` offset? | `perm_zero_init`, mechanism **off**, 10 seeds × 3.07M | whole-run p=0.008, but **no individual phase significant** — phase 2 moved 0.001 → 0.131, phase 4 0.008 → 0.059. Large improvement, not a rescue. |
+| **Job G** | is the transfer memorised? | 20 % holdout, 5 seeds × 3.07M | fitted/holdout ratio **0.999**, no post-switch gap. **Generalises.** |
+| **Job H** | Theorem 1 with BOTH conditions | matched-init baseline, 5 seeds × 3.07M | **p = 0.175**, 5/6 n.s. **Theorem 1 holds** — §6b's defect retracted (§6d.1) |
+| **Job I** | does the regression descend? | full loss traces, 3 seeds × 3.07M | all 75 cycles descend, min ×1.05 |
 | **Job F** | the real agent with correct init | `pt_zeroperm`, mechanism **live**, 10 seeds × 3.07M | vs `pt`: better every phase, significant at phase 3 (p=0.019). vs vanilla: **phase 1 p=1.000**, whole-run **p=0.002**. |
 
 ---
@@ -320,6 +334,74 @@ sits in the target band and the inert control a decade below, on every seed, for
 
 ---
 
+## 6d. Jobs G, H, I — three candidates closed, and one of our own conclusions retracted
+
+**Job G — does the consolidation transfer generalise, or is the permanent memorising its buffer?**
+`absorbed_frac` is computed on the states the regression trained on, so it is in-distribution: a
+permanent that memorised its buffer would report a healthy number and be wrong on the new states
+the next rollout bootstraps from. Offline this looked plausible — §6.3 of `FINDINGS.md` fits the
+target to 3.2 % train error while held-out error floors at 38–44 %. Measured in situ with a 20 %
+holdout, 5 seeds:
+
+```
+absorbed_frac   fitted 0.0577   holdout 0.0576    ratio 0.999
+absorbed_align  fitted 0.0517   holdout 0.0519    ratio 0.998
+post-switch gap 0.0000 (n=20)   mid-phase gap -0.0001 (n=105)
+negative holdout alignment: 0 of 1441 logged points, every seed
+```
+
+**The transfer generalises.** No gap, no post-switch widening. Memorisation is ruled out.
+
+**Job I — does the regression actually descend inside a cycle?** The scalar log kept only
+first/last/mean. With the full trace persisted, across 75 cycles (3 seeds × 25):
+
+```
+every cycle descends (first-decile / last-decile > 1); minimum anywhere 1.05
+post-switch cycles  median 1.10 (n=12)
+mid-phase cycles    median 1.14 (n=63)
+```
+
+Post-switch cycles descend slightly less — expected, the state distribution has just moved — but
+never fail. **The regression does real work everywhere.**
+
+### 6d.1 RETRACTED: the "post-switch architectural defect" of §6b
+
+Jobs C, D and E built a case that the split critic carries a cost that survives switching off the
+mechanism, matching capacity, and zeroing the initialisation. **That conclusion is withdrawn.**
+
+Theorem 1 has **two** conditions: `V^(T)_0 = 0` **and** `V^(TD)_0 = V^(P)`. Every comparison in this
+project enforced only the first. With `perm_zero_init`, PT's acting value starts at exactly 0 while
+`VanillaCritic` starts at a random function of magnitude ~0.4 — so the two agents never began from
+the same function, which is precisely what the theorem asserts equivalence between.
+
+| comparison | gap | Mann-Whitney |
+|---|---|---|
+| `theorem1_zeroperm` vs vanilla (random init) | 235.5 | **p = 0.008** |
+| `theorem1_zeroperm` vs `vanilla_zeroinit` (matched) | 47.5 | **p = 0.175** |
+
+Enforcing the second condition removed ~80 % of the gap and all of its significance, with 5 of 6
+comparisons not significant. The one that is (phase 4, p=0.028) does not survive correction for six
+comparisons — Bonferroni α = 0.0083.
+
+This is what *should* happen: with `V_P ≡ 0` and frozen, the permanent's output layer is zeroed, it
+contributes nothing and never trains, and the loss is algebraically identical. The two arms are the
+same agent drawing from different points in the RNG stream. **Theorem 1 holds; the split-critic
+plumbing is correct.**
+
+### 6d.2 Zero-initialisation is not free
+
+```
+vanilla (random init)   1079.4
+vanilla_zeroinit         780.0      <- costs ~300 points (phase 2, p=0.047)
+theorem1_zeroperm        732.5
+```
+
+Zero-initialising a critic costs return, and it costs *vanilla* the same. Part of what read as a PT
+deficit in Jobs C–E was this. `perm_init_std: 0.01` now reproduces the deep reference's
+`normal_(0, 0.01)` (`|V_perm| = 0.000165`), between our orthogonal 0.405 and exactly 0.
+
+---
+
 ## 7. Methodological findings worth reporting independently
 
 1. **The paper's parameter-matching convention halves the trainable critic.** PT-DQN-0.5x counts
@@ -356,12 +438,13 @@ as controlled single-variable arms at n=10. Further search would be fishing.
 fixed, each unit-tested and, where possible, verified in the running system. The architecture is
 exonerated at phase 1 by three independent clean measurements (p=0.290, p=0.940, p=1.000).
 
-**Remains: reproducing the paper's own result.** The only test that can distinguish "our port is
-wrong in a way we have not found" from "the method does not transfer to PPO" is to run the
-authors' algorithm on the authors' benchmark and check we recover their numbers — PT-DQN on MinAtar
-or JBW. If we cannot reproduce their positive result with their algorithm on their domain, the
-problem is ours. If we can, then the negative result on HalfCheetah is a finding about
-policy-gradient control, and a substantial one.
+**Remains: reproducing the paper's own result — as a bug-finding tool.** Nine jobs of
+single-hypothesis testing have found fifteen real defects, but that method is exhausted at the
+configuration level: every remaining idea has been generated, tested and closed. Running the
+authors' algorithm on the authors' benchmark (PT-DQN on MinAtar or JBW) gives something we have
+never had — a **working reference implementation to diff against**. Instead of guessing at one
+hypothesis at a time, the difference between an implementation that wins and ours localises the
+next defect directly.
 
 That is a new agent (DQN with replay and a target network) and a new environment, not a
 configuration change. It is the honest next step and it is out of scope for a run on the existing

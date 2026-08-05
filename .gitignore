@@ -92,3 +92,11 @@ rerun_logs/
 
 # Box-specific run playbook — machine/session specific, not part of the method.
 VASTAI_RERUN.md
+
+# Working session log — a debugging record, not a thesis document.
+SESSION_LOG.md
+
+# Figures from the superseded "rerun" sweep. That sweep ran with the joint-grad-clip and
+# offline-eval-RNG defects present (REINVESTIGATION.md defects #12, #14), so the curves depict a
+# protocol we retracted. Kept on disk, out of the repo. plots/figures_reinvestigation/ supersedes it.
+plots/figures_rerun/
