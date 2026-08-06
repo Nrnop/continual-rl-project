@@ -5,7 +5,8 @@ the August 2026 re-investigation. plot_compare.py is left untouched — it expec
 with `{agent}_ppo_seed_N_*.pkl` and is hardcoded to three agents, while workspace/ is nested per arm
 and we have four (plus six diagnostic arms). This script reads the nested layout directly.
 
-Produces, into plots/figures_reinvestigation/:
+Produces, into plots/figures/ (which this script now OWNS — every file there is post-fix, and
+the pre-fix originals are archived out of the repo; see plots/figures/PROVENANCE.md):
     return_curves          mean +/- 95% CI over training, task boundaries marked
     phase_means_main       per-phase mean return, four arms
     boundary_drop          relative return drop at each switch
@@ -15,12 +16,19 @@ Produces, into plots/figures_reinvestigation/:
     asymptotic_bar         final-phase vs whole-run mean
     phase_means_ablation   the diagnostic ladder (mechanism off / capacity / init)
     consolidation_internals absorbed_frac, transient magnitude, permanent drift
+    consolidation_prepost  regression loss + transient magnitude across the decay. Same three
+                        panels as the Jul-30 consolidation_internals_{trained,shipped}, which
+                        predated the alpha_P, decay_mode and theta_P-init fixes and so showed
+                        the mechanism while the permanent was inert.
 
-NOT reproducible from workspace/ (see REINVESTIGATION.md):
+NOT reproducible from workspace/ — these need data from the box (see PROVENANCE.md):
     offline_curves      needs *_eval_returns.pkl; every re-run used --no-eval, because the
                         offline eval was corrupting the training RNG stream (defect #14).
                         _isolated_rng() has since fixed that, so a future run can restore it.
-    consolidation_insitu panel (b)   needs consolidation_holdout_frac > 0, never set on a re-run.
+    consolidation_insitu panel (b)   needs consolidation_holdout_frac > 0. Job G ran exactly
+                        this, but jobG_results/ came back empty — only the .txt report.
+    consolidation_loss_curves  the .png was rendered on the box; jobI_results/ came back without
+                        the *_consol_loss_traces.pkl, so it cannot be redrawn here.
     drift_comparison    the drift regimes were not re-run under the corrected code.
 
 Run from the PARENT of src_continuous_control/:
@@ -36,7 +44,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 WS = os.path.join(os.path.dirname(__file__), "..", "workspace")
-OUT = os.path.join(os.path.dirname(__file__), "figures_reinvestigation")
+OUT = os.path.join(os.path.dirname(__file__), "figures")
 SWITCH, TOTAL, PHASES, BATCH = 614400, 3072000, 5, 2048
 
 # Validated categorical palette, assigned by ENTITY in fixed order and never cycled.
@@ -133,10 +141,11 @@ def _boundaries(ax):
 
 def _save(fig, name):
     os.makedirs(OUT, exist_ok=True)
-    p = os.path.join(OUT, f"{name}.png")
-    fig.savefig(p, dpi=200, bbox_inches="tight", facecolor=SURF)
+    for ext, kw in (("png", {"dpi": 200}), ("pdf", {})):
+        fig.savefig(os.path.join(OUT, f"{name}.{ext}"),
+                    bbox_inches="tight", facecolor=SURF, **kw)
     plt.close(fig)
-    print(f"  wrote {os.path.basename(p)}")
+    print(f"  wrote {name}.png/.pdf")
 
 
 # ------------------------------------------------------------------ figures
@@ -401,6 +410,59 @@ def fig_consolidation_loss_curves(d="jobI_results", sub="pt_zeroperm", seed=0, s
     _save(fig, "consolidation_loss_curves")
 
 
+def fig_consolidation_prepost():
+    """The July-30 three-panel diagnostic, regenerated from the POST-FIX sweep.
+
+    The version in plots/figures/ (consolidation_internals_{trained,shipped}) predates the alpha_P
+    tuning, the decay_mode fix and the theta_P init fix, so it shows the mechanism as it behaved
+    while the permanent was effectively inert. Same three panels, same tags, final2_results/pt.
+
+    The staircase is not an artifact of the mechanism: these tags are written once per
+    consolidation but logged every update, so each value is held until the next cycle.
+    """
+    fig, axes = plt.subplots(1, 3, figsize=(14.5, 3.9))
+
+    ax = axes[0]
+    for key, lab, col, lw in (("loss_first", "first gradient step of the cycle", PAL[6], 1.0),
+                              ("loss_mean", "mean over the cycle", MUT, 1.0),
+                              ("loss_last", "last gradient step of the cycle", PAL[0], 1.0)):
+        cur = load_scalar("final2_results", "pt", f"train/consol/{key}")
+        if not cur:
+            continue
+        x, m, _ = mean_ci(cur)
+        ax.plot(x, m, color=col, lw=lw, label=lab)
+    ax.set_yscale("log")
+    ax.set_ylabel("MSE loss", color=MUT, fontsize=9.5)
+    ax.set_title("(a) consolidation regression loss\nper consolidation, averaged over seeds",
+                 fontsize=10.5, color=INK, loc="left")
+    ax.legend(frameon=False, fontsize=8, labelcolor=MUT, loc="lower left")
+
+    for ax, stem, ylab, title, logy in (
+            (axes[1], "trans_mean", "mean value",
+             "(b) mean transient value over the batch\nbefore vs after decay", False),
+            (axes[2], "trans_l2", "L2 norm",
+             "(c) L2 norm of the transient values\nover the batch", True)):
+        for when, col, ls in (("before", PAL[2], "-"), ("after", PAL[1], "--")):
+            cur = load_scalar("final2_results", "pt", f"train/consol/{stem}_{when}")
+            if not cur:
+                continue
+            x, m, _ = mean_ci(cur)
+            ax.plot(x, m, color=col, lw=1.1, ls=ls, label=f"{when} decay")
+        if logy:
+            ax.set_yscale("log")
+        else:
+            ax.axhline(0.0, color=INK, lw=0.8, zorder=1)
+        ax.set_ylabel(ylab, color=MUT, fontsize=9.5)
+        ax.set_title(title, fontsize=10.5, color=INK, loc="left")
+        ax.legend(frameon=False, fontsize=9, labelcolor=MUT)
+
+    for ax in axes:
+        _boundaries(ax)
+        ax.set_xlabel("environment steps", color=MUT, fontsize=9.5)
+        _style(ax)
+    _save(fig, "consolidation_prepost")
+
+
 if __name__ == "__main__":
     fig_return_curves()
     fig_phase_means(MAIN, "phase_means_main",
@@ -413,5 +475,6 @@ if __name__ == "__main__":
     fig_phase_means(ABLATION, "phase_means_ablation",
                     "Diagnostic ladder — each suspect removed in turn", figsize=(9.6, 4.6))
     fig_consolidation_internals()
+    fig_consolidation_prepost()
     fig_consolidation_loss_curves()
     print("done")

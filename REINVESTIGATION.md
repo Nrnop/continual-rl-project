@@ -301,24 +301,24 @@ phase therefore starts the transient with a larger correction to make — and `k
 The standard figure set (the same figures as `plots/figures/`), rebuilt against the corrected
 re-run data by `plots/make_reinvestigation_figures.py`, reading `workspace/` directly.
 
-![Return curves](plots/figures_reinvestigation/return_curves.png)
+![Return curves](plots/figures/return_curves.png)
 
-![Per-phase mean return](plots/figures_reinvestigation/phase_means_main.png)
+![Per-phase mean return](plots/figures/phase_means_main.png)
 
 *All four arms are together through phase 1; the gap opens at the first switch and never closes.*
 
-![Boundary drop](plots/figures_reinvestigation/boundary_drop.png)
-![Recovery time](plots/figures_reinvestigation/recovery_time.png)
-![Velocity](plots/figures_reinvestigation/velocity_curves.png)
-![Critic loss](plots/figures_reinvestigation/td_error_curves.png)
-![Asymptotic vs whole-run](plots/figures_reinvestigation/asymptotic_bar.png)
+![Boundary drop](plots/figures/boundary_drop.png)
+![Recovery time](plots/figures/recovery_time.png)
+![Velocity](plots/figures/velocity_curves.png)
+![Critic loss](plots/figures/td_error_curves.png)
+![Asymptotic vs whole-run](plots/figures/asymptotic_bar.png)
 
-![Diagnostic ladder](plots/figures_reinvestigation/phase_means_ablation.png)
+![Diagnostic ladder](plots/figures/phase_means_ablation.png)
 
 *Each suspect removed in turn — mechanism, capacity, initialisation. Phase 1 is flat across all six
 arms; no removal closes the post-switch gap.*
 
-![Consolidation internals](plots/figures_reinvestigation/consolidation_internals.png)
+![Consolidation internals](plots/figures/consolidation_internals.png)
 
 *The mechanism's own telemetry, which the original study had no way to see. (a) the working arm
 sits in the target band and the inert control a decade below, on every seed, for the whole run;
