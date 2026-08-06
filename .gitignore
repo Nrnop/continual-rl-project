@@ -100,8 +100,3 @@ SESSION_LOG.md
 # offline-eval-RNG defects present (REINVESTIGATION.md defects #12, #14), so the curves depict a
 # protocol we retracted. Kept on disk, out of the repo. plots/figures_reinvestigation/ supersedes it.
 plots/figures_rerun/
-
-# Pre-fix figures (Jul 26-30), kept on disk for reference only. They predate the alpha_P,
-# decay_mode and theta_P-init fixes, so they describe a run whose permanent was inert.
-# plots/figures/PROVENANCE.md lists what each one would need to be regenerated.
-plots/figures_prefix_archive/

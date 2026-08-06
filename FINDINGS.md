@@ -12,12 +12,16 @@
 > violated** (§8.2). All were corrected, the corrected agent cleared a stationary gate, and the
 > full experiment was re-run: **4 arms × 10 seeds × 3.07 M steps** (§8.3).
 >
-> **The central conclusion survives, and is now much stronger.** The supervisors' hypothesis — that
-> the negative result was an implementation defect — is **excluded**: with a faithful
-> implementation, PT still does not beat vanilla, and EWC still wins. More precisely, PT's
-> permanent component **provably retains better** than its full estimate, exactly as Theorem 7
-> predicts (8/10 seeds), *and that retention does not convert into return*. That is the strongest
-> form this result can take: the mechanism can be shown to work while failing to help.
+> **The central conclusion survives, but two claims in this banner did not.** With a faithful
+> implementation PT still does not beat vanilla (p = 0.002). Retracted since:
+> **"EWC still wins"** — under rank statistics at n=10, `vanilla` vs `ewc` is p = 0.096, not
+> significant; and the **Theorem 7 retention result** — `mse_perm < mse_full` is also satisfied by
+> a permanent frozen at exactly zero, so it was measuring inertia, not retention.
+>
+> The audit continued past this banner and found **fifteen** defects, not five. The largest is that
+> α_P had never been tuned, so the permanent absorbed 0.04 % of the transient per consolidation
+> with alignment 0.000 — it had never functioned. The current state, the corrected numbers and the
+> retractions are in **`REINVESTIGATION.md`**, which supersedes this document throughout.
 >
 > §4–§8 remain the record of the *unfaithful* agent and should be read as such. Two numbers are
 > retracted outright: the logged `boundary/return_drop` scalar (a metric artifact, §8.3.4) and the
@@ -175,15 +179,15 @@ number of seeds achieving a positive mean:
 End-of-phase returns show the same ordering (vanilla 1524/1350/950/1425/962; EWC
 1524/1545/1453/2739/1785; PT 1124/1456/−100/−21/−346).
 
-![Figure 4.1 — Per-phase mean return, three agents, 5 seeds. Error bars are SEM.](plots/figures/phase_means_main.png)
+![Figure 4.1 — Per-phase mean return, three agents, 5 seeds. Error bars are SEM.](plots/figures_original_study/phase_means_main.png)
 
 *Figure 4.1 — Per-phase mean return, three agents, 5 seeds. Error bars are SEM.*
 
-![Figure 4.2 — Return over training with task boundaries marked. PT (blue) never recovers after the second switch.](plots/figures/return_curves.png)
+![Figure 4.2 — Return over training with task boundaries marked. PT (blue) never recovers after the second switch.](plots/figures_original_study/return_curves.png)
 
 *Figure 4.2 — Return over training with task boundaries marked. PT (blue) never recovers after the second switch.*
 
-![Figure 4.3 — Mean x-velocity. PT's cheetah stops moving from phase 3 onward, while vanilla and EWC keep reversing direction each phase.](plots/figures/velocity_curves.png)
+![Figure 4.3 — Mean x-velocity. PT's cheetah stops moving from phase 3 onward, while vanilla and EWC keep reversing direction each phase.](plots/figures_original_study/velocity_curves.png)
 
 *Figure 4.3 — Mean x-velocity. PT's cheetah stops moving from phase 3 onward, while vanilla and EWC keep reversing direction each phase.*
 
@@ -212,23 +216,23 @@ End-of-phase returns show the same ordering (vanilla 1524/1350/950/1425/962; EWC
 - **Offline zero-momentum evaluation** (momentum-free adaptation probe): PT *degrades over training*
   (+400 → negative); EWC climbs to ~1270; vanilla holds ~300–770.
 
-![Figure 4.4 — Relative return drop at a task switch. PT's ~117% with very large variance against a tight 52–55% for the baselines.](plots/figures/boundary_drop.png)
+![Figure 4.4 — Relative return drop at a task switch. PT's ~117% with very large variance against a tight 52–55% for the baselines.](plots/figures_original_study/boundary_drop.png)
 
 *Figure 4.4 — Relative return drop at a task switch. PT's ~117% with very large variance against a tight 52–55% for the baselines.*
 
-![Figure 4.5 — Zero-momentum offline evaluation, which removes the carried-momentum confound at a direction reversal.](plots/figures/offline_curves.png)
+![Figure 4.5 — Zero-momentum offline evaluation, which removes the carried-momentum confound at a direction reversal.](plots/figures_original_study/offline_curves.png)
 
 *Figure 4.5 — Zero-momentum offline evaluation, which removes the carried-momentum confound at a direction reversal.*
 
-![Figure 4.6 — Rollouts required to recover 90% of the previous phase's peak.](plots/figures/recovery_time.png)
+![Figure 4.6 — Rollouts required to recover 90% of the previous phase's peak.](plots/figures_original_study/recovery_time.png)
 
 *Figure 4.6 — Rollouts required to recover 90% of the previous phase's peak.*
 
-![Figure 4.7 — Asymptotic versus online cumulative return.](plots/figures/asymptotic_bar.png)
+![Figure 4.7 — Asymptotic versus online cumulative return.](plots/figures_original_study/asymptotic_bar.png)
 
 *Figure 4.7 — Asymptotic versus online cumulative return.*
 
-![Figure 4.8 — Critic loss. Note that PT's stays small (~0.01) throughout, which is why the failure evaded this diagnostic (§6.2).](plots/figures/td_error_curves.png)
+![Figure 4.8 — Critic loss. Note that PT's stays small (~0.01) throughout, which is why the failure evaded this diagnostic (§6.2).](plots/figures_original_study/td_error_curves.png)
 
 *Figure 4.8 — Critic loss. Note that PT's stays small (~0.01) throughout, which is why the failure evaded this diagnostic (§6.2).*
 
@@ -310,7 +314,7 @@ vanilla-level performance — exactly as predicted, because with consolidation d
 frozen random network and PT degenerates into "vanilla plus a fixed offset".
 
 
-![Figure 5.1 — PT variants ordered by how much consolidation regression actually runs. Removing the regression entirely (violet, red) performs best; training it well (yellow) performs worst.](plots/figures/phase_means_ablation.png)
+![Figure 5.1 — PT variants ordered by how much consolidation regression actually runs. Removing the regression entirely (violet, red) performs best; training it well (yellow) performs worst.](plots/figures_original_study/phase_means_ablation.png)
 
 *Figure 5.1 — PT variants ordered by how much consolidation regression actually runs. Removing the regression entirely (violet, red) performs best; training it well (yellow) performs worst.*
 
@@ -383,7 +387,7 @@ measured on the states being consolidated. It falls to essentially zero:
 
 So the regression *does* fit, and the transfer *is* value-preserving — **on the states it trained
 on**. Yet performance is the worst of any variant. Panel (a) of
-`plots/figures/consolidation_insitu.png` plots this directly from the run's own logs: the drift
+`plots/figures_original_study/consolidation_insitu.png` plots this directly from the run's own logs: the drift
 falls from ~3 % to ~0.006 % over training, on every seed.
 
 **Leading explanation at the time (since falsified — see §5.6).** The metric above is
@@ -421,7 +425,7 @@ the buffer from the regression and measuring value drift on that held-out portio
 
 **The two track each other almost exactly, everywhere in training, including immediately after a
 switch, and both converge to ~0.00 % by the end.** No gap ever opens — panel (b) of
-`plots/figures/consolidation_insitu.png` shows the two curves lying on top of one another for the
+`plots/figures_original_study/consolidation_insitu.png` shows the two curves lying on top of one another for the
 whole run. Measured over every logged consolidation: fitted 0.300 %, held-out 0.310 %. **The memorisation hypothesis
 is wrong**, and the offline probe's prediction (a gap widening with training effort) does not
 reproduce in situ.
@@ -434,7 +438,7 @@ distribution** rather than memorising it — but it does *not* test extrapolatio
 distribution. That stricter question remains open (§10h).
 
 
-![Figure 5.2 — In-situ consolidation quality from the runs' own logs. (a) Round 5: the regression converges to a near-exact transfer. (b) Round 6: held-out error tracks fitted error everywhere, falsifying the memorisation hypothesis.](plots/figures/consolidation_insitu.png)
+![Figure 5.2 — In-situ consolidation quality from the runs' own logs. (a) Round 5: the regression converges to a near-exact transfer. (b) Round 6: held-out error tracks fitted error everywhere, falsifying the memorisation hypothesis.](plots/figures_original_study/consolidation_insitu.png)
 
 *Figure 5.2 — In-situ consolidation quality from the runs' own logs. (a) Round 5: the regression converges to a near-exact transfer. (b) Round 6: held-out error tracks fitted error everywhere, falsifying the memorisation hypothesis.*
 
@@ -462,7 +466,7 @@ Round 7 ran the 2×2 — decay (0.0 vs 0.5) × resetting the transient's optimis
 | **reset optimiser state** | 34±44 / −504±64 / −232±130 / −632±92 / −204±125 | 446±13 / −161±34 / 321±92 / −827±168 / 196±33 |
 
 
-![Figure 5.3 — Round 7: transient decay × resetting the transient's optimiser state. No cell reaches the vanilla reference (dashed). The reset helps at decay 0.5 and hurts at decay 0.0 — the reverse of the prediction.](plots/figures/r7_grid.png)
+![Figure 5.3 — Round 7: transient decay × resetting the transient's optimiser state. No cell reaches the vanilla reference (dashed). The reset helps at decay 0.5 and hurts at decay 0.0 — the reverse of the prediction.](plots/figures_original_study/r7_grid.png)
 
 *Figure 5.3 — Round 7: transient decay × resetting the transient's optimiser state. No cell reaches the vanilla reference (dashed). The reset helps at decay 0.5 and hurts at decay 0.0 — the reverse of the prediction.*
 
@@ -536,7 +540,7 @@ rollout then collects bootstrap values from a gutted critic and feeds them to GA
 advantages for that entire rollout.
 
 
-![Figure 6.1 — (a) One consolidation at the shipped settings: 0.1% of the transient absorbed, 100% deleted. (b) The target is fittable given capacity and training, but held-out error does not improve. (c) Parameter scaling is not output scaling — exact for any decay only with linear heads.](plots/figures/consolidation_mechanism.png)
+![Figure 6.1 — (a) One consolidation at the shipped settings: 0.1% of the transient absorbed, 100% deleted. (b) The target is fittable given capacity and training, but held-out error does not improve. (c) Parameter scaling is not output scaling — exact for any decay only with linear heads.](plots/figures_original_study/consolidation_mechanism.png)
 
 *Figure 6.1 — **Offline measurement** of the real consolidation code on **synthetic (iid Gaussian)
 probe states**, not on states the agent visited. (a) One consolidation at the shipped settings: 0.1 %
@@ -576,7 +580,7 @@ is a property of the shipped hyper-parameters rather than of the optimisation pr
 Together these confirm, on the real system rather than on probes, that the shipped consolidation
 **deletes far more of the transient than intended while transferring essentially none of it**.
 
-![Figure 6.2 — Consolidation internals under the shipped configuration.](plots/figures/consolidation_internals_shipped.png)
+![Figure 6.2 — Consolidation internals under the shipped configuration.](plots/figures_original_study/consolidation_internals_shipped.png)
 
 *Figure 6.2 — Consolidation internals, shipped configuration (`decay = 0.5`), 3 seeds. (a) The
 regression loss at the first, mean and last gradient step of each cycle are indistinguishable — the
@@ -851,7 +855,7 @@ Both settings, 3 seeds each, return by 614 400-step segment (mean ± SEM):
 | **PT − vanilla** | **−174** | **−1133** | **−1345** | **−1336** | **−1409** |
 
 
-![Figure 8.1 — PT versus vanilla across all three drift regimes. Bold numbers mark gaps exceeding the combined SEM: none under slow drift, large negative gaps in both harder regimes.](plots/figures/drift_comparison.png)
+![Figure 8.1 — PT versus vanilla across all three drift regimes. Bold numbers mark gaps exceeding the combined SEM: none under slow drift, large negative gaps in both harder regimes.](plots/figures_original_study/drift_comparison.png)
 
 *Figure 8.1 — PT versus vanilla across all three drift regimes. Bold numbers mark gaps exceeding the combined SEM: none under slow drift, large negative gaps in both harder regimes.*
 
@@ -1434,7 +1438,7 @@ reproducibility.
 | Item | Location |
 |---|---|
 | Source, configs, tests | `agents/`, `envs/`, `models/`, `utils/`, `configs/`, `tests/` |
-| Figures (13) | `plots/figures/` |
+| Figures (15) | `plots/figures_original_study/` — this document's figures. `plots/figures/` now holds the POST-AUDIT set (REINVESTIGATION.md); do not read the two together. |
 | Figure and experiment scripts | `plots/plot_*.py`, `plots/make_consolidation_figure.py`, `scripts/run_*.sh` |
 | Run instructions | `README.md` |
 
