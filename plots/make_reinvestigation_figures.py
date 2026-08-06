@@ -376,7 +376,10 @@ def fig_consolidation_loss_curves(d="jobI_results", sub="pt_zeroperm", seed=0, s
 
     # Derive the grid from the data rather than assuming the production schedule, so a shortened
     # diagnostic run doesn't render four empty rows.
-    phase_of = [int(st // switch) for st, _ in traces]
+    # Clamp: the final consolidation fires at exactly total_steps, and total_steps // switch is
+    # PHASES, not PHASES-1 — which would render a spurious extra row for the last cycle of the
+    # last phase. There are five phases; the boundary belongs to the phase that just ended.
+    phase_of = [min(int(st // switch), PHASES - 1) for st, _ in traces]
     phases = sorted(set(phase_of))
     per_phase = {p: [i for i, q in enumerate(phase_of) if q == p] for p in phases}
     nrow, ncol = len(phases), max(len(v) for v in per_phase.values())
