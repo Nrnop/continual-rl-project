@@ -36,7 +36,8 @@ is how the stale ones survived, so there is now one.
 | `phase_means_ablation` | `final2_results` + `jobC/jobD/jobF_results` |
 | `consolidation_internals` | `final2_results/{pt,pt_inert}` — `absorbed_frac`, transient magnitude, permanent drift |
 | `consolidation_prepost` | `final2_results/pt` — the Jul-30 three-panel diagnostic, redrawn post-fix |
-| `consolidation_loss_curves` | Job I, **rendered on the box** — `.png` only, see below |
+| `consolidation_insitu` | `jobG_results/pt_holdout`, 5 seeds — `absorbed_frac` on fitted vs held-out states |
+| `consolidation_loss_curves` | `jobI_results/pt_zeroperm`, 3 seeds × 25 cycles × 1920 gradient steps |
 
 ## Archived, not regenerable here
 
@@ -46,12 +47,13 @@ exist locally:
 | figure | what it needs |
 |---|---|
 | `offline_curves` | `*_eval_returns.pkl` — a re-run **without** `--no-eval`. Safe again now that `_isolated_rng()` fixes defect #14. |
-| `consolidation_insitu` | `consolidation_holdout_frac > 0`. Job G ran this; `jobG_results/` came back empty, only `jobG_report.txt`. |
 | `drift_comparison` | the three drift regimes (slow / two-timescale / fast), never re-run post-fix. |
 | `r7_grid` | **nothing — retracted.** It plotted the Theorem 7 retention result, which a permanent frozen at exactly zero also satisfies. It was measuring inertia. Do not regenerate. |
 | `consolidation_mechanism` | regenerable locally via `plots/make_consolidation_figure.py`, but its panel (c) argues from `decay_mode="params"`, which is no longer what the agent does. Needs its claims rewritten before it is redrawn. |
 | `consolidation_internals_{trained,shipped}` | superseded by `consolidation_prepost`. |
 
-`consolidation_loss_curves.png` is kept because it is correct and post-fix, but it cannot be
-redrawn here: `jobI_results/` came back without the `*_consol_loss_traces.pkl` files, so there is
-no `.pdf` and no way to restyle it.
+`consolidation_insitu` and `consolidation_loss_curves` were initially listed here as
+unrecoverable, because `jobG_results/` and `jobI_results/` had not yet been copied back from the
+box. They have been, so both are now generated from source like everything else. The in-situ
+figure reports a held-out ÷ fitted absorbed-fraction ratio of **1.001**, which is the measurement
+that rules out the transfer being memorisation of the ConsolidationBuffer.

@@ -20,15 +20,15 @@ the pre-fix originals are archived out of the repo; see plots/figures/PROVENANCE
                         panels as the Jul-30 consolidation_internals_{trained,shipped}, which
                         predated the alpha_P, decay_mode and theta_P-init fixes and so showed
                         the mechanism while the permanent was inert.
+    consolidation_insitu   absorbed_frac on FITTED vs HELD-OUT states (Job G) — rules out the
+                        reading that the transfer is memorising the ConsolidationBuffer.
+    consolidation_loss_curves  one panel per consolidation cycle, x = gradient step within that
+                        cycle's regression (Job I).
 
-NOT reproducible from workspace/ — these need data from the box (see PROVENANCE.md):
+NOT reproducible from workspace/ — these need data that does not exist yet (see PROVENANCE.md):
     offline_curves      needs *_eval_returns.pkl; every re-run used --no-eval, because the
                         offline eval was corrupting the training RNG stream (defect #14).
                         _isolated_rng() has since fixed that, so a future run can restore it.
-    consolidation_insitu panel (b)   needs consolidation_holdout_frac > 0. Job G ran exactly
-                        this, but jobG_results/ came back empty — only the .txt report.
-    consolidation_loss_curves  the .png was rendered on the box; jobI_results/ came back without
-                        the *_consol_loss_traces.pkl, so it cannot be redrawn here.
     drift_comparison    the drift regimes were not re-run under the corrected code.
 
 Run from the PARENT of src_continuous_control/:
@@ -410,6 +410,60 @@ def fig_consolidation_loss_curves(d="jobI_results", sub="pt_zeroperm", seed=0, s
     _save(fig, "consolidation_loss_curves")
 
 
+def fig_consolidation_insitu(d="jobG_results", sub="pt_holdout"):
+    """Does the consolidation transfer GENERALISE, or is it memorising the buffer?
+
+    Job G ran the production agent with consolidation_holdout_frac > 0: the regression fits on one
+    part of the ConsolidationBuffer and `*_holdout` is measured on states it never trained on.
+
+    This is the figure that rules out the obvious deflationary reading of a working absorbed_frac
+    — that theta_P is only reproducing old_V_perm + V_trans on the exact states it was shown. If
+    that were true the holdout curve would sit well below the fitted one. It does not.
+    """
+    fitted = load_scalar(d, sub, "train/consol/absorbed_frac")
+    held = load_scalar(d, sub, "train/consol/absorbed_frac_holdout")
+    if not fitted or not held:
+        print(f"  SKIP consolidation_insitu — no holdout tags under {d}/{sub}")
+        return
+    fig, axes = plt.subplots(1, 2, figsize=(11.0, 3.9))
+
+    ax = axes[0]
+    for cur, lab, col, ls in ((fitted, "fitted states", PAL[2], "-"),
+                              (held, "held-out states", PAL[1], "--")):
+        x, m, ci = mean_ci(cur)
+        m, ci = smooth(m, 8), smooth(ci, 8)
+        ax.plot(x, m, color=col, lw=1.6, ls=ls, label=lab, zorder=3)
+        ax.fill_between(x, m - ci, m + ci, color=col, alpha=0.16, lw=0, zorder=2)
+    ax.set_ylabel("absorbed fraction", color=MUT, fontsize=9.5)
+    ax.set_title("(a) how much of the transient the permanent takes up\n"
+                 "on states it fitted vs states it never saw", fontsize=10.5, color=INK, loc="left")
+    ax.legend(frameon=False, fontsize=9, labelcolor=MUT)
+
+    # The ratio is the actual claim: 1.0 means the transfer is a function, not a lookup.
+    ax = axes[1]
+    n = min(min(len(a) for a in fitted), min(len(a) for a in held))
+    ratio = np.stack([h[:n, 1] / np.where(np.abs(f[:n, 1]) < 1e-9, np.nan, f[:n, 1])
+                      for f, h in zip(fitted, held)])
+    x = fitted[0][:n, 0]
+    m = np.nanmean(ratio, 0)
+    ci = 1.96 * np.nanstd(ratio, 0, ddof=1) / np.sqrt(ratio.shape[0])
+    ax.plot(x, smooth(m, 8), color=PAL[0], lw=1.6, zorder=3)
+    ax.fill_between(x, smooth(m - ci, 8), smooth(m + ci, 8),
+                    color=PAL[0], alpha=0.16, lw=0, zorder=2)
+    ax.axhline(1.0, color=INK, lw=1.0, ls=(0, (4, 3)), zorder=4)
+    ax.text(x[0], 1.06, "perfect generalisation", color=INK, fontsize=8.5, va="bottom")
+    ax.set_ylim(0, 2)
+    ax.set_ylabel("held-out ÷ fitted", color=MUT, fontsize=9.5)
+    ax.set_title(f"(b) ratio of the two — mean {np.nanmean(ratio):.3f}\n"
+                 "memorisation would sit well below 1", fontsize=10.5, color=INK, loc="left")
+
+    for ax in axes:
+        _boundaries(ax)
+        ax.set_xlabel("environment steps", color=MUT, fontsize=9.5)
+        _style(ax)
+    _save(fig, "consolidation_insitu")
+
+
 def fig_consolidation_prepost():
     """The July-30 three-panel diagnostic, regenerated from the POST-FIX sweep.
 
@@ -476,5 +530,6 @@ if __name__ == "__main__":
                     "Diagnostic ladder — each suspect removed in turn", figsize=(9.6, 4.6))
     fig_consolidation_internals()
     fig_consolidation_prepost()
+    fig_consolidation_insitu()
     fig_consolidation_loss_curves()
     print("done")
