@@ -39,9 +39,13 @@ is how the stale ones survived, so there is now one.
 | `consolidation_insitu` | `jobG_results/pt_holdout`, 5 seeds — `absorbed_frac` on fitted vs held-out states |
 | `consolidation_loss_curves` | `jobI_results/pt_zeroperm`, 3 seeds × 25 cycles × 1920 gradient steps |
 
-## Archived, not regenerable here
+## Kept in `plots/figures_before_fixes/`, not regenerable here
 
-Moved to `plots/figures_prefix_archive/` (gitignored, on disk only). Each needs data that does not
+That folder holds the pre-fix figure set — the figures of the study as it stood before the audit,
+which is what `FINDINGS.md` reads. It is tracked, because `FINDINGS.md` links to it and a document
+whose figures have silently become someone else's figures is worse than one with dead links.
+
+The ones below have no post-fix counterpart in this folder yet. Each needs data that does not
 exist locally:
 
 | figure | what it needs |
