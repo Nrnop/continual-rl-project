@@ -13,7 +13,7 @@
 > full experiment was re-run: **4 arms × 10 seeds × 3.07 M steps** (§8.3).
 >
 > **The central conclusion survives, but two claims in this banner did not.** With a faithful
-> implementation PT still does not beat vanilla (p = 0.002). Retracted since:
+> implementation PT still does not beat vanilla (p = 0.001). Retracted since:
 > **"EWC still wins"** — under rank statistics at n=10, `vanilla` vs `ewc` is p = 0.096, not
 > significant; and the **Theorem 7 retention result** — `mse_perm < mse_full` is also satisfied by
 > a permanent frozen at exactly zero, so it was measuring inertia, not retention.
