@@ -24,11 +24,10 @@ the pre-fix originals are archived out of the repo; see plots/figures/PROVENANCE
                         reading that the transfer is memorising the ConsolidationBuffer.
     consolidation_loss_curves  one panel per consolidation cycle, x = gradient step within that
                         cycle's regression (Job I).
+    offline_curves      zero-momentum evaluation from standstill (Job J) — the only return figure
+                        here without the carried-momentum confound at a direction reversal.
 
-NOT reproducible from workspace/ — these need data that does not exist yet (see PROVENANCE.md):
-    offline_curves      needs *_eval_returns.pkl; every re-run used --no-eval, because the
-                        offline eval was corrupting the training RNG stream (defect #14).
-                        _isolated_rng() has since fixed that, so a future run can restore it.
+NOT reproducible from workspace/ (see PROVENANCE.md):
     drift_comparison    the drift regimes were not re-run under the corrected code.
 
 Run from the PARENT of src_continuous_control/:
@@ -413,6 +412,45 @@ def fig_consolidation_loss_curves(d="jobI_results", sub="pt_zeroperm", seed=0, s
     _save(fig, "consolidation_loss_curves")
 
 
+def fig_offline_curves(d="jobJ_results"):
+    """Zero-momentum offline evaluation — return from a STANDSTILL, sampled through training.
+
+    Every other return figure here is read off the training rollout, where the cheetah carries its
+    momentum across a task boundary: the reward sign flips while the body is already moving at
+    speed, so part of the post-switch drop is the physics of reversing a moving body rather than
+    the policy being wrong. This probe restarts the episode from rest, so it isolates policy
+    quality from that confound. It is the measurement the supervisors' framing asks for.
+
+    Job J. These runs reproduce final2_results BITWISE on all 20 seeds, so these curves belong to
+    the same training as every other figure in this folder — the evaluation is genuinely read-only
+    (defect #14, fixed by _isolated_rng()).
+    """
+    fig, ax = plt.subplots(figsize=(8.6, 4.2))
+    drawn = 0
+    for i, (lab, _, sub) in enumerate(MAIN):
+        cur = load_aux(d, sub, "eval_returns")
+        if not cur:
+            continue
+        x, m, ci = mean_ci(cur)
+        ax.plot(x, m, color=PAL[i], lw=2, label=lab, zorder=3, marker="o", ms=3)
+        ax.fill_between(x, m - ci, m + ci, color=PAL[i], alpha=0.16, lw=0, zorder=2)
+        drawn += 1
+    if not drawn:
+        print(f"  SKIP offline_curves — no *_eval_returns.pkl under {d}")
+        plt.close(fig)
+        return
+    _boundaries(ax)
+    ax.axhline(0, color=MUT, lw=1)
+    ax.set_xlabel("environment step", color=MUT, fontsize=10)
+    ax.set_ylabel("offline return from standstill  (mean ± 95% CI, n=5)", color=MUT, fontsize=10)
+    ax.set_title("Zero-momentum offline evaluation — the momentum confound removed",
+                 fontsize=11.5, color=INK, loc="left")
+    ax.legend(frameon=False, fontsize=9, labelcolor=MUT, ncol=4,
+              loc="upper center", bbox_to_anchor=(0.5, -0.17))
+    _style(ax)
+    _save(fig, "offline_curves")
+
+
 def fig_consolidation_insitu(d="jobG_results", sub="pt_holdout"):
     """Does the consolidation transfer GENERALISE, or is it memorising the buffer?
 
@@ -534,5 +572,6 @@ if __name__ == "__main__":
     fig_consolidation_internals()
     fig_consolidation_prepost()
     fig_consolidation_insitu()
+    fig_offline_curves()
     fig_consolidation_loss_curves()
     print("done")

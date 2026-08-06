@@ -348,11 +348,18 @@ permanent has learned a function, not a lookup table over its buffer.*
 *Job I. One panel per consolidation cycle, x = gradient step within that cycle's regression. All
 25 descend; the weakest is ×1.08. The regression is not silently failing.*
 
+![Zero-momentum offline evaluation](plots/figures/offline_curves.png)
+
+*Job J — see §6e. Every other return figure is read off the training rollout, where the cheetah
+carries its momentum through the boundary: the reward sign flips while the body is already moving,
+so part of the post-switch drop is the physics of reversing a moving body, not the policy. This
+probe restarts from rest and removes that confound. It was the strongest remaining alternative
+explanation for PT's boundary behaviour, and it does not survive contact with the measurement.*
+
 **Still not reproducible from `workspace/`:**
 
 | figure | why |
 |---|---|
-| `offline_curves` | needs `*_eval_returns.pkl`; every re-run used `--no-eval` because the offline eval was corrupting the training RNG (defect #14). `_isolated_rng()` has since fixed that, and Job J is the re-run that restores it. |
 | `drift_comparison` | the three drift regimes were not re-run under the corrected code; `FINDINGS.md` §8 is superseded |
 
 ---
@@ -479,3 +486,48 @@ step**; PPO's arithmetic (`epochs / minibatch = 10/64`) gives ours **0.156**. Th
 shortfall in how much the transient can rebuild between consolidations, and it is structural to
 on-policy learning, not a defect. In a value-based agent the value function *is* the policy; in an
 actor-critic it reaches the policy only through the advantage.
+
+---
+
+## 6e. Job J — the offline evaluation restored, and defect #14 confirmed dead
+
+The zero-momentum evaluation had been disabled on every re-run since defect #14: `_run_offline_eval`
+sampled through `actor.act()`, which draws on the **global** torch generator, so a run with
+evaluation enabled consumed different randomness and diverged from the same seed without it.
+`_isolated_rng()` fixes that, and `tests/test_determinism.py` proves the helper restores all three
+streams — but a unit test cannot prove `train.py` wraps every call site.
+
+Job J re-ran the four main arms at 5 seeds with evaluation **on**, everything else identical, and
+the training was compared against the archived `final2_results`:
+
+```
+20 of 20 runs identical, max |diff| = 0, over the full 3.07M steps
+```
+
+Not a prefix and not approximately — bitwise, across every arm and seed. The evaluation is
+read-only, so these curves belong to the same training as every other figure in §6c, and the box
+still reproduces the archived sweep exactly.
+
+**What the confound-free measurement says.** Removing the momentum confound was the strongest
+remaining alternative explanation for PT's boundary behaviour: at a direction reversal the reward
+sign flips while the cheetah is already moving at speed, so some of the observed drop is the cost
+of reversing a moving body rather than a worse policy. From standstill, per-seed medians (n=5):
+
+| | whole | ph1 | ph2 | ph3 | ph4 | ph5 |
+|---|---|---|---|---|---|---|
+| `vanilla` | 1506.1 | 922.4 | 2948.2 | 380.8 | 1881.5 | 688.8 |
+| `ewc` | 1577.8 | 922.4 | 2021.3 | 690.4 | 2972.5 | 1735.5 |
+| `pt` | 530.5 | 733.8 | 293.2 | 919.7 | 378.8 | 223.8 |
+| `pt_inert` | 521.9 | 756.5 | 371.0 | 131.3 | 120.4 | 448.1 |
+
+| comparison | Mann-Whitney |
+|---|---|
+| `vanilla` vs `pt` | **p = 0.012** |
+| `vanilla` vs `pt_inert` | **p = 0.012** |
+| `pt` vs `pt_inert` | **p = 0.676** (3 of 5 seeds favour `pt`) |
+| `vanilla` vs `ewc` | p = 0.531 (n.s., consistent with §1's retraction) |
+| phase 1, `pt` vs `pt_inert` | p = 0.531 (parity, as everywhere else) |
+
+The confound is real but it is not the explanation. With it removed, the picture is the one every
+other measurement gives: PT below vanilla, and a working permanent indistinguishable from a dead
+one. This closes the last measurement that could have overturned the null by itself.

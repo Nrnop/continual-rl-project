@@ -38,6 +38,7 @@ is how the stale ones survived, so there is now one.
 | `consolidation_prepost` | `final2_results/pt` — the Jul-30 three-panel diagnostic, redrawn post-fix |
 | `consolidation_insitu` | `jobG_results/pt_holdout`, 5 seeds — `absorbed_frac` on fitted vs held-out states |
 | `consolidation_loss_curves` | `jobI_results/pt_zeroperm`, 3 seeds × 25 cycles × 1920 gradient steps |
+| `offline_curves` | `jobJ_results`, 4 arms × 5 seeds — zero-momentum evaluation from standstill |
 
 ## Kept in `plots/figures_before_fixes/`, not regenerable here
 
@@ -50,7 +51,6 @@ exist locally:
 
 | figure | what it needs |
 |---|---|
-| `offline_curves` | `*_eval_returns.pkl` — a re-run **without** `--no-eval`. Safe again now that `_isolated_rng()` fixes defect #14. |
 | `drift_comparison` | the three drift regimes (slow / two-timescale / fast), never re-run post-fix. |
 | `r7_grid` | **nothing — retracted.** It plotted the Theorem 7 retention result, which a permanent frozen at exactly zero also satisfies. It was measuring inertia. Do not regenerate. |
 | `consolidation_mechanism` | regenerable locally via `plots/make_consolidation_figure.py`, but its panel (c) argues from `decay_mode="params"`, which is no longer what the agent does. Needs its claims rewritten before it is redrawn. |
@@ -61,3 +61,8 @@ unrecoverable, because `jobG_results/` and `jobI_results/` had not yet been copi
 box. They have been, so both are now generated from source like everything else. The in-situ
 figure reports a held-out ÷ fitted absorbed-fraction ratio of **1.001**, which is the measurement
 that rules out the transfer being memorisation of the ConsolidationBuffer.
+
+`offline_curves` was the last one blocked, and Job J unblocked it. Its runs reproduce
+`final2_results` **bitwise on all 20 of them, over the full 3.07 M steps** — so the evaluation is
+genuinely read-only and these curves belong to the same training as every other figure here. That
+is also the end-to-end confirmation that defect #14 is dead; the unit test only proved the helper.
