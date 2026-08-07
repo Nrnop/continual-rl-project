@@ -511,6 +511,7 @@ class PPOPT(PPOBase):
         Back-compat: if `on_switch` is unset, fall back to `consolidate_on_switch`
         (True -> "consolidate", False -> "decay").
         """
+        super().on_task_switch(step)          # split actor, when enabled (pt_both)
         mode = self.cfg.get("on_switch")
         if mode is None:
             mode = "consolidate" if self.cfg.get("consolidate_on_switch", True) else "decay"

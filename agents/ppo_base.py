@@ -15,8 +15,8 @@ from abc import ABC, abstractmethod
 import numpy as np
 import torch
 
-from ..models.actor import GaussianActor
-from ..utils.buffers import RolloutBuffer
+from ..models.actor import GaussianActor, SplitActor
+from ..utils.buffers import RolloutBuffer, StateBuffer
 
 
 class PPOBase(ABC):
@@ -30,11 +30,29 @@ class PPOBase(ABC):
 
         # --- actor (shared by both agents) ---
         hidden = list(cfg.get("hidden_sizes", [256, 256]))
-        self.actor = GaussianActor(obs_dim, act_dim, hidden_sizes=hidden).to(device)
+        # `split_actor` puts the permanent/transient decomposition on the POLICY instead of (or
+        # as well as) the critic. Default False, in which case every line below is exactly what
+        # it was before this flag existed and no run is affected — asserted in
+        # tests/test_split_actor.py::test_split_actor_off_is_bit_identical.
+        self.split_actor = bool(cfg.get("split_actor", False))
+        if self.split_actor:
+            # Half-width by default so the two heads together match a single actor's parameter
+            # count — the same convention `critic_hidden_sizes` applies on the critic side
+            # (PT-0.5x, §6.1). Without it a "better" split actor might just be a bigger one.
+            actor_hidden = list(cfg.get("actor_hidden_sizes", hidden))
+            self.actor = SplitActor(obs_dim, act_dim, hidden_sizes=actor_hidden,
+                                    trans_zero_init=bool(cfg.get("actor_trans_zero_init", True))
+                                    ).to(device)
+        else:
+            self.actor = GaussianActor(obs_dim, act_dim, hidden_sizes=hidden).to(device)
         # CleanRL sets Adam eps=1e-5 for MuJoCo PPO; default keeps torch's 1e-8.
+        # With a split actor this optimizer holds the TRANSIENT only: mu_perm is detached in the
+        # training forward, so it takes no PPO gradient and moves during consolidation alone.
         self.actor_optim = torch.optim.Adam(
             self.actor.parameters(), lr=cfg["lr_actor"], eps=cfg.get("adam_eps", 1e-8)
         )
+        # NOTE: actor consolidation is set up at the END of __init__ — it needs num_envs and
+        # n_steps, which the rollout-buffer section below establishes.
 
         # --- rollout buffer (vectorized over num_envs) ---
         self.num_envs = int(cfg.get("num_envs", 1))
@@ -50,6 +68,9 @@ class PPOBase(ABC):
         self.max_grad_norm = cfg["max_grad_norm"]
         self.target_kl = cfg.get("target_kl", None)
         self.normalize_advantage = cfg.get("normalize_advantage", True)
+
+        if self.split_actor:
+            self._init_actor_consolidation(cfg)
 
     def _clip_grads(self):
         """Clip the actor and the critic SEPARATELY.
@@ -112,7 +133,154 @@ class PPOBase(ABC):
         """Called after each complete PPO update (all epochs). Used by PT for consolidation."""
 
     def on_task_switch(self, step):
-        """Called when the training loop detects a task boundary. Override in PT."""
+        """Called when the training loop detects a task boundary. Override in PT.
+
+        Subclasses that override this MUST call super() (PPOPT does), or a split actor will
+        never consolidate at a boundary — which is the one moment the mechanism is supposed to
+        matter most.
+        """
+        if self.split_actor:
+            # Consolidate first, then decay: lock the finished task's behaviour into mu_perm
+            # before dropping the transient, mirroring `on_switch: consolidate` on the critic.
+            self._consolidate_actor()
+            self._actor_updates_since_consolidation = 0
+
+    # ------------------------------------------------------------------
+    # Split actor: consolidation, decay, and the probe that decides the question
+    # ------------------------------------------------------------------
+    def _init_actor_consolidation(self, cfg):
+        """Slow optimizer + rolling state buffer for mu_perm. Mirrors PPOPT.__init__."""
+        lr_perm = cfg.get("lr_actor_perm", cfg.get("lr_perm", 2e-4))
+        if str(cfg.get("actor_perm_optimizer", "sgd")).lower() == "sgd":
+            self.actor_perm_optim = torch.optim.SGD(self.actor.perm_mean.parameters(), lr=lr_perm)
+        else:
+            self.actor_perm_optim = torch.optim.Adam(
+                self.actor.perm_mean.parameters(), lr=lr_perm, eps=cfg.get("adam_eps", 1e-8))
+        for g in self.actor_perm_optim.param_groups:
+            g["_base_lr_perm"] = g["lr"]
+        # Same cadence and decay as the critic unless overridden, so `pt_both` runs one clock.
+        self.actor_k = int(cfg.get("actor_k", cfg.get("k", 60)))
+        self.actor_decay = float(cfg.get("actor_decay", cfg.get("decay", 0.95)))
+        self.actor_rm_power = float(cfg.get("actor_alpha_p_rm_power",
+                                            cfg.get("alpha_p_rm_power", 0.0)))
+        self.actor_consolidation_epochs = int(cfg.get("actor_consolidation_epochs", 1))
+        self.actor_state_buffer = StateBuffer(
+            int(cfg.get("actor_consolidation_buffer_size",
+                        self.actor_k * cfg["n_steps"] * self.num_envs)))
+        self._actor_updates_since_consolidation = 0
+        self._n_actor_consolidations = 0
+        # Diagnostics, refreshed each consolidation (None until the first).
+        self.last_actor_absorbed_frac = None
+        self.last_actor_perm_l2 = None
+        self.last_actor_trans_l2_before = None
+        self.last_actor_trans_l2_after = None
+        # THE cancellation number. On the critic, corr(A_perm, A_trans) came out at ~-1.0 and
+        # that is what made the decomposition invisible. If mu_perm and mu_trans cancel the same
+        # way, the split actor fails for the same reason — and we want to know on run one, not
+        # after two sweeps. See TRANSMISSION_RESULTS.md §4.
+        self.last_actor_perm_trans_corr = None
+
+    def _actor_post_update(self, update_idx):
+        """Bank this rollout's states; consolidate mu_perm every actor_k updates."""
+        if not self.split_actor:
+            return
+        self.actor_state_buffer.add_batch(self.buffer.obs.reshape(-1, self.obs_dim))
+        self._actor_updates_since_consolidation += 1
+        if self._actor_updates_since_consolidation >= self.actor_k:
+            self._consolidate_actor()
+            self._actor_updates_since_consolidation = 0
+
+    def _consolidate_actor(self, decay=True):
+        """mu_perm regresses onto mu_perm + mu_trans, then mu_trans is decayed.
+
+        The policy transposition of Eq. (4) / Alg. 4 line 15: the permanent absorbs the FULL
+        current function (keep = 1), not a shrunken copy of it. As on the critic, the transfer is
+        deliberately not composition-preserving — right after it,
+        mu = mu_perm_new + decay*mu_trans, an overshoot of decay*mu_trans that PPO corrects over
+        the following updates.
+
+        `decay=False` is used by the probe below, which needs to consolidate and measure the
+        decay's effect as two separate, individually observable events.
+        """
+        if len(self.actor_state_buffer) == 0:
+            return
+        if self.actor_rm_power > 0.0:
+            # Theorem 5's Robbins-Monro premise, same treatment as alpha_P on the critic.
+            self._n_actor_consolidations += 1
+            scale = 1.0 / ((1.0 + self._n_actor_consolidations) ** self.actor_rm_power)
+            for g in self.actor_perm_optim.param_groups:
+                g["lr"] = g["_base_lr_perm"] * scale
+
+        probe = torch.as_tensor(
+            self.actor_state_buffer.as_array()[:4096], dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            p_before, t_before = self.actor.means(probe)
+
+        for _ in range(self.actor_consolidation_epochs):
+            for s_mb in self.actor_state_buffer.iter_minibatches(self.minibatch_size, self.device):
+                mu_p, mu_t = self.actor.means(s_mb)
+                target = (mu_p + mu_t).detach()
+                loss = 0.5 * ((mu_p - target) ** 2).mean()
+                self.actor_perm_optim.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.actor.perm_mean.parameters(),
+                                               self.max_grad_norm)
+                self.actor_perm_optim.step()
+
+        with torch.no_grad():
+            p_after, _ = self.actor.means(probe)
+            moved, wanted = p_after - p_before, t_before
+            wn = float(wanted.pow(2).sum())
+            self.last_actor_absorbed_frac = (
+                float(moved.norm() / wanted.norm()) if wn > 1e-12 else None)
+            self.last_actor_perm_l2 = float(torch.linalg.vector_norm(p_before))
+            self.last_actor_trans_l2_before = float(torch.linalg.vector_norm(t_before))
+            # Do mu_perm and mu_trans cancel, as V_perm and V_trans do?
+            a, b = p_before.flatten(), t_before.flatten()
+            a, b = a - a.mean(), b - b.mean()
+            den = float(a.norm() * b.norm())
+            self.last_actor_perm_trans_corr = (
+                float((a * b).sum() / den) if den > 1e-12 else None)
+
+        # Defect #9 cost this project its entire history of PT runs: alpha_P was inherited from
+        # the paper's MinAtar setting, never tuned for HalfCheetah, and the permanent transferred
+        # 0.04% of the transient while returns and losses both looked healthy. `lr_actor_perm` is
+        # a brand-new hyper-parameter on a brand-new component, currently just copied from the
+        # critic's. Assume it is wrong until the number says otherwise.
+        if (self.last_actor_absorbed_frac is not None
+                and self.last_actor_absorbed_frac < 0.01
+                and not getattr(self, "_warned_inert_actor_perm", False)):
+            self._warned_inert_actor_perm = True
+            lr = self.actor_perm_optim.param_groups[0]["lr"]
+            print("\n" + "!" * 78 +
+                  f"\n[SPLIT ACTOR] INERT PERMANENT POLICY: absorbed only "
+                  f"{self.last_actor_absorbed_frac * 100:.3f}% of mu_trans.\n"
+                  f"[SPLIT ACTOR] mu_perm is not learning, so there is no slow timescale on the "
+                  "policy and this arm\n[SPLIT ACTOR] is a plain actor plus a periodic decay. It "
+                  "says nothing about the hypothesis.\n"
+                  f"[SPLIT ACTOR] current: actor_perm_optimizer="
+                  f"{self.cfg.get('actor_perm_optimizer')} lr_actor_perm={lr:g}\n"
+                  "[SPLIT ACTOR] alpha_P had to be swept TWICE on the critic before it worked "
+                  "(defect #9).\n" + "!" * 78 + "\n", flush=True)
+
+        if decay:
+            self.actor.decay_transient(self.actor_decay)
+            with torch.no_grad():
+                _, t_after = self.actor.means(probe)
+                self.last_actor_trans_l2_after = float(torch.linalg.vector_norm(t_after))
+        self.actor_state_buffer.clear()
+
+    @torch.no_grad()
+    def actor_decay_only(self):
+        """Decay mu_trans without consolidating — the probe's intervention.
+
+        Isolated so the training loop can measure return, apply ONLY this, and measure again with
+        no gradient step in between. On a split CRITIC that difference is provably zero: changing
+        V changes no action. On a split actor it is the whole mechanism, and the size of it is
+        the cleanest evidence the decomposition reaches behaviour at all.
+        """
+        if self.split_actor:
+            self.actor.decay_transient(self.actor_decay)
 
     def diagnostics(self):
         """Per-update diagnostic scalars, sampled at the TOP of `update()`.
@@ -452,6 +620,16 @@ class PPOBase(ABC):
                 break
 
         self.post_update(update_idx)
+        self._actor_post_update(update_idx)      # no-op unless split_actor
+
+        for attr, tag in (("last_actor_absorbed_frac", "actor_absorbed_frac"),
+                          ("last_actor_perm_trans_corr", "actor_perm_trans_corr"),
+                          ("last_actor_perm_l2", "actor_perm_l2"),
+                          ("last_actor_trans_l2_before", "actor_trans_l2_before"),
+                          ("last_actor_trans_l2_after", "actor_trans_l2_after")):
+            val = getattr(self, attr, None)
+            if val is not None:
+                diag[f"diag/{tag}"] = val
 
         out = {
             "actor_loss": total_actor_loss / max(n_updates, 1),

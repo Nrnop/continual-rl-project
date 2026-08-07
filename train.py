@@ -474,6 +474,23 @@ def main():
     eval_returns_curve = []
     velocity_curve = []
 
+    # Dedicated env for the split-actor boundary probe. Built independently of --no-eval,
+    # because the probe is the split-actor experiment's primary measurement and must not be
+    # disabled by the flag the reproducibility protocol mandates. Used only at task switches,
+    # only inside `_isolated_rng()`, and only when `split_actor` is on — so it consumes nothing
+    # and costs nothing on every other arm.
+    probe_env = None
+    if cfg.get("split_actor", False) and not drift_mode:
+        probe_env = make_directional_env(
+            env_id=cfg.get("env_id", "HalfCheetah-v5"),
+            direction=cfg["tasks"][0],
+            max_episode_steps=cfg.get("max_episode_steps", 1000),
+            render_mode=None,
+            normalize_obs=normalize_obs,
+            normalize_reward=False,
+            clip_obs=cfg.get("clip_obs", 10.0),
+        )
+
     eval_env = None
     if not cfg.get("no_eval", False):
         eval_env = make_drift_env(
@@ -562,6 +579,50 @@ def main():
                 task_idx += 1
                 direction = tasks[task_idx % len(tasks)]
                 env.unwrapped.call("set_task", direction)  # propagates to every sub-env
+
+                # ---- ZERO-GRADIENT-STEP PROBE (split actor only) ----
+                #
+                # Runs off `probe_env`, NOT `eval_env`. The protocol requires --no-eval on every
+                # arm (defect #14), which leaves `eval_env` as None — and this measurement is the
+                # entire point of the split-actor experiment, so it cannot be the thing that gets
+                # switched off. `probe_env` is built for this and used nowhere else, only at the
+                # four switches, and always inside `_isolated_rng()`.
+                #
+                # It also SNAPSHOTS and RESTORES mu_trans, so it is a pure measurement: the real
+                # consolidate-then-decay in `on_task_switch` below runs on an untouched actor.
+                # Without the restore the transient would be decayed twice per boundary and the
+                # probe would be silently corrupting the run it is measuring.
+                # THE measurement this whole experiment exists for. On the NEW task, with the
+                # policy exactly as the old task left it, evaluate; then decay mu_trans and
+                # evaluate again — with no gradient step in between.
+                #
+                # On a split CRITIC this difference is provably zero: decaying V_trans changes
+                # no action. That is why the value decomposition could never deliver Theorem 6's
+                # jumpstart in an actor-critic. On a split ACTOR, mu_perm + mu_trans IS the
+                # action, so decaying the transient snaps behaviour toward the task-average
+                # policy instantly — exactly how PT works in DQN.
+                #
+                # A large positive number = the mechanism reaches behaviour. ~0 = the split
+                # actor is as inert as the split critic. Negative = mu_perm is worse than the
+                # stale policy, which on this symmetric benchmark would mean it has averaged
+                # the two opposite gaits into something near standstill.
+                if probe_env is not None and getattr(agent, "split_actor", False):
+                    _set_env_task(probe_env, direction)
+                    _sync_obs_stats(env, probe_env)
+                    _trans_snapshot = copy.deepcopy(agent.actor.trans_mean.state_dict())
+                    with _isolated_rng():
+                        _pre = _run_offline_eval(agent, probe_env, n_episodes=3)
+                        agent.actor_decay_only()          # the ONLY thing that changes
+                        _post = _run_offline_eval(agent, probe_env, n_episodes=3)
+                    agent.actor.trans_mean.load_state_dict(_trans_snapshot)   # pure measurement
+                    logger.log_scalars({
+                        "probe/decay_return_before": _pre,
+                        "probe/decay_return_after": _post,
+                        "probe/decay_gain": _post - _pre,
+                    }, step=global_step)
+                    print(f"[train] zero-grad decay probe: {_pre:.1f} -> {_post:.1f} "
+                          f"(gain {_post - _pre:+.1f})")
+
                 agent.on_task_switch(global_step)
 
                 # Value-drift measurement at boundary

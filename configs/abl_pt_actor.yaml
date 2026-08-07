@@ -1,0 +1,75 @@
+# SPLIT ACTOR ONLY -- ordinary single critic.
+# Isolates the actor decomposition. If this beats vanilla and pt_both does not add to it,
+# the policy is where the mechanism belongs and the critic split is dead weight.
+#
+# SPLIT ACTOR: the permanent/transient decomposition moved onto the POLICY.
+#
+# Why: on the critic the decomposition is provably invisible to behaviour. V_trans is fit to
+# R - V_perm, so A_trans = A_reward - A_perm identically, the two come out anti-correlated at
+# ~-1.0, and they cancel before anything reaches the actor (TRANSMISSION_RESULTS.md §4). That is
+# why a working permanent and a dead one are indistinguishable, p=0.597.
+#
+# On the actor they cannot cancel that way: mu_perm + mu_trans IS the action, so decaying the
+# transient changes behaviour with ZERO gradient steps -- the same thing that makes PT work in
+# DQN. `probe/decay_gain` measures exactly that at every boundary.
+#
+# Parameter parity: actor_hidden_sizes [43,43] gives two heads totalling ~= one [64,64] actor,
+# the same convention critic_hidden_sizes uses (PT-0.5x). Without it, a "better" split actor
+# might just be a bigger one.
+split_actor: true
+actor_hidden_sizes: [43, 43]
+actor_trans_zero_init: true     # Theorem 1's V^(T)_0 = 0, transposed to the policy
+lr_actor_perm: 0.0002           # alpha_P for the actor; same value the critic's permanent uses
+actor_perm_optimizer: "sgd"     # reference uses SGD for the slow component
+actor_alpha_p_rm_power: 0.6     # Robbins-Monro, Theorem 5's premise
+# actor_k / actor_decay default to the critic's k and decay, so pt_both runs on one clock.
+
+# Everything below is vanilla_paper.yaml verbatim -- diff against it before trusting this arm.
+# Vanilla PPO baseline MATCHED to configs/pt_paper.yaml.
+#
+# pt_paper.yaml turns OFF learning-rate annealing (the reference does not anneal) and shrinks the
+# PT critic to parameter-parity. Both are changes to the shared PPO recipe, so the PT run cannot be
+# compared against the old vanilla results — this file is the baseline it must be compared against.
+# Everything here is byte-identical to pt_paper.yaml except that the critic is a single undivided
+# V(s) at the full [64,64] width.
+#
+#   python -m src_continuous_control.train --agent vanilla --config vanilla_paper --seed 0
+#   python -m src_continuous_control.train --agent ewc     --config vanilla_paper --seed 0
+#
+# Parameter budget: this critic is 5 377 params; pt_paper's two [43,43] critics total 5 420
+# (1.008x). Section 6.1 / Appendix C.3 — parameter parity is a precondition for the comparison to
+# say anything about the decomposition rather than about capacity.
+
+agent: "vanilla"        # overridden by --agent
+
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: false
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+lr_critic: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# single critic at full width (critic_hidden_sizes defaults to hidden_sizes)
+
+jumpstart_window_updates: 20
+probe_states: 256
+
+tasks: [1, -1]
+switch: 614400
+total_steps: 3072000

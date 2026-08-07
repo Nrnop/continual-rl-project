@@ -108,7 +108,50 @@ reward-to-go, unbiased), which is why `pt_advnone` and `van_advnone` behave sens
 
 ---
 
-## 6. Reproduce
+## 6. What this points to: the split actor
+
+§4 says the value decomposition is invisible to behaviour by construction. The natural response
+is to move the decomposition onto the thing that *does* determine behaviour — the policy. That is
+`split_actor: true`, built and tested but not yet run at scale.
+
+`μ(s) = μ_perm(s) + μ_trans(s)`, mirroring `SplitCritic` in every design choice so that any
+difference is the actor/critic distinction and nothing else: transient output zeroed at init,
+permanent detached during PPO so only consolidation moves it, decay applied to the output layer
+only, consolidation target `μ_perm → μ_perm + μ_trans`, Robbins-Monro `α_P`, and `log_std` left
+alone — the paper decomposes a value function, not an exploration schedule.
+`actor_hidden_sizes: [43,43]` keeps parameter parity with a single `[64,64]` actor.
+
+**Why it might work where the critic split cannot.** `μ_perm + μ_trans` *is* the action, so
+decaying the transient changes behaviour with **zero gradient steps** — the same thing that makes
+PT work in DQN (`argmax(Q_perm + Q_trans)`). `probe/decay_gain` measures exactly this at every
+boundary: evaluate, decay `μ_trans`, evaluate again, no learning in between. For a split critic
+that number is provably zero.
+
+**Two things to check before believing any return comparison.**
+
+1. `actor_absorbed_frac`. `lr_actor_perm` is a new hyper-parameter currently copied from the
+   critic's. Defect #9 — an inert permanent that went undetected for the project's entire
+   history — came from exactly this, and the critic's `α_P` needed two sweeps. Below 0.01 the
+   agent prints an `INERT PERMANENT POLICY` banner and the arm means nothing.
+2. `diag/actor_perm_trans_corr`. If it sits near −1 the actor cancels the same way the critic
+   did, and the approach is dead in actor-critic generally. Logged from the first consolidation
+   rather than discovered two sweeps later.
+
+**Expected failure mode, recorded in advance.** `μ_perm` converges toward the average of "run
+forward" and "run backward", and the average of two opposite gaits is close to standstill —
+which PT already collapses to after switch 2. A strongly negative `decay_gain` means that
+happened, and it argues for an asymmetric task set rather than against the mechanism.
+
+Arms: `abl_pt_actor` (split actor, ordinary critic) and `abl_pt_both` (split actor + split
+critic — the proposal as stated). Runner: `scripts/run_split_actor.sh`.
+
+`split_actor` defaults to **false**, and off is bit-identical to the code before it existed
+(`tests/test_split_actor.py::test_split_actor_off_is_bit_identical`). No earlier result is
+affected.
+
+---
+
+## 7. Reproduce
 
 ```bash
 cd "<parent of src_continuous_control>"

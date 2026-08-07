@@ -152,6 +152,43 @@ class RolloutBuffer:
         }
 
 
+class StateBuffer:
+    """Rolling store of visited states only — the actor's consolidation set.
+
+    ConsolidationBuffer also banks `old_V_perm` at visit time, because that is what
+    `train_P_Net` regresses toward. The actor does not need the equivalent: `mu_perm` is detached
+    during PPO updates, so it is frozen between consolidations and `mu_perm` at visit time is
+    identical to `mu_perm` right now. Storing it would be storing a value we can recompute
+    exactly, and storing an act_dim vector per state rather than a scalar.
+    """
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.states = deque(maxlen=capacity)
+
+    def add_batch(self, states_np):
+        for s in states_np:
+            self.states.append(s.astype(np.float32))
+
+    def __len__(self):
+        return len(self.states)
+
+    def clear(self):
+        self.states.clear()
+
+    def as_array(self):
+        return np.asarray(self.states, dtype=np.float32)
+
+    def iter_minibatches(self, batch_size, device, shuffle=True):
+        n = len(self)
+        states = self.as_array()
+        idx = np.arange(n)
+        if shuffle:
+            np.random.shuffle(idx)
+        for start in range(0, n, batch_size):
+            yield torch.as_tensor(states[idx[start:start + batch_size]], device=device)
+
+
 class ConsolidationBuffer:
     """Rolling store of (state, old_V_perm) used for the slow permanent update.
 
