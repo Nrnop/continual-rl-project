@@ -5,3 +5,6 @@ agent: "vanilla"
 
 # Single undivided critic V(s).
 lr_critic: 0.0003
+
+# Match the frozen-normalizer comparison protocol used by PT-PPO.
+normalizer_freeze_after: 100000

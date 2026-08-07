@@ -69,10 +69,13 @@ class SplitCritic(nn.Module):
     """
 
     def __init__(self, obs_dim, hidden_sizes=(256, 256), perm_zero_init=False,
-                 trans_zero_init=True, perm_init_std=None):
+                 trans_zero_init=True, perm_init_std=None, trans_hidden_sizes=None):
         super().__init__()
+        # trans_hidden_sizes=None reuses hidden_sizes (backward compatible with every existing caller).
+        if trans_hidden_sizes is None:
+            trans_hidden_sizes = hidden_sizes
         self.perm = mlp(obs_dim, list(hidden_sizes), 1, out_gain=1.0)
-        self.trans = mlp(obs_dim, list(hidden_sizes), 1, out_gain=1.0)
+        self.trans = mlp(obs_dim, list(trans_hidden_sizes), 1, out_gain=1.0)
 
         # trans_zero_init: V^(T)_0 = 0, Theorem 1's condition.
         #

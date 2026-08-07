@@ -1,0 +1,64 @@
+# CPU-friendly discrete-task-switch demo: DirectionalPointMass, position-tracking with a
+# weak actuator (needs real braking/planning, not bang-bang) so forgetting has a genuine
+# relearning cost. Task flips repeatedly so each target is revisited multiple times, giving
+# the retention/jumpstart metrics statistical power. Run with --agent vanilla or pt_full.
+#
+#   python -m src_continuous_control.train --agent vanilla --config mock_continual --seed 0
+#   python -m src_continuous_control.train --agent pt_full  --config mock_continual --seed 0
+
+env_mode: "point_tasks"
+point_target_magnitude: 2.0
+point_dt: 0.1
+point_drag: 0.35
+point_action_scale: 1.0
+point_position_limit: 3.0
+point_velocity_limit: 3.0
+point_ctrl_cost_weight: 0.01
+max_episode_steps: 150
+
+tasks: [1.0, -1.0]
+total_steps: 360000
+switch: 40000          # 8 switches inside 360000 steps -> 9 phases of 40000 steps each;
+                       # ~39 updates/phase is enough for real learning progress (verified
+                       # empirically), so forgetting/recovery is measuring an actually-learned
+                       # skill, not noise on an under-trained policy. Each task revisited ~4-5x.
+
+# Small networks/batches keep the demo fast on CPU.
+step_by_step: false
+num_envs: 4
+async_envs: false
+n_steps: 256
+epochs: 4
+minibatch_size: 64
+hidden_sizes: [64, 64]
+critic_hidden_sizes: [64, 64]
+trans_hidden_sizes: [32, 32]
+actor_trans_hidden_sizes: [32, 32]
+critic_trans_hidden_sizes: [32, 32]
+
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 60000
+clip_obs: 10.0
+clip_reward: 10.0
+lr_actor: 0.0003
+lr_critic: 0.0003
+ent_coef: 0.0
+target_kl: null
+anneal_lr: false
+
+eval_interval_updates: 4
+no_eval: false
+
+# PT-full defaults for the method arm; ignored by vanilla.
+rho: 0.5
+k: 8
+consolidation_epochs: 2
+consolidation_buffer_size: 2048
+lr_trans: 0.0003
+lr_perm: 0.001
+lr_perm_actor: 0.001
+rm_power: 0.6
+rm_power_actor: 0.6
+kl_prior_coef: 0.01
+

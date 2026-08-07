@@ -18,3 +18,6 @@ decay: 0.5                      # theta_T <- decay * theta_T after consolidation
 # Consolidation buffer (on-policy analog of exp_replay_PM).
 consolidation_buffer_size: 20480
 consolidation_epochs: 1         # passes over the consolidation buffer per permanent update
+
+# Match the frozen-normalizer comparison protocol used by vanilla/EWC/PT-full.
+normalizer_freeze_after: 100000

@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from .ppo_base import PPOBase
-from ..models.critic import VanillaCritic
+from models.critic import VanillaCritic
 
 
 class PPOVanilla(PPOBase):

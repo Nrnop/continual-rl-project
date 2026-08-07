@@ -1,0 +1,42 @@
+# Full actor+critic PT-PPO.
+# The permanent and transient mean/value networks are independent; the shared log_std is
+# online-adapted and exempt from the transient decay/reset cycle.
+
+agent: "pt_full"
+
+# PPO actor and critic widths.
+hidden_sizes: [256, 256]
+trans_hidden_sizes: [64, 64]
+actor_trans_hidden_sizes: [64, 64]
+critic_trans_hidden_sizes: [64, 64]
+
+# Fast online parameters.
+lr_actor: 0.0003
+lr_trans: 0.0003
+
+# Slow consolidation parameters. Sweep both permanent rates per environment.
+lr_perm: 0.0003
+lr_perm_actor: 0.0003
+perm_optimizer: "adam"
+rm_power: 0.6
+rm_power_actor: 0.6
+
+# Preserving transfer split and consolidation cadence.
+rho: 0.5
+k: 10
+consolidation_epochs: 3
+consolidation_buffer_size: 20480
+
+# KL-to-permanent policy regularization; replaces entropy for pt_full.
+kl_prior_coef: 0.01
+ent_coef: 0.0
+
+# Apply identical frozen normalizer statistics to every comparison arm after warmup.
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 100000
+clip_obs: 10.0
+clip_reward: 10.0
+
+# Sweep candidates: kl_prior_coef={0.001,0.01,0.1}, rho={0.25,0.5,1.0},
+# k={10,30,60}, lr_perm/lr_perm_actor domain-specific.

@@ -1,0 +1,57 @@
+# CPU-friendly end-to-end benchmark: a 1D point mass with smoothly drifting drag.
+# Run with either --agent vanilla or --agent pt_full.
+
+env_mode: "point_drift"
+point_target: 0.0
+point_dt: 0.1
+point_base_drag: 0.35
+point_action_scale: 1.0
+point_position_limit: 2.0
+point_velocity_limit: 2.0
+max_episode_steps: 200
+
+drift_amplitude: 0.75
+drift_period: 4000
+drift_schedule: "sin"
+drift_phase: 0.0
+
+# Small networks and batches keep the demo fast on CPU.
+step_by_step: false
+num_envs: 1
+async_envs: false
+n_steps: 128
+epochs: 4
+minibatch_size: 32
+hidden_sizes: [32, 32]
+critic_hidden_sizes: [32, 32]
+trans_hidden_sizes: [16, 16]
+actor_trans_hidden_sizes: [16, 16]
+critic_trans_hidden_sizes: [16, 16]
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 4000
+clip_obs: 10.0
+clip_reward: 10.0
+lr_actor: 0.0003
+lr_critic: 0.0003
+ent_coef: 0.0
+target_kl: null
+anneal_lr: false
+
+# Demo horizon; override these for longer curves.
+total_steps: 20000
+switch: 100000
+eval_interval_updates: 5
+no_eval: false
+
+# PT-full defaults for the method arm; ignored by vanilla.
+rho: 0.5
+k: 4
+consolidation_epochs: 2
+consolidation_buffer_size: 2048
+lr_trans: 0.0003
+lr_perm: 0.001
+lr_perm_actor: 0.001
+rm_power: 0.6
+rm_power_actor: 0.6
+kl_prior_coef: 0.01

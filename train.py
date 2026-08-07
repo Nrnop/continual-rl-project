@@ -31,6 +31,8 @@ from .envs.directional_half_cheetah import (
     make_vector_env,
 )
 from .envs.drift_half_cheetah import make_drift_env, make_drift_vector_env
+from .envs.simple_drift import make_point_drift_env, make_point_drift_vector_env
+from .envs.mock_continual import make_directional_point_env, make_directional_point_vector_env
 from .utils.logger import Logger
 from .utils.metrics import (ValueDriftProbe, BoundaryReturnTracker,
                             JumpstartTracker, RetentionProbe)
@@ -75,8 +77,8 @@ def build_config(cli_args):
         if val is not None:
             cfg[key] = val
 
-    # Ensure agent is set
-    cfg.setdefault("agent", cli_args.agent)
+    # The explicit CLI agent wins over an overlay's descriptive/default agent field.
+    cfg["agent"] = cli_args.agent
     return cfg
 
 
@@ -95,6 +97,8 @@ def parse_args():
     p.add_argument("--max-episode-steps", type=int, default=None)
     p.add_argument("--num-envs", type=int, default=None,
                    help="parallel envs (batch = n_steps * num_envs)")
+    p.add_argument("--normalizer-freeze-after", type=int, default=None,
+                   help="freeze observation/reward normalizer statistics after this many env steps")
     p.add_argument("--async-envs", type=lambda v: str(v).lower() in ("true","1","yes","y"),
                    nargs="?", const=True, default=None,
                    help="use AsyncVectorEnv (subprocesses) when num_envs>1")
@@ -255,6 +259,52 @@ def _find_normalize_obs(env):
     return None
 
 
+def _normalizer_wrappers(env):
+    """Return observation and reward normalizers in a wrapper stack."""
+    obs_types = (gym.wrappers.NormalizeObservation, gym.wrappers.vector.NormalizeObservation)
+    reward_types = (gym.wrappers.NormalizeReward, gym.wrappers.vector.NormalizeReward)
+    found = []
+    current = env
+    visited = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if isinstance(current, obs_types):
+            found.append(("observation", current))
+        elif isinstance(current, reward_types):
+            found.append(("reward", current))
+        current = getattr(current, "env", None)
+    return found
+
+
+def _normalizer_snapshot(kind, wrapper):
+    stats = getattr(wrapper, "obs_rms", None)
+    if stats is None:
+        stats = getattr(wrapper, "return_rms", None)
+    if stats is None:
+        return {f"{kind}_count": 0.0}
+    mean = np.asarray(getattr(stats, "mean", 0.0), dtype=np.float64)
+    var = np.asarray(getattr(stats, "var", 0.0), dtype=np.float64)
+    return {
+        f"{kind}_mean_l2": float(np.linalg.norm(mean)),
+        f"{kind}_var_l2": float(np.linalg.norm(var)),
+        f"{kind}_count": float(getattr(stats, "count", 0.0)),
+    }
+
+
+def _freeze_normalizers(env):
+    """Freeze running statistics and return a numeric snapshot for logging."""
+    snapshot = {}
+    for kind, wrapper in _normalizer_wrappers(env):
+        wrapper.update_running_mean = False
+        snapshot.update(_normalizer_snapshot(kind, wrapper))
+    return snapshot
+
+
+def _normalizer_freeze_due(global_step, threshold):
+    """Return whether a nonnegative freeze threshold has been reached."""
+    return threshold is not None and int(threshold) >= 0 and global_step >= int(threshold)
+
+
 def _sync_obs_stats(train_env, eval_env):
     """Copy the training obs running-mean/std onto the eval env and freeze it.
 
@@ -353,12 +403,16 @@ def main():
 
     # env_mode selects WHERE the non-stationarity lives:
     #   "directional" (default) -- the REWARD flips sign at discrete task boundaries
-    #   "drift"                 -- the REWARD is fixed and the PHYSICS drift smoothly, with no
-    #                              boundaries at all (the setting the proposal specifies)
+    #   "drift"                 -- HalfCheetah physics drift smoothly, with no boundaries
+    #   "point_drift"           -- tiny CPU-friendly point-mass physics drift benchmark
+    #   "point_tasks"           -- tiny CPU-friendly point-mass with discrete task switches
     env_mode = str(cfg.get("env_mode", "directional")).lower()
-    drift_mode = env_mode == "drift"
-    if env_mode not in ("directional", "drift"):
-        raise ValueError(f"unknown env_mode {env_mode!r}; valid: 'directional', 'drift'")
+    drift_mode = env_mode in ("drift", "point_drift")
+    if env_mode not in ("directional", "drift", "point_drift", "point_tasks"):
+        raise ValueError(
+            f"unknown env_mode {env_mode!r}; valid: 'directional', 'drift', 'point_drift', "
+            f"'point_tasks'"
+        )
 
     drift_kwargs = dict(
         drift_targets=tuple(cfg.get("drift_targets", ["damping", "friction"])),
@@ -370,7 +424,53 @@ def main():
         period2=cfg.get("drift_period2", 30720),
         phase2=cfg.get("drift_phase2", 0.0),
     )
-    if drift_mode:
+    point_drift_kwargs = dict(
+        target=cfg.get("point_target", 0.0),
+        dt=cfg.get("point_dt", 0.1),
+        base_drag=cfg.get("point_base_drag", 0.35),
+        drift_amplitude=cfg.get("drift_amplitude", 0.75),
+        drift_period=cfg.get("drift_period", 4000),
+        drift_schedule=cfg.get("drift_schedule", "sin"),
+        drift_phase=cfg.get("drift_phase", 0.0),
+        action_scale=cfg.get("point_action_scale", 1.0),
+        position_limit=cfg.get("point_position_limit", 3.0),
+        velocity_limit=cfg.get("point_velocity_limit", 3.0),
+    )
+    point_tasks_kwargs = dict(
+        target_magnitude=cfg.get("point_target_magnitude", 2.0),
+        dt=cfg.get("point_dt", 0.1),
+        drag=cfg.get("point_drag", 0.35),
+        action_scale=cfg.get("point_action_scale", 1.0),
+        position_limit=cfg.get("point_position_limit", 3.0),
+        velocity_limit=cfg.get("point_velocity_limit", 3.0),
+        ctrl_cost_weight=cfg.get("point_ctrl_cost_weight", 0.01),
+    )
+    if env_mode == "point_drift":
+        env = make_point_drift_vector_env(
+            num_envs=num_envs,
+            max_episode_steps=cfg.get("max_episode_steps", 200),
+            gamma=cfg["gamma"],
+            normalize_obs=normalize_obs,
+            normalize_reward=normalize_reward,
+            clip_obs=cfg.get("clip_obs", 10.0),
+            clip_reward=cfg.get("clip_reward", 10.0),
+            asynchronous=async_envs,
+            **point_drift_kwargs,
+        )
+    elif env_mode == "point_tasks":
+        env = make_directional_point_vector_env(
+            direction=cfg["tasks"][0],
+            num_envs=num_envs,
+            max_episode_steps=cfg.get("max_episode_steps", 100),
+            gamma=cfg["gamma"],
+            normalize_obs=normalize_obs,
+            normalize_reward=normalize_reward,
+            clip_obs=cfg.get("clip_obs", 10.0),
+            clip_reward=cfg.get("clip_reward", 10.0),
+            asynchronous=async_envs,
+            **point_tasks_kwargs,
+        )
+    elif drift_mode:
         env = make_drift_vector_env(
             env_id=cfg.get("env_id", "HalfCheetah-v5"),
             num_envs=num_envs,
@@ -473,10 +573,30 @@ def main():
     all_episode_returns = []
     eval_returns_curve = []
     velocity_curve = []
+    actor_consol_loss_traces = []
+    normalizers_frozen = False
 
     eval_env = None
     if not cfg.get("no_eval", False):
-        eval_env = make_drift_env(
+        if env_mode == "point_drift":
+            eval_env = make_point_drift_env(
+                max_episode_steps=cfg.get("max_episode_steps", 200),
+                normalize_obs=normalize_obs,
+                normalize_reward=False,
+                clip_obs=cfg.get("clip_obs", 10.0),
+                **point_drift_kwargs,
+            )
+        elif env_mode == "point_tasks":
+            eval_env = make_directional_point_env(
+                direction=cfg["tasks"][0],
+                max_episode_steps=cfg.get("max_episode_steps", 100),
+                normalize_obs=normalize_obs,
+                normalize_reward=False,
+                clip_obs=cfg.get("clip_obs", 10.0),
+                **point_tasks_kwargs,
+            )
+        elif drift_mode:
+            eval_env = make_drift_env(
             env_id=cfg.get("env_id", "HalfCheetah-v5"),
             max_episode_steps=cfg.get("max_episode_steps", 1000),
             render_mode=render_mode,
@@ -484,7 +604,9 @@ def main():
             normalize_reward=False,
             clip_obs=cfg.get("clip_obs", 10.0),
             **drift_kwargs,
-        ) if drift_mode else make_directional_env(
+            )
+        else:
+            eval_env = make_directional_env(
             env_id=cfg.get("env_id", "HalfCheetah-v5"),
             direction=cfg["tasks"][0],
             max_episode_steps=cfg.get("max_episode_steps", 1000),
@@ -492,7 +614,7 @@ def main():
             normalize_obs=normalize_obs,      # stats synced from train env before each eval
             normalize_reward=False,           # eval reports the true (un-normalized) return
             clip_obs=cfg.get("clip_obs", 10.0),
-        )
+            )
         if cfg.get("render", False):
             video_folder_eval = os.path.join(cfg.get("runs_dir", "src_continuous_control/runs"), "videos", f"{cfg['agent']}_seed_{seed}_eval")
             eval_env = RecordVideo(
@@ -526,7 +648,12 @@ def main():
             print("[train] PT:   ^ decay_mode=params — scaling PARAMETERS, not the value "
                   "function. V_trans does NOT shrink by `decay`; a lambda sweep in this mode "
                   "sweeps an uncontrolled function of lambda, not lambda.")
-    if drift_mode:
+    if env_mode == "point_drift":
+        print(f"[train] env_mode=point_drift  base_drag={point_drift_kwargs['base_drag']}  "
+              f"amplitude={point_drift_kwargs['drift_amplitude']}  "
+              f"period={point_drift_kwargs['drift_period']}  "
+              f"schedule={point_drift_kwargs['drift_schedule']}")
+    elif drift_mode:
         print(f"[train] env_mode=drift  targets={drift_kwargs['drift_targets']}  "
               f"amplitude={drift_kwargs['amplitude']}  period={drift_kwargs['period']}  "
               f"schedule={drift_kwargs['schedule']}")
@@ -587,6 +714,27 @@ def main():
         all_episode_returns.extend(episode_returns)
         global_step += steps_per_update
 
+        freeze_after = cfg.get("normalizer_freeze_after")
+        if not normalizers_frozen and _normalizer_freeze_due(global_step, freeze_after):
+            normalizer_snapshot = _freeze_normalizers(env)
+            normalizers_frozen = True
+            print(f"[train] normalizers frozen at step {global_step} "
+                  f"(threshold={int(freeze_after)}) {normalizer_snapshot}", flush=True)
+            logger.log_scalars(
+                {f"normalizer/{name}": value for name, value in normalizer_snapshot.items()},
+                global_step,
+            )
+
+        fresh_drift = None
+        measure_drift = getattr(agent, "measure_post_consolidation_drift", None)
+        if measure_drift is not None:
+            fresh_drift = measure_drift(agent.buffer.obs.reshape(-1, obs_dim))
+            if fresh_drift is not None:
+                logger.log_scalars({
+                    "consol/delta_v": fresh_drift["delta_v"],
+                    "consol/delta_pi": fresh_drift["delta_pi"],
+                }, global_step)
+
         # Track velocity
         velocity_curve.append((global_step, float(np.mean(agent._velocities))))
 
@@ -608,6 +756,11 @@ def main():
             for c in _curves[_n_consol_seen:]:
                 consol_loss_traces.append((global_step, np.asarray(c, dtype=np.float32)))
             _n_consol_seen = len(_curves)
+        _actor_curves = getattr(agent, "actor_consolidation_loss_curves", None)
+        if _actor_curves is not None:
+            seen_actor = len(actor_consol_loss_traces)
+            for c in _actor_curves[seen_actor:]:
+                actor_consol_loss_traces.append((global_step, np.asarray(c, dtype=np.float32)))
 
         # ---- Zero-momentum offline evaluation & checkpointing ----
         eval_interval = cfg.get("eval_interval_updates")
@@ -636,6 +789,13 @@ def main():
                 "train/approx_kl": metrics["approx_kl"],
                 "train/global_step": global_step,
             }
+            for metric_name in (
+                    "kl_prior", "clip_fraction", "value_perm_l2", "value_trans_l2",
+                    "policy_perm_l2", "policy_trans_l2", "log_std_mean",
+                    "grad_norm_trans_actor", "grad_norm_perm_actor",
+                    "grad_norm_trans_critic", "grad_norm_perm_critic"):
+                if metric_name in metrics:
+                    scalars[f"train/{metric_name}"] = metrics[metric_name]
             if "ewc_penalty" in metrics:
                 scalars["train/ewc_penalty"] = metrics["ewc_penalty"]
             # PT only: % change in the acting value across the last consolidation (0 = preserved).
@@ -654,6 +814,9 @@ def main():
                               ("last_consolidation_loss_first", "consol/loss_first"),
                               ("last_consolidation_loss_last", "consol/loss_last"),
                               ("last_consolidation_loss_mean", "consol/loss_mean"),
+                              ("last_actor_absorbed_frac", "consol/actor_absorbed_frac"),
+                              ("last_actor_absorbed_align", "consol/actor_absorbed_align"),
+                              ("last_alpha_p_actor", "consol/alpha_p_actor"),
                               ("last_perm_mean_before", "consol/perm_mean_before"),
                               ("last_perm_mean_after", "consol/perm_mean_after"),
                               ("last_perm_l2_before", "consol/perm_l2_before"),
@@ -764,6 +927,13 @@ def main():
     if consol_loss_traces:
         f = logger.save_object(consol_loss_traces, "consol_loss_traces")
         print(f"[train] Consolidation loss traces ({len(consol_loss_traces)} cycles) -> {f}")
+    if actor_consol_loss_traces:
+        f = logger.save_object(actor_consol_loss_traces, "actor_consol_loss_traces")
+        print(f"[train] Actor consolidation loss traces ({len(actor_consol_loss_traces)} cycles) -> {f}")
+    records = getattr(agent, "consolidation_records", None)
+    if records:
+        f = logger.save_object(records, "consolidation_records")
+        print(f"[train] Consolidation records ({len(records)} cycles) -> {f}")
 
     if hasattr(env, "close"):
         env.close()
