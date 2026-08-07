@@ -85,6 +85,15 @@ THESIS_*.md
 workspace/
 gate_results/
 gate_runs/
+# Transmission sweeps (scripts/run_transmission.sh). RUN_TAG defaults to trans2, so the
+# glob covers trans_*, trans2_*, and any later tag.
+trans*_results/
+trans*_runs/
+trans*_logs/
+trans*_report.txt
+# Working note for driving the compute box, like VASTAI_RERUN.md's role -- operational,
+# not a thesis artifact. The findings themselves live in TRANSMISSION_RESULTS.md.
+VASTAI_TRANSMISSION.md
 gate_logs/
 rerun_results/
 rerun_runs/

@@ -114,6 +114,15 @@ class PPOBase(ABC):
     def on_task_switch(self, step):
         """Called when the training loop detects a task boundary. Override in PT."""
 
+    def diagnostics(self):
+        """Per-update diagnostic scalars, sampled at the TOP of `update()`.
+
+        Sampled before any gradient step so the values describe the agent that actually
+        *collected* this rollout, not the one that exists after training on it. Base returns
+        nothing; PPOPT adds the consolidation-cycle phase (see its override).
+        """
+        return {}
+
     def _extra_loss(self):
         """Hook for additional per-step loss terms (e.g. EWC penalty). Override in subclass."""
         return torch.tensor(0.0, device=self.device)
@@ -280,11 +289,103 @@ class PPOBase(ABC):
 
         Returns a dict of scalar metrics.
         """
+        # Diagnostics describing the agent that COLLECTED this rollout, sampled before any
+        # gradient step displaces it (see `diagnostics`).
+        diag = self.diagnostics()
+
         # Bootstrap value for GAE
         v_perm_last, v_trans_last = self.get_value(last_obs)
         last_value = v_perm_last + v_trans_last
         advantages, returns = self.buffer.compute_gae(last_value, last_done,
                                                       self.gamma, self.gae_lambda)
+
+        # ---- CRITIC-QUALITY DIAGNOSTICS (transmission hypothesis, D1) ----
+        # The question these answer: is PT's critic actually WORSE than vanilla's, or is it
+        # equally good / better while the behaviour is worse? In DQN the value function *is* the
+        # policy, so a better critic is better behaviour by construction. In an actor-critic the
+        # critic reaches behaviour only through the advantage, so the two can come apart — and if
+        # they do, the deficit is a transmission problem, not a value-learning problem.
+        #
+        # These are computed on V AT COLLECTION TIME (buffer.v_perm + buffer.v_trans), i.e. the
+        # value function as it was actually used to act and to bootstrap — not the post-update one.
+        # `compute_gae` sets returns = advantages + values, so returns - values IS advantages:
+        # the residual below is exact, not an approximation.
+        #
+        # `explained_var` is the scale-free comparator and the one to trust across arms: reward
+        # normalisation and differing trajectories mean the raw RMSE lives on different scales for
+        # different agents. 1.0 = the critic explains the returns perfectly, 0.0 = no better than
+        # predicting the mean, negative = worse than the mean.
+        #
+        # No RNG is consumed here, so adding these leaves every run seed-identical to before.
+        adv_np = np.asarray(advantages, dtype=np.float64)
+        ret_np = np.asarray(returns, dtype=np.float64)
+        ret_var = float(ret_np.var())
+        diag["diag/value_rmse"] = float(np.sqrt((adv_np ** 2).mean()))
+        diag["diag/explained_var"] = (
+            float(1.0 - adv_np.var() / ret_var) if ret_var > 1e-12 else float("nan"))
+        diag["diag/adv_abs_mean"] = float(np.abs(adv_np).mean())
+        diag["diag/adv_std"] = float(adv_np.std())
+        diag["diag/return_std"] = float(np.sqrt(ret_var))
+        diag["diag/value_mean"] = float((ret_np - adv_np).mean())
+
+        # ---- HOW MUCH OF THE POLICY'S UPDATE IS THE CRITIC? (D3) ----
+        # The critic reaches behaviour only through the advantage, so the advantage IS the whole
+        # channel: whatever the critic knows that does not appear here cannot change any action.
+        # `compute_gae_components` splits A exactly into reward / permanent / transient parts.
+        #
+        # Attribution is by COVARIANCE SHARE, not variance share:
+        #     Var(A) = sum_c Cov(A_c, A)     ->     share_c = Cov(A_c, A) / Var(A)
+        # The three components are correlated, so variance shares would not sum to 1; covariance
+        # shares do, exactly, which makes "the permanent supplies X% of the policy's update
+        # signal" a statement that means something.
+        #
+        # Advantage normalisation is affine and applied per minibatch, so it rescales every
+        # component by the same factor and leaves these shares unchanged. It does, however, delete
+        # any constant offset — one of two places the permanent's influence is structurally
+        # attenuated (the other is that A_perm carries a TEMPORAL DIFFERENCE of V_perm, not its
+        # level; see compute_gae_components).
+        adv_r, adv_p, adv_t = self.buffer.compute_gae_components(
+            v_perm_last, v_trans_last, last_done, self.gamma, self.gae_lambda)
+        a_var = adv_np.var()
+        if a_var > 1e-12:
+            for name, comp in (("reward", adv_r), ("perm", adv_p), ("trans", adv_t)):
+                c = np.asarray(comp, dtype=np.float64)
+                diag[f"diag/adv_share_{name}"] = float(
+                    ((c - c.mean()) * (adv_np - adv_np.mean())).mean() / a_var)
+            # Correlation between the update the actor actually gets and the one it would get with
+            # a given component removed. 1.0 = that component changes nothing about the direction
+            # of the policy update; this is the scale-free version of the same question.
+            for name, alt in (("nocritic", adv_r),
+                              ("noperm", adv_np - np.asarray(adv_p, dtype=np.float64)),
+                              ("notrans", adv_np - np.asarray(adv_t, dtype=np.float64))):
+                b = np.asarray(alt, dtype=np.float64)
+                sd = adv_np.std() * b.std()
+                diag[f"diag/adv_corr_{name}"] = (
+                    float(((adv_np - adv_np.mean()) * (b - b.mean())).mean() / sd)
+                    if sd > 1e-12 else float("nan"))
+
+        # ---- CAUSAL ABLATION: what the ACTOR is allowed to see ----
+        # `actor_advantage_source` removes a component from the advantage the actor is trained on
+        # while leaving `returns` — and therefore the critic's own training target — untouched.
+        # That separates "what the critic learns" from "what the policy sees", which is exactly
+        # the transmission question, and it is a causal test rather than a correlational one:
+        #   full        A                (default; identical to before this knob existed)
+        #   trans_only  A - A_perm       the permanent cannot influence behaviour at all
+        #   perm_only   A - A_trans      only the slow component may influence behaviour
+        #   none        A_reward         no critic influence whatsoever (baseline-free)
+        # If `trans_only` matches `full`, the permanent's influence on decision-making is zero as
+        # measured, not merely small.
+        src = str(self.cfg.get("actor_advantage_source", "full")).lower()
+        if src != "full":
+            if src == "trans_only":
+                advantages = adv_np - np.asarray(adv_p, dtype=np.float64)
+            elif src == "perm_only":
+                advantages = adv_np - np.asarray(adv_t, dtype=np.float64)
+            elif src == "none":
+                advantages = np.asarray(adv_r, dtype=np.float64)
+            else:
+                raise ValueError(f"unknown actor_advantage_source: {src!r}")
+            advantages = advantages.astype(np.float32)
 
         # Convert to tensors
         adv_t = torch.as_tensor(advantages, device=self.device)
@@ -352,12 +453,14 @@ class PPOBase(ABC):
 
         self.post_update(update_idx)
 
-        return {
+        out = {
             "actor_loss": total_actor_loss / max(n_updates, 1),
             "critic_loss": total_critic_loss / max(n_updates, 1),
             "entropy": total_entropy / max(n_updates, 1),
             "approx_kl": approx_kl,
         }
+        out.update(diag)
+        return out
 
     # ------------------------------------------------------------------
     # Helpers that subclasses override to register their critic optimizers

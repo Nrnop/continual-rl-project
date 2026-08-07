@@ -1,0 +1,58 @@
+# CRITIC REMOVED FROM THE ACTOR'S VIEW ENTIRELY (VANILLA).
+# The reference point for the arm above. If vanilla barely notices losing its critic, then
+# no critic-side mechanism can buy much on this task and PT's ceiling is set by the base
+# learner, not by the decomposition.
+#
+# Self-contained copy of vanilla_paper.yaml plus ONE key (only one --config overlay is applied,
+# so these cannot be written as deltas). Everything below this header is vanilla_paper.yaml
+# verbatim — diff against it before trusting this arm.
+actor_advantage_source: "none"
+
+# Vanilla PPO baseline MATCHED to configs/pt_paper.yaml.
+#
+# pt_paper.yaml turns OFF learning-rate annealing (the reference does not anneal) and shrinks the
+# PT critic to parameter-parity. Both are changes to the shared PPO recipe, so the PT run cannot be
+# compared against the old vanilla results — this file is the baseline it must be compared against.
+# Everything here is byte-identical to pt_paper.yaml except that the critic is a single undivided
+# V(s) at the full [64,64] width.
+#
+#   python -m src_continuous_control.train --agent vanilla --config vanilla_paper --seed 0
+#   python -m src_continuous_control.train --agent ewc     --config vanilla_paper --seed 0
+#
+# Parameter budget: this critic is 5 377 params; pt_paper's two [43,43] critics total 5 420
+# (1.008x). Section 6.1 / Appendix C.3 — parameter parity is a precondition for the comparison to
+# say anything about the decomposition rather than about capacity.
+
+agent: "vanilla"        # overridden by --agent
+
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: false
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+lr_critic: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# single critic at full width (critic_hidden_sizes defaults to hidden_sizes)
+
+jumpstart_window_updates: 20
+probe_states: 256
+
+tasks: [1, -1]
+switch: 614400
+total_steps: 3072000

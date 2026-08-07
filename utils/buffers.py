@@ -86,6 +86,58 @@ class RolloutBuffer:
         returns = advantages + values
         return advantages.reshape(-1), returns.reshape(-1)
 
+    def compute_gae_components(self, last_v_perm, last_v_trans, last_done, gamma, gae_lambda):
+        """Split the advantage into the parts contributed by rewards, V_perm and V_trans.
+
+        THE DECOMPOSITION IS EXACT, not an attribution heuristic. The TD residual is affine in the
+        value function,
+
+            delta_t = r_t + gamma*(1-d)*V(s') - V(s),     V = V_perm + V_trans
+
+        so it separates into delta_r + delta_perm + delta_trans with no remainder, and GAE is a
+        linear filter over delta. Therefore
+
+            A = A_reward + A_perm + A_trans
+
+        holds elementwise, and `test_advantage_decomposition_is_exact` pins it.
+
+        Why this is the measurement that answers "how much influence does the critic have on the
+        policy": in PPO the critic reaches behaviour ONLY through the advantage. Whatever the
+        critic knows that does not show up in A cannot affect a single action the agent takes.
+        A_perm is therefore the permanent component's entire influence on decision-making.
+
+        Note what A_perm actually contains: `gamma*V_perm(s') - V_perm(s)`, a TEMPORAL DIFFERENCE
+        of the permanent, not its level. A slow, smooth V_perm has a small one — and any constant
+        offset cancels here exactly, before advantage normalisation gets a chance to remove it
+        again. The permanent's influence on the policy is structurally attenuated twice over.
+
+        Returns (adv_reward, adv_perm, adv_trans), each flattened like `compute_gae`.
+        """
+        last_done = np.asarray(last_done, dtype=np.float32).reshape(self.num_envs)
+        parts = []
+        for values_c, last_c in (
+                (None, None),                                                   # rewards
+                (self.v_perm, last_v_perm),
+                (self.v_trans, last_v_trans)):
+            adv_c = np.zeros_like(self.rewards)
+            last_gae = np.zeros(self.num_envs, dtype=np.float32)
+            for t in reversed(range(self.n_steps)):
+                if t == self.n_steps - 1:
+                    next_nonterminal = 1.0 - last_done
+                    next_value = (np.asarray(last_c, dtype=np.float32).reshape(self.num_envs)
+                                  if values_c is not None else 0.0)
+                else:
+                    next_nonterminal = 1.0 - self.dones[t + 1]
+                    next_value = values_c[t + 1] if values_c is not None else 0.0
+                if values_c is None:
+                    delta = self.rewards[t]
+                else:
+                    delta = gamma * next_value * next_nonterminal - values_c[t]
+                last_gae = delta + gamma * gae_lambda * next_nonterminal * last_gae
+                adv_c[t] = last_gae
+            parts.append(adv_c.reshape(-1))
+        return tuple(parts)
+
     def get_tensors(self):
         """Flattened (batch, ...) tensors, batch = n_steps * num_envs."""
         obs_dim = self.obs.shape[-1]

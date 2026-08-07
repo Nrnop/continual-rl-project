@@ -172,6 +172,32 @@ class PPOPT(PPOBase):
             v_perm, v_trans = self.critic(obs_t)
         return v_perm.cpu().numpy(), v_trans.cpu().numpy()
 
+    def diagnostics(self):
+        """Where in the k-update consolidation cycle this rollout was collected (D2).
+
+        `_updates_since_consolidation` is incremented in `post_update`, so when read at the TOP of
+        `update()` it is exactly how many PPO updates elapsed between the last consolidation and
+        the collection of this rollout. age = 0 is the rollout gathered immediately AFTER a
+        consolidation — the one acting under a value function that consolidation has just
+        displaced.
+
+        Why this matters: the paper's consolidation target is `old_V_perm + V_trans` (keep = 1),
+        which is deliberately NOT value-preserving. Right after consolidating,
+        V = old_P + T + decay*T — an overshoot of decay*T that the fast transient is supposed to
+        correct over the following updates. In DQN that cost is paid for: decaying the transient
+        returns behaviour to the task-average policy instantly, which IS the jumpstart. In an
+        actor-critic there is no such instantaneous behavioural benefit, so if the perturbation
+        costs anything, it is a cost with no compensation.
+
+        Binning returns and advantage statistics by this age tests that directly, and it tests it
+        AWAY from task boundaries — a dip locked to the k-grid rather than to the switch grid
+        cannot be explained by non-stationarity.
+        """
+        return {
+            "diag/consol_age": float(self._updates_since_consolidation),
+            "diag/consol_k": float(self.k),
+        }
+
     def critic_loss(self, batch, advantages, returns):
         """Transient-only regression during normal PPO updates.
 

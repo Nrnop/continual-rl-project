@@ -597,6 +597,18 @@ def main():
 
         returns_curve.append((global_step, avg_return))
 
+        # RAW, UNSMOOTHED return for this rollout only — the mean of the episodes that actually
+        # finished during it, with no EMA. `avg_return` above has a 0.99 EMA, which is right for
+        # curves but useless for any question about a short-timescale event: an EMA of a rising
+        # series rises monotonically, so binning it around consolidations (or around anything
+        # else) recovers the local slope and nothing more. That is exactly how the first D2 run
+        # produced a "post-consolidation dip" in the vanilla control, which never consolidates.
+        # NaN when no episode completed in this rollout — the analysis must skip those, not
+        # treat them as zero.
+        logger.log_scalar("diag/raw_return",
+                          float(np.mean(episode_returns)) if episode_returns else float("nan"),
+                          global_step)
+
         # ---- PPO update (batch PPO over the flattened rollout) ----
         metrics = agent.update(obs, done, update_idx)
         update_idx += 1
@@ -638,6 +650,12 @@ def main():
             }
             if "ewc_penalty" in metrics:
                 scalars["train/ewc_penalty"] = metrics["ewc_penalty"]
+            # Transmission diagnostics (agents/ppo_base.py `diagnostics` + `update`). Logged
+            # under their own `diag/` prefix, already namespaced by the agent, so they pass
+            # straight through. Present on every arm; the consolidation-phase keys are PT-only.
+            for _k, _v in metrics.items():
+                if _k.startswith("diag/"):
+                    scalars[_k] = _v
             # PT only: % change in the acting value across the last consolidation (0 = preserved).
             consol_err = getattr(agent, "last_consolidation_error", None)
             if consol_err is not None:
