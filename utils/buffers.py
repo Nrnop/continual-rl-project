@@ -142,3 +142,43 @@ class ConsolidationBuffer:
                 torch.as_tensor(states[mb], device=device),
                 torch.as_tensor(old_v[mb], device=device),
             )
+
+
+class StateConsolidationBuffer:
+    """Rolling state-only buffer for actor and critic PT-PPO consolidation."""
+
+    def __init__(self, capacity):
+        if int(capacity) <= 0:
+            raise ValueError("consolidation buffer capacity must be positive")
+        self.capacity = int(capacity)
+        self.states = deque(maxlen=self.capacity)
+
+    def add_batch(self, states_np):
+        states = np.asarray(states_np, dtype=np.float32)
+        if states.ndim == 1:
+            states = states[None, :]
+        for state in states:
+            self.states.append(np.array(state, dtype=np.float32, copy=True))
+
+    def __len__(self):
+        return len(self.states)
+
+    def clear(self):
+        self.states.clear()
+
+    def as_array(self):
+        if not self.states:
+            return np.empty((0, 0), dtype=np.float32)
+        return np.asarray(self.states, dtype=np.float32)
+
+    def as_arrays(self):
+        return self.as_array()
+
+    def iter_minibatches(self, batch_size, device, shuffle=False):
+        states = self.as_array()
+        indices = np.arange(len(states))
+        if shuffle:
+            np.random.shuffle(indices)
+        for start in range(0, len(indices), int(batch_size)):
+            batch_indices = indices[start:start + int(batch_size)]
+            yield torch.as_tensor(states[batch_indices], device=device)

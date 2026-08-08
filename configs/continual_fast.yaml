@@ -13,6 +13,7 @@
 step_by_step: false
 normalize_obs: true
 normalize_reward: true
+normalizer_freeze_after: 100000
 clip_obs: 10.0
 clip_reward: 10.0
 anneal_lr: true

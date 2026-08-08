@@ -15,8 +15,8 @@ from abc import ABC, abstractmethod
 import numpy as np
 import torch
 
-from ..models.actor import GaussianActor
-from ..utils.buffers import RolloutBuffer
+from models.actor import GaussianActor
+from utils.buffers import RolloutBuffer
 
 
 class PPOBase(ABC):

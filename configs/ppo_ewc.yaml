@@ -9,3 +9,6 @@ lr_critic: 0.0003
 # EWC-specific hyperparameters
 ewc_lambda: 50.0    # penalty strength
 ewc_gamma: 0.95     # Fisher consolidation decay factor
+
+# Match the frozen-normalizer comparison protocol used by PT-PPO.
+normalizer_freeze_after: 100000
