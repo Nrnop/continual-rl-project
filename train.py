@@ -426,6 +426,9 @@ def main():
     )
     point_drift_kwargs = dict(
         target=cfg.get("point_target", 0.0),
+        # Drifts the GOAL, not only the dynamics. Default 0.0 = the original drag-only drift,
+        # which measured as saturated (every agent at 96-99% of ceiling, FINDINGS §20).
+        target_amplitude=cfg.get("point_target_amplitude", 0.0),
         dt=cfg.get("point_dt", 0.1),
         base_drag=cfg.get("point_base_drag", 0.35),
         drift_amplitude=cfg.get("drift_amplitude", 0.75),

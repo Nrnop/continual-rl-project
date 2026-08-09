@@ -100,3 +100,7 @@ SESSION_LOG.md
 # offline-eval-RNG defects present (REINVESTIGATION.md defects #12, #14), so the curves depict a
 # protocol we retracted. Kept on disk, out of the repo. plots/figures_reinvestigation/ supersedes it.
 plots/figures_rerun/
+
+# Meeting prep -- a plain-language summary of FULL_PT.md for the supervisor meeting.
+# Working note, not a thesis document; the citable record is FULL_PT.md.
+MEETING_BRIEF.md

@@ -33,7 +33,14 @@ class PPOEWC(PPOVanilla):
 
         # EWC hyper-parameters
         self.ewc_lambda = cfg.get("ewc_lambda", 50.0)
-        
+        # The Fisher penalty runs over actor.named_parameters(), which INCLUDES `log_std`. EWC
+        # therefore anchors the exploration schedule as a side effect: measured on HalfCheetah,
+        # EWC holds log_std at -1.97 for the whole run while vanilla decays to -2.48 and PT to
+        # -2.63, and the return ranking follows that ordering exactly (FULL_PT.md §2).
+        # Setting this true excludes log_std from BOTH the Fisher and the penalty, so the arm
+        # measures weight protection alone. Default False = the behaviour of every earlier run.
+        self.ewc_exclude_log_std = bool(cfg.get("ewc_exclude_log_std", False))
+
         # Store past tasks: list of dicts with 'fisher' and 'anchor'
         self.past_tasks = []
 
@@ -50,6 +57,8 @@ class PPOEWC(PPOVanilla):
             fisher = task["fisher"]
             anchor = task["anchor"]
             for n, p in self.actor.named_parameters():
+                if self.ewc_exclude_log_std and n.endswith("log_std"):
+                    continue
                 penalty = penalty + (fisher[n] * (p - anchor[n]) ** 2).sum()
         
         # Scale by number of parameters to keep the penalty intensive (mean-like)
@@ -182,6 +191,8 @@ class PPOEWC(PPOVanilla):
             logprob.backward()
             with torch.no_grad():
                 for n, p in self.actor.named_parameters():
+                    if self.ewc_exclude_log_std and n.endswith("log_std"):
+                        continue
                     if p.grad is not None:
                         fisher[n] += (p.grad.detach() ** 2) / n_samples
         

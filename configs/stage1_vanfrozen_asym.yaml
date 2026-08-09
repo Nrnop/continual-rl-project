@@ -1,0 +1,62 @@
+# STAGE 1 CONTROL -- vanilla with log_std FROZEN at init (sigma=1.0), matching pt_full's
+# Constraint-C4 treatment. Plain vanilla anneals sigma to ~0.58-0.76 by end of run, so
+# the default comparison confounds the PT mechanism with an exploration schedule.
+env_mode: point_tasks
+point_target_magnitude: 2.0
+point_dt: 0.1
+point_drag: 0.35
+point_action_scale: 1.0
+point_position_limit: 3.0
+point_velocity_limit: 3.0
+point_ctrl_cost_weight: 0.01
+max_episode_steps: 150
+tasks:
+- 1.0
+- -0.25
+total_steps: 360000
+switch: 40000
+step_by_step: false
+num_envs: 4
+async_envs: false
+n_steps: 256
+epochs: 4
+minibatch_size: 64
+hidden_sizes:
+- 64
+- 64
+critic_hidden_sizes:
+- 64
+- 64
+trans_hidden_sizes:
+- 32
+- 32
+actor_trans_hidden_sizes:
+- 32
+- 32
+critic_trans_hidden_sizes:
+- 32
+- 32
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 60000
+clip_obs: 10.0
+clip_reward: 10.0
+lr_actor: 0.0003
+lr_critic: 0.0003
+ent_coef: 0.0
+target_kl: null
+anneal_lr: false
+eval_interval_updates: 4
+no_eval: false
+rho: 0.5
+k: 8
+consolidation_epochs: 2
+consolidation_buffer_size: 2048
+lr_trans: 0.0003
+lr_perm: 0.001
+lr_perm_actor: 0.001
+rm_power: 0.6
+rm_power_actor: 0.6
+kl_prior_coef: 0.01
+agent: vanilla
+freeze_log_std: true

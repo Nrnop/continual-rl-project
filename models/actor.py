@@ -27,10 +27,18 @@ def mlp(in_dim, hidden_sizes, out_dim, activation=nn.Tanh, out_gain=0.01):
 
 
 class GaussianActor(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_sizes=(256, 256), log_std_init=0.0):
+    def __init__(self, obs_dim, act_dim, hidden_sizes=(256, 256), log_std_init=0.0,
+                 freeze_log_std=False):
         super().__init__()
         self.mean_net = mlp(obs_dim, list(hidden_sizes), act_dim, out_gain=0.01)
-        self.log_std = nn.Parameter(torch.ones(act_dim) * log_std_init)
+        # `freeze_log_std` exists ONLY to make a fair comparison against pt_full possible.
+        # SplitGaussianActor owns log_std in its PERMANENT set and freezes it (Constraint C4),
+        # while this actor learns it — so by default the two arms run different exploration
+        # schedules and any return difference confounds the PT mechanism with sigma. Measured on
+        # DirectionalPointMass: vanilla anneals to sigma ~0.58-0.76 while pt_full stays at 1.0.
+        # Default False keeps every earlier run bit-identical.
+        self.log_std = nn.Parameter(torch.ones(act_dim) * log_std_init,
+                                    requires_grad=not freeze_log_std)
 
     def _distribution(self, obs):
         mean = self.mean_net(obs)
@@ -55,6 +63,22 @@ class GaussianActor(nn.Module):
         logprobs = dist.log_prob(actions).sum(-1)
         entropy = dist.entropy().sum(-1)
         return logprobs, entropy
+
+    def kl_to_zero_prior(self, obs):
+        """KL(pi || N(0, sigma^2 I)) = sum_i mu(s)_i^2 / (2 sigma_i^2).
+
+        The single-network analogue of SplitGaussianActor.kl_to_prior, with the permanent
+        replaced by the ZERO policy. It exists to test the Stage-1/2 conclusion directly: the
+        measured benefit of pt_full came from its INERT arm, whose permanent is the zero function
+        (RMS |mu_P| = 0.002), so its KL anchor is exactly this penalty. If vanilla plus this term
+        plus a frozen sigma reproduces the inert arm, then the whole PT apparatus reduces to one
+        regularizer and should be reported as such.
+
+        Deliberately identical in form to kl_to_prior so the two arms differ only in the prior.
+        """
+        mu = self.mean_net(obs)
+        var = torch.exp(self.log_std) ** 2
+        return (mu ** 2 / (2 * var)).sum(-1)
 
 
 

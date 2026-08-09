@@ -6,7 +6,6 @@ import math
 def main():
     log_dirs = [
         "src_continuous_control/runs/logs",
-        "src_continuous_control/src_continuous_control/runs/logs"
     ]
     out_csv_dir = "src_continuous_control/numeric_logs_csv"
     os.makedirs(out_csv_dir, exist_ok=True)

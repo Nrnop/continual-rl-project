@@ -6,9 +6,9 @@ import numpy as np
 import torch
 
 from .ppo_base import PPOBase
-from models.actor import SplitGaussianActor
-from models.critic import SplitCritic
-from utils.buffers import StateConsolidationBuffer
+from ..models.actor import SplitGaussianActor
+from ..models.critic import SplitCritic
+from ..utils.buffers import StateConsolidationBuffer
 
 
 class PPOPTFull(PPOBase):
@@ -21,6 +21,10 @@ class PPOPTFull(PPOBase):
             raise ValueError("pt_full requires ent_coef=0; use kl_prior_coef for regularization")
 
         self.rho = float(cfg.get("rho", cfg.get("transfer_rate", 0.5)))
+        # Defaults to rho -> the preserving split, i.e. every earlier run is unaffected.
+        self.decay_rho = float(cfg.get("decay_rho", self.rho))
+        if not 0.0 <= self.decay_rho <= 1.0:
+            raise ValueError("decay_rho must be between 0 and 1")
         if not 0.0 <= self.rho <= 1.0:
             raise ValueError("rho must be between 0 and 1")
         self.kl_prior_coef = float(cfg.get("kl_prior_coef", 0.01))
@@ -78,6 +82,8 @@ class PPOPTFull(PPOBase):
 
         self._base_lr_perm = self.perm_optim.param_groups[0]["lr"]
         self._base_lr_perm_actor = self.perm_actor_optim.param_groups[0]["lr"]
+        # See _iter_indices: default False keeps every pre-existing result bit-identical.
+        self.consolidation_shuffle = bool(cfg.get("consolidation_shuffle", False))
         self.rm_power = float(cfg.get("rm_power", cfg.get("alpha_p_rm_power", 0.6)))
         self.rm_power_actor = float(
             cfg.get("rm_power_actor", cfg.get("alpha_p_rm_power_actor", self.rm_power))
@@ -300,9 +306,23 @@ class PPOPTFull(PPOBase):
         return list(self.critic.trans.parameters()) + list(self.critic.perm.parameters())
 
     def _iter_indices(self, n):
+        """Minibatch indices for the consolidation regression.
+
+        The consolidation buffer stores states in VISIT ORDER, so sequential minibatches are
+        temporally correlated and the newest states always take the final gradient step of every
+        epoch — the permanent ends up fit preferentially to the end of the buffer. PPO's own
+        epoch loop in `update()` shuffles (np.random.permutation) for exactly this reason; the
+        consolidation loop did not, which is an inconsistency inside one file.
+
+        `consolidation_shuffle` defaults to FALSE so every result produced before this flag
+        existed reproduces bit-for-bit. Set it true to draw the regression's minibatches i.i.d.
+        from the buffer instead.
+        """
         for _ in range(self.consolidation_epochs):
+            order = (np.random.permutation(n) if self.consolidation_shuffle
+                     else np.arange(n))
             for start in range(0, n, self.minibatch_size):
-                yield np.arange(start, min(start + self.minibatch_size, n))
+                yield order[start:min(start + self.minibatch_size, n)]
 
     @staticmethod
     def _stats(values):
@@ -401,8 +421,21 @@ class PPOPTFull(PPOBase):
         self.last_perm_mean_after, self.last_perm_l2_after = self._stats(new_v_perm)
         self.last_actor_perm_mean_after = float(new_mu_perm.mean())
 
-        self.critic.decay_transient(1.0 - self.rho, mode="output")
-        self.actor.decay_transient(1.0 - self.rho)
+        # `decay_rho` defaults to rho, which is the preserving rho-split: the permanent absorbs
+        # rho and the transient retains (1-rho), so the composed function is unchanged. Setting it
+        # separately DECOUPLES the two halves of the mechanism, which no configuration has ever
+        # done: rho controls how fast the permanent accumulates, decay_rho how hard the policy is
+        # shrunk. Stage 9 showed the shrinkage is the only part that helps under discrete
+        # switching, and Stage 15 showed it actively HURTS under monotone drift while the
+        # permanent helps -- so "permanent on, shrinkage off" is the untested combination that
+        # regime calls for.
+        #
+        # WARNING: decay_rho < rho is NOT composition-preserving. The permanent absorbs rho*V_T
+        # while the transient keeps (1-decay_rho)*V_T, so V jumps by (rho-decay_rho)*V_T at every
+        # consolidation. That is the legacy keep=1 overshoot; it is the point of the arm, but it
+        # can amplify over many cycles. Watch for divergence.
+        self.critic.decay_transient(1.0 - self.decay_rho, mode="output")
+        self.actor.decay_transient(1.0 - self.decay_rho)
         self._flush_optimizer_params(self.trans_optim, self.critic.trans.parameters())
         self._flush_optimizer_params(self.actor_optim, self.actor.trans_mean.parameters())
         with torch.no_grad():

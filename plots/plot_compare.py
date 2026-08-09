@@ -79,7 +79,7 @@ def _load_velocity_curves(results_dir, agent_name, seeds, n_steps=2048):
 
 
 def _load_or_parse_critic_loss(agent_name, seed, logs_dir="src_continuous_control/runs/logs"):
-    candidate_dirs = [logs_dir, "src_continuous_control/runs/logs", "src_continuous_control/src_continuous_control/runs/logs"]
+    candidate_dirs = [logs_dir, "src_continuous_control/runs/logs"]
     log_file = None
     for d in candidate_dirs:
         cand = os.path.join(d, f"{agent_name}_seed_{seed}.log")

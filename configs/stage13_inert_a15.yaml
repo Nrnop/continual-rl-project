@@ -1,0 +1,70 @@
+# STAGE 13 -- SMOOTH DRIFT, NON-SATURATED. Stage 4/11's positive result (+5.4 to +5.6,
+# p=0.000, flat across a 4x range of drift periods) was measured on a SATURATED benchmark:
+# post-learning return swung only 3.3-3.5% and every arm sat at 96-99% of the ceiling,
+# because drag drifted while the goal stayed at the origin (FINDINGS §20).
+#
+# Here the GOAL drifts smoothly on the same clock (point_target_amplitude), so the optimal
+# policy changes continuously -- the true smooth analogue of DirectionalPointMass's target
+# flip, with the target unobserved exactly as it is there. Reward swing is now comparable
+# to the switching benchmark, so the arms have room to separate.
+# target drifts over +/-1.5 (position_limit 2.0)
+# ARM: inert
+env_mode: point_drift
+point_target: 0.0
+point_dt: 0.1
+point_base_drag: 0.35
+point_action_scale: 1.0
+point_position_limit: 2.0
+point_velocity_limit: 2.0
+max_episode_steps: 200
+drift_amplitude: 0.75
+drift_period: 80000
+drift_schedule: sin
+drift_phase: 0.0
+step_by_step: false
+num_envs: 4
+async_envs: false
+n_steps: 256
+epochs: 4
+minibatch_size: 64
+hidden_sizes:
+- 64
+- 64
+critic_hidden_sizes:
+- 64
+- 64
+trans_hidden_sizes:
+- 32
+- 32
+actor_trans_hidden_sizes:
+- 32
+- 32
+critic_trans_hidden_sizes:
+- 32
+- 32
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 60000
+clip_obs: 10.0
+clip_reward: 10.0
+lr_actor: 0.0003
+lr_critic: 0.0003
+ent_coef: 0.0
+target_kl: null
+anneal_lr: false
+total_steps: 360000
+switch: 100000
+eval_interval_updates: 5
+no_eval: true
+rho: 0.5
+k: 8
+consolidation_epochs: 2
+consolidation_buffer_size: 8192
+lr_trans: 0.0003
+lr_perm: 0.0
+lr_perm_actor: 0.0
+rm_power: 0.6
+rm_power_actor: 0.6
+kl_prior_coef: 0.01
+agent: pt_full
+point_target_amplitude: 1.5

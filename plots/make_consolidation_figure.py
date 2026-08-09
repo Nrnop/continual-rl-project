@@ -36,7 +36,7 @@ import torch
 import torch.nn as nn
 
 from ..agents.ppo_pt import PPOPT
-from models.critic import SplitCritic
+from ..models.critic import SplitCritic
 
 C_SEP, C_ASSUMED, C_ALT = "#1baf7a", "#8a8a86", "#2a78d6"
 INK, MUT, GRID = "#0b0b0b", "#52514e", "#d9d8d4"

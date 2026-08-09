@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from agents.ppo_pt_full import PPOPTFull
+from src_continuous_control.agents.ppo_pt_full import PPOPTFull
 
 
 def make_cfg():

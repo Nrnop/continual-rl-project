@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from .ppo_base import PPOBase
-from models.critic import VanillaCritic
+from ..models.critic import VanillaCritic
 
 
 class PPOVanilla(PPOBase):
@@ -46,7 +46,10 @@ class PPOVanilla(PPOBase):
         return 0.5 * ((v_pred - returns) ** 2).mean()
 
     def post_update(self, update_idx):
-        pass  # no-op for vanilla
+        # Vanilla has no consolidation cadence, but the base implements `policy_shrink_every`
+        # (disabled by default), so this must delegate rather than no-op — otherwise the flag is
+        # silently dead for the one agent it exists to test.
+        super().post_update(update_idx)
 
     # ------------------------------------------------------------------
     # Critic optimizer plumbing

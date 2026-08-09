@@ -28,8 +28,8 @@ import numpy as np
 import torch
 
 from .ppo_base import PPOBase
-from models.critic import SplitCritic
-from utils.buffers import ConsolidationBuffer
+from ..models.critic import SplitCritic
+from ..utils.buffers import ConsolidationBuffer
 
 
 class PPOPT(PPOBase):

@@ -11,9 +11,9 @@ import time
 
 import numpy as np
 
-from envs.mock_continual import make_directional_point_vector_env
-from agents.ppo_pt_full import PPOPTFull
-from utils.seeding import seed_everything
+from ..envs.mock_continual import make_directional_point_vector_env
+from ..agents.ppo_pt_full import PPOPTFull
+from ..utils.seeding import seed_everything
 
 
 def run_one(cfg, seed=0, total_updates=300, n_steps=32, num_envs=1):
