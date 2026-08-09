@@ -844,6 +844,19 @@ indistinguishable from the complete PT-PPO apparatus (p = 0.485) and worth +661 
 (p = 0.002). Unlike Stage 12 the mechanism is *positive* here (+208.8), but it does not reach
 significance at n = 6.
 
+![Return over training for the four HalfCheetah arms, mean across six seeds, with the four task switches marked.](plots/figures_pt_full/return_curves.png)
+
+*Return over training. Vanilla recovers less at each successive switch; the shrinking arms hold.*
+
+![Per-phase mean return for the four arms across the five task phases.](plots/figures_pt_full/phase_means_main.png)
+
+*The same runs, per phase. The alternating task sign is on the x-axis.*
+
+![Mean return drop at a task switch for the four arms.](plots/figures_pt_full/boundary_drop.png)
+
+*Boundary drop — the project's conventional stability measure.*
+
+
 ### 24a. The variance result, which may matter more than the means
 
 Per-seed final-phase returns, sorted:
@@ -919,6 +932,43 @@ The sanity control validates the setup: `inert_decoup` — no permanent learning
 a property of the method's operator, not a tuning failure, and it is a cleaner statement of the
 finding than "it does not work": *the permanent's contribution and the shrinkage's cost are the
 same knob, and under monotone drift they point in opposite directions.*
+
+---
+
+## 25a. Stage 17: the fidelity check at the supervisor's own k
+
+Every dose-response and reduction result above used `k = 8`. `PT_full.md` specifies **k = 16 with
+`consolidation_epochs = 3`**. Since the shrink *frequency* is the mechanism identified in §18c,
+the reduction has to be re-tested at his k before it can be claimed against his configuration.
+24 runs, 8 seeds, point-mass at centroid E = 0.
+
+| arm | k = 8 (ours) | **k = 16 (his)** |
+|---|---:|---:|
+| vanilla + 3 lines | 93.9 | **73.9** |
+| `pt_full` live | 69.2 | **54.3** |
+| `pt_full` inert | 93.4 | **93.9** |
+| vanilla (reference) | 38.8 | 38.8 |
+
+| at k = 16 | | |
+|---|---:|---:|
+| **the reduction** — pt vs vanilla+3 lines | **−19.6** | p = 0.105 |
+| **the mechanism** — pt vs inert | **−39.5** | **p = 0.001** |
+| pt vs vanilla | +15.6 | p = 0.038 |
+| 3 lines vs vanilla | +35.2 | **p = 0.000** |
+
+**The headline survives, and strengthens.** At his own k the full apparatus sits *below* the
+three-line version, and the mechanism's cost rises from p = 0.005 to **p = 0.001**.
+
+### 25a.1 One sub-claim does not transfer
+
+At k = 8, `inert` and `vanilla + 3 lines` matched exactly (93.4 vs 93.9). At k = 16 they diverge
+(93.9 vs 73.9). The inert arm has two things the three lines do not: it also shrinks the
+**critic's** transient, and it carries the **KL anchor**. At half the shrink frequency one of them
+starts to matter, and the three-line reduction of the *inert arm* is therefore k-dependent.
+
+This does not touch the claim that matters — *the full method is not better than three lines* holds
+at both k. But it means the equivalence in §18d should be stated as holding at k = 8 and tested,
+not assumed, at other frequencies. Stage 19 isolates which of the two is responsible.
 
 ---
 
