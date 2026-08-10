@@ -1,7 +1,7 @@
 # PT-PPO: the benefit is periodic policy shrinkage, not permanent–transient memory
 
 Sessions of 2026-08-08/09. Covers the review of the supervisor's PT-PPO specification, the audit
-of his `pt_full` implementation, and ~830 controlled runs across `DirectionalPointMass`,
+of his `pt_full` implementation, and ~1000 controlled runs across `DirectionalPointMass`,
 `DriftingPointMass` and MuJoCo `HalfCheetah-v5`.
 
 > **READ THIS BEFORE THE SECTIONS.** This document was written as the investigation ran, so early
@@ -10,6 +10,9 @@ of his `pt_full` implementation, and ~830 controlled runs across `DirectionalPoi
 > checking §18b, §19 and §21 first. The final position is §27, and the figures are §26.
 
 **Headline.** `pt_full` beats vanilla PPO. The cause is not the permanent–transient decomposition.
+At the supervisor's own published configuration on HalfCheetah, three lines added to plain PPO
+**significantly outperform the full method** (1275 vs 515, p = 0.041) while carrying a fourteenth
+of its parameters (§25c).
 It is one incidental side-effect: every *k* updates the algorithm multiplies the policy's output
 layer by (1−ρ), shrinking the policy toward zero. **Three lines added to plain PPO reproduce the
 entire apparatus** — indistinguishable at every decay factor on point-mass (p ≥ 0.44, §18d) and on
@@ -1076,6 +1079,41 @@ help here, and it was measured rather than argued.
 
 *The last axis. ρ and k are identical in every arm, so only the mechanism varies — and no setting
 of it reaches the baseline.*
+
+
+## 25c. Stage 18: HalfCheetah at his exact published configuration
+
+Stage 14 used our hyperparameters. This runs the **PT-B row of `PT_full.md` verbatim** — k = 16,
+`consolidation_epochs` = 3, hidden [256,256], transient [64,64], `lr_perm` = `lr_perm_actor` =
+3e-4, ρ = 0.5, `kl_prior_coef` = 0.01, `rm_power` = 0.6 — so the reduction is tested against the
+configuration he actually reports rather than ours. 18 runs, 6 seeds. σ frozen at −1.0 on every
+arm and verified identical before launch.
+
+| arm | final phase | whole run | vs vanilla | p |
+|---|---:|---:|---:|---:|
+| vanilla PPO | 49.9 | 589.5 | — | — |
+| **vanilla + shrink ×0.5 every 16 updates** | **1275.3** | 1287.4 | **+1225.4** | **0.002** |
+| `pt_full`, his exact config | 514.7 | 743.3 | +464.8 | 0.004 |
+
+| | | |
+|---|---:|---:|
+| **the reduction** — pt vs shrink-only | **−760.6** | **p = 0.041** |
+
+**At his own settings the three-line version does not merely match the method — it significantly
+beats it.** Both beat vanilla, so the method works; but the part of it that works is the shrinkage,
+and the rest of the apparatus is a net drag of 760 points.
+
+**With 1/14 the parameters.** His configuration gives `pt_full` **153,684** parameters against
+vanilla's **11,085**. The three-line control wins while carrying a fourteenth of the capacity.
+
+Note also that shrinking every 16 updates (1275.3) beats shrinking every 8 (710.9 in §24) on this
+benchmark — so the shrink cadence is itself an untuned hyper-parameter of the *simple* method, and
+the number reported here is not its optimum.
+
+![Per-seed final-phase returns on HalfCheetah at the supervisor's exact published configuration. The shrink-only control sits clearly above the full method.](plots/figures_pt_full/his_config_halfcheetah.png)
+
+*His published configuration, run verbatim. Every seed of the shrink-only control lands above
+every seed but one of the full apparatus.*
 
 ---
 

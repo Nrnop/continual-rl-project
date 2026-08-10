@@ -685,6 +685,40 @@ def fig_lr_perm_sweep(root, outdir):
     _save(fig, outdir, "lr_perm_sweep")
 
 
+def fig_his_config(root, outdir):
+    """HalfCheetah at the supervisor's exact published configuration (FULL_PT §25c)."""
+    arms = [("vanilla PPO", "van", GREY),
+            ("vanilla + shrink, every 16 updates", "van_shrink", BLUE),
+            ("pt_full — his exact published config", "pt_hisexact", ORANGE)]
+    data = {c: final_phase(root, "stage18", c) for _, c, _ in arms}
+    if any(len(v) == 0 for v in data.values()):
+        print("  [skip] his_config"); return
+
+    fig, ax = plt.subplots(figsize=(9.4, 3.6))
+    for i, (label, cell, colour) in enumerate(arms):
+        y = len(arms) - 1 - i
+        vals = data[cell]
+        ax.scatter(vals, np.full_like(vals, y, dtype=float), s=54, color=colour,
+                   alpha=0.55, linewidths=1.6, edgecolors=SURFACE, zorder=3)
+        med = float(np.median(vals))
+        ax.plot([med, med], [y - 0.26, y + 0.26], color=colour, linewidth=2.4, zorder=4)
+        ax.text(med, y + 0.38, f"{med:,.0f}", color=INK, fontsize=10.5, fontweight="bold",
+                ha="center", va="bottom", zorder=5)
+    ax.set_yticks(range(len(arms)))
+    ax.set_yticklabels([a[0] for a in reversed(arms)], color=INK, fontsize=10)
+    pv = mannwhitney_exact(data["pt_hisexact"], data["van_shrink"])
+    _style(ax, xlabel="final-phase return  (6 seeds, HalfCheetah, 3.07M steps)", grid="x",
+           title="At his own published settings, three lines beat the method",
+           subtitle=f"k=16, consolidation_epochs=3, [256,256]/[64,64] — the PT-B row of "
+                    f"PT_full.md, verbatim")
+    ax.text(0.995, -0.26,
+            f"shrink-only vs pt_full: {np.median(data['van_shrink']) - np.median(data['pt_hisexact']):+,.0f}"
+            f"  (p = {pv:.3f}).  His config gives pt_full 153,684 parameters against vanilla's "
+            f"11,085 — the three-line version wins with 1/14 the capacity.",
+            transform=ax.transAxes, color=INK_2, fontsize=8.5, ha="right", va="top")
+    _save(fig, outdir, "his_config_halfcheetah")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-root", default=None,
@@ -712,6 +746,7 @@ def main():
     fig_consolidation_internals(root, outdir)
     fig_consolidation_loss(root, outdir)
     fig_lr_perm_sweep(root, outdir)
+    fig_his_config(root, outdir)
 
 
 if __name__ == "__main__":
