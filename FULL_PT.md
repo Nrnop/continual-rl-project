@@ -998,12 +998,39 @@ the policy — and Stage 21 refuted that too.**
 Adding the critic shrink is worth +3.5 and is not significant (p = 0.959); six lines still sits
 16.4 below the inert arm (p = 0.010).
 
-**So the k = 16 residual is currently unexplained.** Two candidates are eliminated (KL anchor,
-critic decay) and one remains untested: `pt_full` purges the transient's **Adam moments** at every
-decay (Constraint C2), and none of our controls ever did. Stage 9 established that the flush
-*alone* does nothing (ρ = 0, p = 0.234), but shrink-with-flush against shrink-without-flush has
-never been run — and at k = 16 stale momentum has twice as long to re-inflate the shrunk weights.
-Stage 22 tests exactly that.
+### 25a.4 Stage 22: the flush does not close it either — and then the statistics catch up
+
+The last structural difference was the **Adam moment flush**: `pt_full` purges the transient's
+optimizer state at every decay (C2) and none of our controls did. Stage 9 had shown the flush
+*alone* does nothing (ρ = 0, p = 0.234), but shrink-with-flush against shrink-without-flush had
+never been run.
+
+Adding each candidate to the control, cumulatively:
+
+| control | return | vs the target |
+|---|---:|---:|
+| vanilla PPO | 38.8 | |
+| + policy shrink | 73.9 | −20.0 (p = 0.010) |
+| + critic shrink | 77.5 | −16.4 (p = 0.010) |
+| + Adam flush | 82.1 | −11.8 (p = 0.038) |
+| `pt_full` inert | 93.9 | — |
+
+Each addition helps a little (+3.5, then +4.6) and neither is individually significant.
+
+**And here the correct statistical treatment matters more than another experiment.** Three
+comparisons have now been made against the same target, so the threshold is Bonferroni
+α = 0.05/3 = **0.0167**. The surviving residual is **p = 0.038 — it does not survive correction.**
+
+So the honest statement is not "there is an unexplained residual"; it is that after accounting for
+the number of attempts made to close it, **the remaining gap is no longer distinguishable from
+noise.** Chasing it further would be exactly the seed-fishing this project has already had to
+retract five selection criteria for (REINVESTIGATION.md §5).
+
+**Where that leaves the k = 16 story.** The three components of the shrinkage — policy decay,
+critic decay, optimizer flush — recover 82.1 of the inert arm's 93.9 from a vanilla baseline of
+38.8, i.e. **~78% of the gap**, with the remainder inside corrected noise. The headline is
+unchanged and never depended on this: at k = 16 the full apparatus (54.3) is *below* the
+shrink-only control (73.9).
 
 **What this does and does not change.** The headline is unaffected: at k = 16 the full apparatus
 (54.3) is still *below* the shrink-only control (73.9), so the method is not better than a few
