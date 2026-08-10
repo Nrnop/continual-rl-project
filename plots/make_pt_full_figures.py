@@ -9,7 +9,7 @@ Seven figures. Each carries one claim, and each is embedded at the matching sect
 
   sigma_collapse         FULL_PT 2     exploration is unmanaged persistent memory
   beta_sweep             FULL_PT 13    the KL anchor explains none of the gain
-  dose_response          FULL_PT 18c/d the active ingredient, and its three-line reproduction
+  dose_response          FULL_PT 18c/d the active ingredient, and its shrink-only reproduction
   benchmark_saturation   FULL_PT 19a   why one 'significant' drift result was an artifact
   reduction_halfcheetah  FULL_PT 24    the reduction on real physics, plus the variance result
   decoupling             FULL_PT 25    permanent and shrinkage are the same knob
@@ -118,7 +118,7 @@ def fig_reduction(root, outdir):
     """
     arms = [
         ("vanilla PPO", "van", GREY),
-        ("vanilla + 3 lines", "van_shrink", BLUE),
+        ("PPO + shrinkage", "van_shrink", BLUE),
         ("pt_full  (live permanent)", "pt", ORANGE),
         ("pt_full  (inert permanent)", "inert", AQUA),
     ]
@@ -141,8 +141,8 @@ def fig_reduction(root, outdir):
     ax.set_yticks(range(len(arms)))
     ax.set_yticklabels([a[0] for a in reversed(arms)], color=INK, fontsize=10)
     _style(ax, xlabel="final-phase return  (6 seeds, HalfCheetah, 3.07M steps)", grid="x",
-           title="Three lines of PPO reproduce the whole PT-PPO apparatus",
-           subtitle="pt_full vs vanilla+3 lines: +49  (p = 0.485, indistinguishable)   ·   "
+           title="Periodic policy shrinkage reproduces the whole PT-PPO apparatus",
+           subtitle="pt_full vs PPO + shrinkage: +49  (p = 0.485, indistinguishable)   ·   "
                     "both vs vanilla: p = 0.002")
 
     p_red = mannwhitney_exact(data["pt"], data["van_shrink"])
@@ -150,7 +150,7 @@ def fig_reduction(root, outdir):
     spread_s = data["van_shrink"].max() - data["van_shrink"].min()
     ax.text(0.995, -0.20,
             f"exact permutation test, p = {p_red:.3f}   ·   seed spread: "
-            f"vanilla {spread_v:,.0f} vs vanilla+3 lines {spread_s:,.0f} "
+            f"vanilla {spread_v:,.0f} vs PPO + shrinkage {spread_s:,.0f} "
             f"({spread_v / max(spread_s, 1):.0f}x tighter)",
             transform=ax.transAxes, color=INK_2, fontsize=8.5, ha="right", va="top")
     _save(fig, outdir, "reduction_halfcheetah")
@@ -158,7 +158,7 @@ def fig_reduction(root, outdir):
 
 # ------------------------------------------------------------------ figure 2
 def fig_dose_response(root, outdir):
-    """Return against decay factor, for the full apparatus and for the three-line version.
+    """Return against decay factor, for the full apparatus and for the shrink-only control.
 
     Two series, so a legend is present and both are direct-labelled. The vanilla reference is a
     thin grey rule with its own label rather than a third series -- it is context, not identity.
@@ -185,7 +185,7 @@ def fig_dose_response(root, outdir):
             transform=ax.get_yaxis_transform())
 
     for pts, colour, label in ((ax_pts, BLUE, "full PT-PPO apparatus"),
-                               (bx_pts, ORANGE, "vanilla + 3 lines")):
+                               (bx_pts, ORANGE, "PPO + shrinkage")):
         xs = [d for d, _ in pts]
         ys = [float(np.median(v)) for _, v in pts]
         ax.plot(xs, ys, color=colour, linewidth=2.0, zorder=3, label=label)
@@ -480,7 +480,7 @@ def fig_decoupling(root, outdir):
 # (return_curves / phase_means_main / boundary_drop / consolidation_*), so the pt_full study can
 # be read side by side with the earlier ones rather than in a private format.
 
-HC_ARMS = [("vanilla PPO", "van", GREY), ("vanilla + 3 lines", "van_shrink", BLUE),
+HC_ARMS = [("vanilla PPO", "van", GREY), ("PPO + shrinkage", "van_shrink", BLUE),
            ("pt_full live", "pt", ORANGE), ("pt_full inert", "inert", AQUA)]
 
 
@@ -708,13 +708,13 @@ def fig_his_config(root, outdir):
     ax.set_yticklabels([a[0] for a in reversed(arms)], color=INK, fontsize=10)
     pv = mannwhitney_exact(data["pt_hisexact"], data["van_shrink"])
     _style(ax, xlabel="final-phase return  (6 seeds, HalfCheetah, 3.07M steps)", grid="x",
-           title="At his own published settings, three lines beat the method",
+           title="At his own published settings, periodic shrinkage beats the method",
            subtitle=f"k=16, consolidation_epochs=3, [256,256]/[64,64] — the PT-B row of "
                     f"PT_full.md, verbatim")
     ax.text(0.995, -0.26,
             f"shrink-only vs pt_full: {np.median(data['van_shrink']) - np.median(data['pt_hisexact']):+,.0f}"
             f"  (p = {pv:.3f}).  His config gives pt_full 153,684 parameters against vanilla's "
-            f"11,085 — the three-line version wins with 1/14 the capacity.",
+            f"11,085 — the shrink-only control wins with 1/14 the capacity.",
             transform=ax.transAxes, color=INK_2, fontsize=8.5, ha="right", va="top")
     _save(fig, outdir, "his_config_halfcheetah")
 

@@ -3,7 +3,7 @@
 #
 # On DirectionalPointMass, pt_full's entire advantage over vanilla PPO turned out to be periodic
 # multiplicative shrinkage of the policy toward zero: a clean dose-response in rho with the
-# permanent zeroed and beta=0 (Stage 9), and full reproduction by three lines added to vanilla at
+# permanent zeroed and beta=0 (Stage 9), and full reproduction by periodic policy shrinkage added to vanilla at
 # every decay factor (Stage 10, p >= 0.44). Everything else was eliminated -- the permanent
 # (p=1.000), the KL anchor, actor and critic capacity, and the Adam flush (p=0.234).
 #

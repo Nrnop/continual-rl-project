@@ -10,11 +10,11 @@ of his `pt_full` implementation, and ~1000 controlled runs across `DirectionalPo
 > checking §18b, §19 and §21 first. The final position is §27, and the figures are §26.
 
 **Headline.** `pt_full` beats vanilla PPO. The cause is not the permanent–transient decomposition.
-At the supervisor's own published configuration on HalfCheetah, three lines added to plain PPO
+At the supervisor's own published configuration on HalfCheetah, periodic policy shrinkage added to plain PPO
 **significantly outperform the full method** (1275 vs 515, p = 0.041) while carrying a fourteenth
 of its parameters (§25c).
 It is one incidental side-effect: every *k* updates the algorithm multiplies the policy's output
-layer by (1−ρ), shrinking the policy toward zero. **Three lines added to plain PPO reproduce the
+layer by (1−ρ), shrinking the policy toward zero. **Periodic policy shrinkage added to plain PPO reproduce the
 entire apparatus** — indistinguishable at every decay factor on point-mass (p ≥ 0.44, §18d) and on
 HalfCheetah at a healthy operating point (p = 0.485, §24). Eliminated by direct experiment: the
 permanent (p = 1.000), the KL anchor (β = 0 unchanged), actor and critic capacity, and the Adam
@@ -584,7 +584,7 @@ KL anchor and no Robbins–Monro schedule are present in any of these runs.
 Note also that ρ=0.75 (104.4) beats the ρ=0.5 default: what `pt_full` exposes as the PT transfer
 rate is functioning here as a shrinkage rate, and it is not tuned to its best value.
 
-![Final-phase return against the decay factor applied to the policy, for the full PT-PPO apparatus and for vanilla PPO plus three lines. The two curves lie on top of one another across the whole range.](plots/figures_pt_full/dose_response.png)
+![Final-phase return against the decay factor applied to the policy, for the full PT-PPO apparatus and for vanilla PPO plus periodic shrinkage. The two curves lie on top of one another across the whole range.](plots/figures_pt_full/dose_response.png)
 
 *The dose–response, and its reproduction. Neither series contains a permanent network, a
 consolidation buffer or a KL anchor. At decay 1.00 — optimiser moments still flushed, no weights
@@ -593,7 +593,7 @@ changed — the arm is indistinguishable from vanilla (p = 0.234).*
 
 ---
 
-### 18d. Stage 10: the whole apparatus reduces to three lines on vanilla PPO
+### 18d. Stage 10: the whole apparatus reduces to periodic policy shrinkage
 
 Plain vanilla PPO plus one intervention — every 8 updates, multiply the actor's output layer by a
 constant. No permanent network, no transient, no consolidation buffer, no KL anchor, no
@@ -601,7 +601,7 @@ Robbins–Monro schedule, no split critic.
 
 Paired by **decay factor** (`pt_full`'s decay factor is `1 − ρ`):
 
-| decay factor | full `pt_full` apparatus | vanilla + 3 lines | diff | p |
+| decay factor | full `pt_full` apparatus | PPO + shrinkage | diff | p |
 |---:|---:|---:|---:|---:|
 | 0.90 | 58.5 | 64.8 | +6.3 | 0.442 |
 | 0.75 | 82.8 | 81.2 | −1.6 | 0.878 |
@@ -610,7 +610,7 @@ Paired by **decay factor** (`pt_full`'s decay factor is `1 − ρ`):
 vanilla with no shrink: 38.7.
 
 **Indistinguishable at every point on the curve.** The dose–response of the complete PT-PPO
-implementation is reproduced, within noise, by three lines added to the baseline.
+implementation is reproduced, within noise, by periodic policy shrinkage added to the baseline.
 
 *Implementation note, recorded because it nearly produced a false negative:* the first Stage 10
 run was a silent no-op — `PPOVanilla.post_update` overrode the base hook with `pass`, so the
@@ -683,7 +683,7 @@ and `log_std` frozen on **every** arm so `pt_full`'s Constraint-C4 freeze cannot
 | arm | final phase | whole run | vs vanilla | p |
 |---|---:|---:|---:|---:|
 | vanilla PPO | −517.3 | −214.4 | — | — |
-| **vanilla + shrink ×0.5 (3 lines)** | **−416.1** | −341.2 | **+101.2** | **0.002** |
+| **PPO + shrinkage (×0.5)** | **−416.1** | −341.2 | **+101.2** | **0.002** |
 | `pt_full` LIVE permanent | −579.2 | −290.9 | −61.9 | 0.485 |
 | `pt_full` INERT permanent | −450.4 | −396.4 | +66.9 | 0.026 |
 
@@ -692,7 +692,7 @@ and `log_std` frozen on **every** arm so `pt_full`'s Constraint-C4 freeze cannot
 | **the reduction** — van_shrink vs `pt_full` | **+163.1** | p = 0.065 |
 | **the mechanism** — live vs inert | **−128.8** | p = 0.065 |
 
-**Three lines on vanilla PPO beat vanilla by +101.2 (p = 0.002) and are, if anything, better than
+**Periodic policy shrinkage on vanilla PPO beats vanilla by +101.2 (p = 0.002) and are, if anything, better than
 the entire PT-PPO apparatus** (+163.1, p = 0.065). Meanwhile the full apparatus with a live
 permanent is statistically indistinguishable from plain vanilla (p = 0.485), and the live-vs-inert
 cost replicates in sign and marginal significance.
@@ -832,7 +832,7 @@ config, so the fix could not touch them.
 | arm | final phase | whole run | vs vanilla | p |
 |---|---:|---:|---:|---:|
 | vanilla PPO | 49.9 | 589.5 | — | — |
-| **vanilla + shrink ×0.5 (3 lines)** | **710.9** | 745.8 | **+661.0** | **0.002** |
+| **PPO + shrinkage (×0.5)** | **710.9** | 745.8 | **+661.0** | **0.002** |
 | `pt_full` LIVE permanent | 760.1 | 784.0 | +710.3 | 0.015 |
 | `pt_full` INERT permanent | 551.3 | 594.9 | +501.5 | 0.002 |
 
@@ -842,7 +842,7 @@ config, so the fix could not touch them.
 | the mechanism — pt vs inert | +208.8 | p = 0.394 |
 | shrinkage alone — inert vs vanilla | **+501.5** | **p = 0.002** |
 
-**The reduction holds at a normal operating point.** Three lines on vanilla PPO are statistically
+**The reduction holds at a normal operating point.** Periodic policy shrinkage on vanilla PPO is statistically
 indistinguishable from the complete PT-PPO apparatus (p = 0.485) and worth +661 over the baseline
 (p = 0.002). Unlike Stage 12 the mechanism is *positive* here (+208.8), but it does not reach
 significance at n = 6.
@@ -880,9 +880,9 @@ This reframes the finding: the active ingredient is best described as a **stabil
 permanent–transient dynamic as something that trades that stability away for a higher ceiling on
 some seeds. Reporting means alone hides both halves.
 
-![Per-seed final-phase returns on HalfCheetah for four arms. Vanilla and the live-permanent arm are widely scattered; vanilla-plus-three-lines and the inert arm are tightly clustered.](plots/figures_pt_full/reduction_halfcheetah.png)
+![Per-seed final-phase returns on HalfCheetah for four arms. Vanilla and the live-permanent arm are widely scattered; the shrink-only arm and the inert arm are tightly clustered.](plots/figures_pt_full/reduction_halfcheetah.png)
 
-*Every seed shown, medians marked. Two findings in one figure: the three-line arm sits on top of
+*Every seed shown, medians marked. Two findings in one figure: the shrink-only arm sits on top of
 the full apparatus (p = 0.485), and the shrinking arms are ~16× tighter across seeds.*
 
 
@@ -947,29 +947,29 @@ the reduction has to be re-tested at his k before it can be claimed against his 
 
 | arm | k = 8 (ours) | **k = 16 (his)** |
 |---|---:|---:|
-| vanilla + 3 lines | 93.9 | **73.9** |
+| PPO + shrinkage | 93.9 | **73.9** |
 | `pt_full` live | 69.2 | **54.3** |
 | `pt_full` inert | 93.4 | **93.9** |
 | vanilla (reference) | 38.8 | 38.8 |
 
 | at k = 16 | | |
 |---|---:|---:|
-| **the reduction** — pt vs vanilla+3 lines | **−19.6** | p = 0.105 |
+| **the reduction** — pt vs PPO + shrinkage | **−19.6** | p = 0.105 |
 | **the mechanism** — pt vs inert | **−39.5** | **p = 0.001** |
 | pt vs vanilla | +15.6 | p = 0.038 |
-| 3 lines vs vanilla | +35.2 | **p = 0.000** |
+| shrink-only vs vanilla | +35.2 | **p = 0.000** |
 
 **The headline survives, and strengthens.** At his own k the full apparatus sits *below* the
-three-line version, and the mechanism's cost rises from p = 0.005 to **p = 0.001**.
+shrink-only control, and the mechanism's cost rises from p = 0.005 to **p = 0.001**.
 
 ### 25a.1 One sub-claim does not transfer
 
-At k = 8, `inert` and `vanilla + 3 lines` matched exactly (93.4 vs 93.9). At k = 16 they diverge
-(93.9 vs 73.9). The inert arm has two things the three lines do not: it also shrinks the
+At k = 8, `inert` and `PPO + shrinkage` matched exactly (93.4 vs 93.9). At k = 16 they diverge
+(93.9 vs 73.9). The inert arm has two things the shrink-only control does not: it also shrinks the
 **critic's** transient, and it carries the **KL anchor**. At half the shrink frequency one of them
-starts to matter, and the three-line reduction of the *inert arm* is therefore k-dependent.
+starts to matter, and the shrinkage reduction of the *inert arm* is therefore k-dependent.
 
-This does not touch the claim that matters — *the full method is not better than three lines* holds
+This does not touch the claim that matters — *the full method is not better than periodic shrinkage alone* holds
 at both k. But it means the equivalence in §18d should be stated as holding at k = 8 and tested,
 not assumed, at other frequencies. Stage 19 isolates which of the two is responsible.
 
@@ -994,11 +994,11 @@ the policy — and Stage 21 refuted that too.**
 | arm | return |
 |---|---:|
 | vanilla PPO | 38.8 |
-| vanilla + policy shrink (3 lines) | 73.9 |
-| vanilla + policy **and critic** shrink (6 lines) | 77.5 |
+| PPO + policy shrink | 73.9 |
+| PPO + policy **and critic** shrink | 77.5 |
 | `pt_full` inert (the target) | **93.9** |
 
-Adding the critic shrink is worth +3.5 and is not significant (p = 0.959); six lines still sits
+Adding the critic shrink is worth +3.5 and is not significant (p = 0.959); the two-part shrink still sits
 16.4 below the inert arm (p = 0.010).
 
 ### 25a.4 Stage 22: the flush does not close it either — and then the statistics catch up
@@ -1099,12 +1099,12 @@ arm and verified identical before launch.
 |---|---:|---:|
 | **the reduction** — pt vs shrink-only | **−760.6** | **p = 0.041** |
 
-**At his own settings the three-line version does not merely match the method — it significantly
+**At his own settings the shrink-only control does not merely match the method — it significantly
 beats it.** Both beat vanilla, so the method works; but the part of it that works is the shrinkage,
 and the rest of the apparatus is a net drag of 760 points.
 
 **With 1/14 the parameters.** His configuration gives `pt_full` **153,684** parameters against
-vanilla's **11,085**. The three-line control wins while carrying a fourteenth of the capacity.
+vanilla's **11,085**. The shrink-only control wins while carrying a fourteenth of the capacity.
 
 Note also that shrinking every 16 updates (1275.3) beats shrinking every 8 (710.9 in §24) on this
 benchmark — so the shrink cadence is itself an untuned hyper-parameter of the *simple* method, and
@@ -1125,7 +1125,7 @@ number is recomputed from the result pickles rather than transcribed.
 
 | figure | claim it carries |
 |---|---|
-| `reduction_halfcheetah` | three lines on vanilla PPO match the whole apparatus (p = 0.485), and the shrinking arms are ~16× tighter across seeds |
+| `reduction_halfcheetah` | periodic policy shrinkage on vanilla PPO matches the whole apparatus (p = 0.485), and the shrinking arms are ~16× tighter across seeds |
 | `dose_response` | the effect is the shrinkage, and it scales cleanly with it — with none of the PT machinery present in either series |
 | `mechanism_by_regime` | the permanent–transient dynamic itself, standardised (Cohen's d), across all five regimes |
 | `sigma_collapse` | exploration is unmanaged persistent memory, and it ranks the agents (§2) |
@@ -1167,7 +1167,7 @@ regime tested. Grey = not significant.*
    benign (§12). The negative results are not an implementation artifact.
 3. **`pt_full`'s entire advantage over vanilla is periodic multiplicative shrinkage of the
    policy toward zero.** Monotone dose–response in ρ with the permanent zeroed and β=0 (§18c),
-   and fully reproduced by three lines on vanilla PPO at every decay factor (§18d, p ≥ 0.44).
+   and fully reproduced by periodic policy shrinkage on vanilla PPO at every decay factor (§18d, p ≥ 0.44).
    Eliminated by direct experiment: the permanent (p=1.000), the KL anchor, actor capacity,
    critic capacity, and the Adam flush (p=0.234).
 4. **Under discrete switching the permanent–transient dynamic is a consistent cost** — live vs
@@ -1179,7 +1179,7 @@ regime tested. Grey = not significant.*
    shrinkage costs 18.6 and the mechanism **pays +8.2, p = 0.010** (§22) — the one regime where
    the permanent does something useful, though both arms still lose to vanilla because ρ couples
    the two. Also surviving from §14: **EWC degenerates into vanilla exactly**, p = 1.000.
-6. **On HalfCheetah at a healthy operating point the reduction replicates** (§24): three lines are
+6. **On HalfCheetah at a healthy operating point the reduction replicates** (§24): periodic shrinkage is
    indistinguishable from the whole apparatus (p = 0.485) and worth +661 over vanilla (p = 0.002).
    The shrinkage's clearest effect is **variance**: it collapses a 787-point seed spread to 49
    (§24a).
@@ -1193,7 +1193,7 @@ Two findings stand, and they are worth more than a win on HalfCheetah would have
 
 **(a) A reduction.** On a discrete-switching benchmark, PT-PPO's measured benefit is not
 permanent–transient memory. It is periodic policy shrinkage — a plasticity-preservation effect
-obtainable in three lines, with none of the apparatus, and *better* at a shrink rate the method
+obtainable in a few lines, with none of the apparatus, and *better* at a shrink rate the method
 does not expose (§18c, ρ=0.75 → 104.4). Any future PT-PPO result must be reported against a
 shrinkage control, or it measures the wrong thing.
 

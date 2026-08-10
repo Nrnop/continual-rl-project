@@ -1,8 +1,8 @@
-# STAGE 19 -- what closes the k=16 gap? At k=8 the inert arm and vanilla+3-lines matched
+# STAGE 19 -- what closes the k=16 gap? At k=8 the inert arm and PPO + shrinkage matched
 # exactly (93.4 vs 93.9). At k=16 they diverge (93.9 vs 73.9). The inert arm has two things
-# the three lines do not: it also shrinks the CRITIC's transient, and it carries the KL
+# the shrink-only control does not: it also shrinks the CRITIC's transient, and it carries the KL
 # anchor. This isolates the anchor -- if beta=0 drops the inert arm to ~74, the anchor is
-# what the three lines are missing at this frequency; if it stays at ~94, it is the critic.
+# what the periodic shrinkage is missing at this frequency; if it stays at ~94, it is the critic.
 # ARM: inert, k=16, KL anchor OFF
 env_mode: point_tasks
 point_target_magnitude: 2.0

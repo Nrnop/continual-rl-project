@@ -10,7 +10,7 @@
 #
 # log_std is frozen at -1.0 on EVERY arm: pt_full freezes it by Constraint C4 while vanilla
 # learns it, and on HalfCheetah that gap alone is worth more than the effect under test.
-# ARM: vanilla + 3 lines, shrink x0.5 every 16 updates -- matched to his k
+# ARM: PPO + shrinkage, shrink x0.5 every 16 updates -- matched to his k
 env_id: HalfCheetah-v5
 tasks:
 - 1

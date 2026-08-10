@@ -2,7 +2,7 @@
 # so far used k=8; PT_full.md specifies k=16 with consolidation_epochs=3. Since the shrink
 # FREQUENCY is the mechanism we identified, the reduction has to be re-tested at his k
 # before it can be claimed against his configuration.
-# ARM: vanilla + 3 lines, shrink x0.5 every 16 updates (matched to k=16)
+# ARM: PPO + shrinkage, shrink x0.5 every 16 updates (matched to k=16)
 env_mode: point_tasks
 point_target_magnitude: 2.0
 point_dt: 0.1

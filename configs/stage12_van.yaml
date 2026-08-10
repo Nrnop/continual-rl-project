@@ -1,6 +1,6 @@
 # STAGE 12 -- HALFCHEETAH CONFIRMATION of the Stage 9/10 reduction on real physics.
 # Claim under test: pt_full's advantage over vanilla is periodic multiplicative shrinkage
-# of the policy, not permanent-transient memory. On point-mass, vanilla + 3 lines matched
+# of the policy, not permanent-transient memory. On point-mass, PPO + shrinkage matched
 # the full apparatus at every decay factor (p >= 0.44).
 #
 # PARAMETER PARITY (computed, not guessed): vanilla actor+critic at [64,64] = 11 085 params;
