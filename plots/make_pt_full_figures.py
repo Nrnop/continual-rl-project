@@ -643,6 +643,48 @@ def fig_boundary_drop(root, outdir):
     _save(fig, outdir, "boundary_drop")
 
 
+def fig_lr_perm_sweep(root, outdir):
+    """Permanent learning rate against return, shrinkage held fixed (FULL_PT §25b).
+
+    The last axis that could have shown a genuine benefit for the mechanism. Emphasis form: the
+    vanilla reference is the thing every arm has to beat, so it carries the rule and the arms are
+    one series -- this is not a categorical comparison, it is one curve against one threshold.
+    """
+    arms = [("0\n(inert)", "lr0"), ("3e−5", "lr3e5"), ("1e−4", "lr1e4"),
+            ("3e−4", "lr3e4"), ("1e−3", "lr1e3")]
+    vals = [final_window(root, "stage20", c, 0.2) for _, c in arms]
+    van = final_window(root, "stage15", "van", 0.2)
+    if not len(van) or any(not len(v) for v in vals):
+        print("  [skip] lr_perm_sweep"); return
+
+    x = np.arange(len(arms))
+    y = [float(np.median(v)) for v in vals]
+    fig, ax = plt.subplots(figsize=(8.6, 4.3))
+    vmed = float(np.median(van))
+    ax.axhline(vmed, color=GREY, linewidth=1.8, zorder=2)
+    ax.text(0.005, vmed, "vanilla PPO — every arm is below this  ", color=INK_2, fontsize=9.5,
+            va="bottom", ha="left", transform=ax.get_yaxis_transform())
+    ax.plot(x, y, color=ORANGE, linewidth=2.0, zorder=3)
+    ax.scatter(x, y, s=70, color=ORANGE, zorder=4, linewidths=1.8, edgecolors=SURFACE)
+    for xi, yi in zip(x, y):
+        ax.annotate(f"{yi:.0f}", (xi, yi), textcoords="offset points", xytext=(0, 11),
+                    ha="center", color=INK, fontsize=10, fontweight="bold")
+    ax.set_xticks(x); ax.set_xticklabels([a[0] for a in arms])
+    ax.set_ylim(min(y) - 18, max(max(y), vmed) + 26)
+    _style(ax, xlabel="permanent learning rate  (ρ and k held fixed — the shrinkage is identical "
+                      "in every arm)",
+           ylabel="final-window return",
+           title="No setting of the permanent beats the baseline",
+           subtitle="linear monotone drift — the one regime where the permanent had measured a "
+                    "benefit. 8 seeds.")
+    ax.text(0.995, -0.26,
+            "Non-monotone, and worst in the middle: a slowly-learning permanent (44) is far worse "
+            "than one frozen (108) or one learning fast (116) — a stale anchor, tracking neither "
+            "the task nor a stable reference.",
+            transform=ax.transAxes, color=INK_2, fontsize=8.5, ha="right", va="top")
+    _save(fig, outdir, "lr_perm_sweep")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-root", default=None,
@@ -669,6 +711,7 @@ def main():
     fig_boundary_drop(root, outdir)
     fig_consolidation_internals(root, outdir)
     fig_consolidation_loss(root, outdir)
+    fig_lr_perm_sweep(root, outdir)
 
 
 if __name__ == "__main__":

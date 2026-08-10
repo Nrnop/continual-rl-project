@@ -970,6 +970,63 @@ This does not touch the claim that matters — *the full method is not better th
 at both k. But it means the equivalence in §18d should be stated as holding at k = 8 and tested,
 not assumed, at other frequencies. Stage 19 isolates which of the two is responsible.
 
+
+### 25a.2 Stage 19: it is the critic decay, not the KL anchor
+
+| arm | return |
+|---|---:|
+| vanilla PPO | 38.8 |
+| vanilla + policy shrink only | 73.9 |
+| `pt_full` inert, KL anchor **on** | 93.9 |
+| `pt_full` inert, KL anchor **off** | 93.9 |
+
+Removing the anchor changes **nothing** (+0.0, p = 0.878). The remaining difference is that
+`pt_full` decays *both* transients — policy **and** value — while the three-line control only
+shrinks the policy. So at k = 16 the reduction needs **six lines, not three**: shrink the policy
+and the value network. `critic_shrink` implements that and Stage 21 tests it directly.
+
+The substance is unchanged — a few lines of periodic shrinkage, none of the permanent–transient
+machinery — but the exact wording matters and "three lines" is precise only at k = 8.
+
+---
+
+## 25b. Stage 20: the last axis, and it closes the question
+
+Every comparison in this document set the permanent's learning rate to either **full speed**
+(3e-4) or **zero** (inert). The intermediate rates were never swept — and `lr_perm` is
+**independent of ρ**, so it varies the mechanism while holding the shrinkage *exactly* fixed. That
+is the decoupling Stage 16 could not achieve through ρ. Run under linear monotone drift, the one
+regime where the permanent had measured a genuine benefit. 40 runs, 8 seeds.
+
+| `lr_perm` | return | vs inert | p | vs vanilla | p |
+|---|---:|---:|---:|---:|---:|
+| 0 (inert) | 107.5 | — | — | −18.6 | 0.000 |
+| 3e−5 | 79.7 | −27.8 | 0.000 | −46.4 | 0.000 |
+| 1e−4 | **44.1** | −63.4 | 0.003 | −82.0 | 0.000 |
+| 3e−4 | 112.7 | +5.2 | 0.505 | −13.4 | 0.001 |
+| 1e−3 | 115.7 | +8.2 | 0.010 | −10.4 | 0.001 |
+
+**Every arm loses to vanilla (126.1), p ≤ 0.001.** No setting of the permanent's learning rate
+produces a net benefit, in the regime most favourable to it, with the shrinkage held constant.
+
+### 25b.1 The shape is informative: a partial permanent is the worst of both
+
+The curve is **non-monotone and worst in the middle**. A permanent learning slowly (44.1) is far
+worse than one frozen (107.5) *or* one learning fast (115.7).
+
+That is a stale-anchor failure. Frozen, the permanent is a stable reference the policy can be
+pulled toward cheaply. Fast, it tracks the drift and stays roughly current. In between it does
+neither: it lags, so the KL term drags the policy toward where the task *used to be*. Under
+monotone drift "where it used to be" is exactly the wrong direction, and the cost is large.
+
+This is the strongest mechanistic statement the study can make about *why* the permanent does not
+help here, and it was measured rather than argued.
+
+![Final-window return against the permanent's learning rate under linear monotone drift, with the shrinkage held fixed. The curve is non-monotone and every point sits below the vanilla reference.](plots/figures_pt_full/lr_perm_sweep.png)
+
+*The last axis. ρ and k are identical in every arm, so only the mechanism varies — and no setting
+of it reaches the baseline.*
+
 ---
 
 ## 26. Figures
@@ -1056,6 +1113,15 @@ shrinkage control, or it measures the wrong thing.
 strongest baseline; under smooth drift the mechanism pays and EWC ceases to function at all.
 The boundary-based benchmark is the wrong instrument for this method, and the field's default
 choice of it is what the thesis should push on.
+
+### The question is closed on the axes available
+
+Stage 20 was the last untested axis: the permanent's learning rate, varied with the shrinkage held
+exactly fixed, in the regime most favourable to the mechanism. Every setting loses to vanilla
+(p ≤ 0.001), and the curve is worst in the middle — a partially-learning permanent is worse than
+either a frozen one or a fast one. Combined with §16 (ρ cannot separate the permanent from the
+shrinkage) and §25a (the conclusion holds at the supervisor's own k), there is no remaining
+configuration of `pt_full` in which the permanent–transient mechanism produces a net benefit.
 
 ### Remaining work
 

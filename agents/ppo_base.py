@@ -64,6 +64,8 @@ class PPOBase(ABC):
         # See post_update. Default 0 = disabled = every earlier run unaffected.
         self.policy_shrink_every = int(cfg.get("policy_shrink_every", 0))
         self.policy_shrink_factor = float(cfg.get("policy_shrink_factor", 1.0))
+        # See post_update. Default False -> policy-only shrink, as before.
+        self.critic_shrink = bool(cfg.get("critic_shrink", False))
         self.max_grad_norm = cfg["max_grad_norm"]
         self.target_kl = cfg.get("target_kl", None)
         self.normalize_advantage = cfg.get("normalize_advantage", True)
@@ -147,6 +149,15 @@ class PPOBase(ABC):
                         if isinstance(m, torch.nn.Linear)][-1]
                 last.weight.data.mul_(self.policy_shrink_factor)
                 last.bias.data.mul_(self.policy_shrink_factor)
+                # pt_full decays BOTH transients -- policy and value. Shrinking only the policy
+                # reproduced it exactly at k=8 but left a 20-point gap at k=16 (FULL_PT §25a.1),
+                # and Stage 19 ruled out the KL anchor as the cause. `critic_shrink` closes the
+                # comparison by giving the control the value-side decay too. Default off.
+                if self.critic_shrink and hasattr(self, "critic") and hasattr(self.critic, "net"):
+                    c_last = [m for m in self.critic.net.modules()
+                              if isinstance(m, torch.nn.Linear)][-1]
+                    c_last.weight.data.mul_(self.policy_shrink_factor)
+                    c_last.bias.data.mul_(self.policy_shrink_factor)
 
     def on_task_switch(self, step):
         """Called when the training loop detects a task boundary. Override in PT."""
