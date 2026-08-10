@@ -104,7 +104,3 @@ plots/figures_rerun/
 # Meeting prep -- a plain-language summary of FULL_PT.md for the supervisor meeting.
 # Working note, not a thesis document; the citable record is FULL_PT.md.
 MEETING_BRIEF.md
-
-# Plain-language walkthrough of plots/figures_pt_full/ -- a reading aid for review meetings.
-# Working note, not a thesis document; the citable record is FULL_PT.md.
-FIGURES_GUIDE.md
