@@ -980,13 +980,36 @@ not assumed, at other frequencies. Stage 19 isolates which of the two is respons
 | `pt_full` inert, KL anchor **on** | 93.9 |
 | `pt_full` inert, KL anchor **off** | 93.9 |
 
-Removing the anchor changes **nothing** (+0.0, p = 0.878). The remaining difference is that
-`pt_full` decays *both* transients — policy **and** value — while the three-line control only
-shrinks the policy. So at k = 16 the reduction needs **six lines, not three**: shrink the policy
-and the value network. `critic_shrink` implements that and Stage 21 tests it directly.
+Removing the anchor changes **nothing** (+0.0, p = 0.878), so the anchor is not what the control
+is missing.
 
-The substance is unchanged — a few lines of periodic shrinkage, none of the permanent–transient
-machinery — but the exact wording matters and "three lines" is precise only at k = 8.
+**I then inferred it must be the critic decay — `pt_full` decays both transients, the control only
+the policy — and Stage 21 refuted that too.**
+
+### 25a.3 Stage 21: it is not the critic decay either
+
+| arm | return |
+|---|---:|
+| vanilla PPO | 38.8 |
+| vanilla + policy shrink (3 lines) | 73.9 |
+| vanilla + policy **and critic** shrink (6 lines) | 77.5 |
+| `pt_full` inert (the target) | **93.9** |
+
+Adding the critic shrink is worth +3.5 and is not significant (p = 0.959); six lines still sits
+16.4 below the inert arm (p = 0.010).
+
+**So the k = 16 residual is currently unexplained.** Two candidates are eliminated (KL anchor,
+critic decay) and one remains untested: `pt_full` purges the transient's **Adam moments** at every
+decay (Constraint C2), and none of our controls ever did. Stage 9 established that the flush
+*alone* does nothing (ρ = 0, p = 0.234), but shrink-with-flush against shrink-without-flush has
+never been run — and at k = 16 stale momentum has twice as long to re-inflate the shrunk weights.
+Stage 22 tests exactly that.
+
+**What this does and does not change.** The headline is unaffected: at k = 16 the full apparatus
+(54.3) is still *below* the shrink-only control (73.9), so the method is not better than a few
+lines of shrinkage at his own setting. What is weakened is the stronger claim that the shrinkage
+is a *complete* account of the inert arm — that holds exactly at k = 8 and has a 16-point residual
+at k = 16 that we cannot yet attribute. Stated here rather than smoothed over.
 
 ---
 

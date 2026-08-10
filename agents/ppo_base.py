@@ -66,6 +66,8 @@ class PPOBase(ABC):
         self.policy_shrink_factor = float(cfg.get("policy_shrink_factor", 1.0))
         # See post_update. Default False -> policy-only shrink, as before.
         self.critic_shrink = bool(cfg.get("critic_shrink", False))
+        # See post_update. Default False -> no flush, as in every earlier control.
+        self.shrink_flush_optim = bool(cfg.get("shrink_flush_optim", False))
         self.max_grad_norm = cfg["max_grad_norm"]
         self.target_kl = cfg.get("target_kl", None)
         self.normalize_advantage = cfg.get("normalize_advantage", True)
@@ -145,10 +147,12 @@ class PPOBase(ABC):
         """
         if self.policy_shrink_every > 0 and (update_idx + 1) % self.policy_shrink_every == 0:
             with torch.no_grad():
+                shrunk = []
                 last = [m for m in self.actor.mean_net.modules()
                         if isinstance(m, torch.nn.Linear)][-1]
                 last.weight.data.mul_(self.policy_shrink_factor)
                 last.bias.data.mul_(self.policy_shrink_factor)
+                shrunk += [last.weight, last.bias]
                 # pt_full decays BOTH transients -- policy and value. Shrinking only the policy
                 # reproduced it exactly at k=8 but left a 20-point gap at k=16 (FULL_PT §25a.1),
                 # and Stage 19 ruled out the KL anchor as the cause. `critic_shrink` closes the
@@ -158,6 +162,16 @@ class PPOBase(ABC):
                               if isinstance(m, torch.nn.Linear)][-1]
                     c_last.weight.data.mul_(self.policy_shrink_factor)
                     c_last.bias.data.mul_(self.policy_shrink_factor)
+                    shrunk += [c_last.weight, c_last.bias]
+                # pt_full also purges the transient's Adam moments at every decay (Constraint C2),
+                # so freshly-shrunk weights are not immediately re-inflated by stale momentum.
+                # Stage 9 showed the flush ALONE does nothing (rho=0, p=0.234), but nobody tested
+                # shrink-with-flush against shrink-without-flush. At k=16 the momentum has twice
+                # as long to act, which is the leading candidate for the residual gap (§25a.3).
+                if self.shrink_flush_optim:
+                    for opt in self._all_optimizers():
+                        for prm in shrunk:
+                            opt.state.pop(prm, None)
 
     def on_task_switch(self, step):
         """Called when the training loop detects a task boundary. Override in PT."""
