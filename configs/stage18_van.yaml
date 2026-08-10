@@ -1,10 +1,10 @@
-# STAGE 18 -- HALFCHEETAH AT THE SUPERVISOR'S EXACT PUBLISHED CONFIGURATION (PT_full.md).
+# STAGE 18 -- HALFCHEETAH AT THE PUBLISHED CONFIGURATIONURATION (PT_full.md).
 # Our stage 14 used k=8, consolidation_epochs=2 and parameter-parity widths. This arm uses
-# his PT-B row verbatim -- k=16, consolidation_epochs=3, hidden [256,256], trans [64,64],
+# the PT-B row of PT_full.md verbatim -- k=16, consolidation_epochs=3, hidden [256,256], trans [64,64],
 # lr_perm = lr_perm_actor = 3e-4, rho 0.5, kl_prior_coef 0.01, rm_power 0.6 -- so the
 # reduction is tested against the configuration he actually reports, not ours.
 #
-# NOTE ON PARITY: his widths give pt_full ~4x vanilla's parameter count (four nets vs two).
+# NOTE ON PARITY: the published widths give pt_full ~4x vanilla's parameter count (four nets vs two).
 # That is a capacity advantage for PT, kept deliberately here because this is a FIDELITY
 # run. stage14 is the parity-controlled comparison; read the two together.
 #

@@ -3,7 +3,7 @@
 #   => E_tau[target] = +1.112. BOTH TASKS ARE IDENTICAL AT EVERY LEVEL
 #   (+2.0 / -2.0); only visitation frequency changes, so per-task difficulty is
 #   exactly constant -- the control Stage 2 could not achieve (§11a).
-# ARM: inert
+# ARM: frozen
 env_mode: point_tasks
 point_target_magnitude: 2.0
 point_dt: 0.1

@@ -1,10 +1,10 @@
 # STAGE 11 -- DRIFT FREQUENCY LADDER. Stage 4 found the ONLY positive result for the
-# permanent-transient mechanism (live - inert = +5.6, p=0.000) but measured it at a single
+# permanent-transient mechanism (live - frozen = +5.6, p=0.000) but measured it at a single
 # drift period. The specification's own §8.1 predicts this axis matters:
 #   'Lipschitz bounds L must be declared per domain to distinguish HIGH-FREQUENCY
 #    non-stationarity (where the transient dominates) from LOW-FREQUENCY structural
 #    drift (where consolidation captures the centroid).'
-# So live-minus-inert should GROW with the period. That is a directional prediction the
+# So live-minus-frozen should GROW with the period. That is a directional prediction the
 # theory makes and this ladder can falsify.
 # period 40000 (9.0 cycles - fast drift); Lipschitz bound L = 7.854e-05 per env step
 # ARM: van

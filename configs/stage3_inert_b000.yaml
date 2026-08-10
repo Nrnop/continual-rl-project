@@ -3,7 +3,7 @@
 # Stage 1/2 concluded the KL anchor is the active ingredient but never varied it:
 # all 225 runs sat at 0.01. beta=0 is the decisive control -- if the benefit over
 # vanilla vanishes there, the anchor is confirmed as the whole mechanism.
-# ARM: INERT permanent
+# ARM: FROZEN permanent
 env_mode: point_tasks
 point_target_magnitude: 2.0
 point_dt: 0.1

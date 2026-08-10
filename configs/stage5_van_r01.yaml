@@ -1,6 +1,6 @@
 # STAGE 5 -- vanilla + frozen sigma + KL(pi || N(0,sigma^2)), the single-network
 # analogue of pt_full's KL-to-permanent with the permanent replaced by the zero policy.
-# mu_l2_coef = 0.1. Compare against stage3_inert_b001 (pt_full, inert, beta=0.01).
+# mu_l2_coef = 0.1. Compare against stage3_inert_b001 (pt_full, frozen, beta=0.01).
 env_mode: point_tasks
 point_target_magnitude: 2.0
 point_dt: 0.1

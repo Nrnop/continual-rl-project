@@ -1,6 +1,6 @@
 # STAGE 20 -- THE LAST AXIS THAT COULD SHOW A GENUINE BENEFIT.
 #
-# Everything so far compared lr_perm = 3e-4 (live) against lr_perm = 0 (inert), i.e. the
+# Everything so far compared lr_perm = 3e-4 (live) against lr_perm = 0 (frozen), i.e. the
 # permanent either learns at full rate or not at all. The INTERMEDIATE rates were never
 # swept -- and this project's own earlier finding (pt_paper.yaml, alpha_P pass 2) is that a
 # permanent absorbing ~100% per cycle becomes a lagged copy of the CURRENT task instead of
@@ -13,7 +13,7 @@
 # Run under LINEAR MONOTONE DRIFT, the one regime where the permanent measured a genuine
 # benefit (+8.2, p=0.010, FULL_PT 22).
 #
-# A middle rate beating BOTH the inert arm AND vanilla (126.1) is a real positive result.
+# A middle rate beating BOTH the frozen-permanent arm AND vanilla (126.1) is a real positive result.
 # A flat or monotone-down curve closes the question.
 # ARM: lr_perm = lr_perm_actor = 0.0003
 env_mode: point_drift

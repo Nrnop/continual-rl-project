@@ -120,7 +120,7 @@ def fig_reduction(root, outdir):
         ("vanilla PPO", "van", GREY),
         ("PPO + shrinkage", "van_shrink", BLUE),
         ("pt_full  (live permanent)", "pt", ORANGE),
-        ("pt_full  (inert permanent)", "inert", AQUA),
+        ("pt_full  (frozen permanent)", "inert", AQUA),
     ]
     data = {c: final_phase(root, "stage14", c) for _, c, _ in arms}
     if any(len(v) == 0 for v in data.values()):
@@ -220,7 +220,7 @@ def fig_dose_response(root, outdir):
 
 # ------------------------------------------------------------------ figure 3
 def fig_mechanism(root, outdir):
-    """Diverging bar: the permanent-transient dynamic itself, live minus inert, per regime.
+    """Diverging bar: the permanent-transient dynamic itself, live minus frozen, per regime.
 
     Polarity is the job (does the mechanism help or hurt?), so a diverging form centred on zero.
     Significant results carry the two poles; non-significant ones are grey, so the eye is not
@@ -234,17 +234,17 @@ def fig_mechanism(root, outdir):
         ("HalfCheetah  (sigma 0.37)",      "stage14", "pt",       "inert",       None),
     ]
     labels, gaps, ps = [], [], []
-    for label, stage, live, inert, _ in rows:
+    for label, stage, live, frozen, _ in rows:
         if stage == "stage14":
-            a, b = final_phase(root, stage, live), final_phase(root, stage, inert)
+            a, b = final_phase(root, stage, live), final_phase(root, stage, frozen)
         elif stage in ("stage13", "stage15"):
-            a, b = final_window(root, stage, live, 0.2), final_window(root, stage, inert, 0.2)
+            a, b = final_window(root, stage, live, 0.2), final_window(root, stage, frozen, 0.2)
         else:
-            a, b = final_window(root, stage, live), final_window(root, stage, inert)
+            a, b = final_window(root, stage, live), final_window(root, stage, frozen)
         if not len(a) or not len(b):
             continue
-        # STANDARDISED effect (Cohen's d on the pooled seed SD), NOT a percentage of the inert
-        # arm. Percent-of-baseline is undefined here: on the frequency ladder the inert arm sits
+        # STANDARDISED effect (Cohen's d on the pooled seed SD), NOT a percentage of the frozen
+        # arm. Percent-of-baseline is undefined here: on the frequency ladder the frozen-permanent arm sits
         # at -21.4, so the ratio explodes to -987% and is an artifact of a near-zero denominator,
         # not a large effect. Dividing by the seed noise is well-defined for any sign or scale,
         # and it answers the question the reader actually has: how big is this against the spread?
@@ -273,7 +273,7 @@ def fig_mechanism(root, outdir):
     lo, hi = min(gaps), max(gaps)
     ax.set_xlim(lo - 1.9, hi + 1.9)
     _style(ax, xlabel="effect of the permanent–transient mechanism   "
-                      "(live minus inert, in pooled seed standard deviations)", grid="x",
+                      "(live minus frozen, in pooled seed standard deviations)", grid="x",
            title="The mechanism helps in exactly one regime: monotone drift",
            subtitle="identical agents; the only difference is whether the permanent network "
                     "learns.  Grey = not significant.")
@@ -340,10 +340,10 @@ def fig_beta_sweep(root, outdir):
     tick labels is the honest encoding.
     """
     betas = [("0", "b000"), ("0.001", "b0001"), ("0.01", "b001"), ("0.1", "b01"), ("1.0", "b1")]
-    inert = [final_window(root, "stage3", f"inert_{c}") for _, c in betas]
+    frozen = [final_window(root, "stage3", f"inert_{c}") for _, c in betas]
     live = [final_window(root, "stage3", f"pt_{c}") for _, c in betas]
     van = final_window(root, "stage2", "van_L00")
-    if not len(van) or any(not len(v) for v in inert):
+    if not len(van) or any(not len(v) for v in frozen):
         print("  [skip] beta_sweep: stage3 results not found")
         return
 
@@ -355,7 +355,7 @@ def fig_beta_sweep(root, outdir):
     ax.text(0.005, vmed, "vanilla PPO (no anchor)  ", color=INK_2, fontsize=9.5,
             va="bottom", ha="left", transform=ax.get_yaxis_transform())
 
-    for vals, colour, label in ((inert, BLUE, "inert permanent"), (live, ORANGE, "live permanent")):
+    for vals, colour, label in ((frozen, BLUE, "frozen permanent"), (live, ORANGE, "live permanent")):
         y = [float(np.median(v)) for v in vals]
         ax.plot(x, y, color=colour, linewidth=2.0, zorder=3)
         ax.scatter(x, y, s=64, color=colour, zorder=4, linewidths=1.8, edgecolors=SURFACE)
@@ -370,8 +370,8 @@ def fig_beta_sweep(root, outdir):
            subtitle="at β = 0 the anchor is switched off entirely, and the gain over vanilla is "
                     "unchanged")
     ax.text(0.995, -0.22,
-            "point-mass, centroid E=0, 8 seeds. Inert beats vanilla at every β including zero "
-            "(p = 0.000); live is below inert at every β (p ≤ 0.010).",
+            "point-mass, centroid E=0, 8 seeds. Frozen beats vanilla at every β including zero "
+            "(p = 0.000); live is below frozen at every β (p ≤ 0.010).",
             transform=ax.transAxes, color=INK_2, fontsize=8.5, ha="right", va="top")
     _save(fig, outdir, "beta_sweep")
 
@@ -443,11 +443,11 @@ def fig_decoupling(root, outdir):
     ax.text(0.995, vmed, "  vanilla PPO", color=INK_2, fontsize=9.5, va="bottom", ha="right",
             transform=ax.get_yaxis_transform())
 
-    for i, (lab, live, inert) in enumerate(got):
+    for i, (lab, live, frozen) in enumerate(got):
         # 2px surface gap between adjacent bars, per the mark spec
-        ax.bar(i - w / 2 - 0.012, np.median(inert), width=w, color=AQUA, zorder=3)
+        ax.bar(i - w / 2 - 0.012, np.median(frozen), width=w, color=AQUA, zorder=3)
         ax.bar(i + w / 2 + 0.012, np.median(live), width=w, color=ORANGE, zorder=3)
-        for xpos, v in ((i - w / 2 - 0.012, np.median(inert)), (i + w / 2 + 0.012, np.median(live))):
+        for xpos, v in ((i - w / 2 - 0.012, np.median(frozen)), (i + w / 2 + 0.012, np.median(live))):
             va, off = ("bottom", 4) if v >= 0 else ("top", -4)
             ax.annotate(f"{v:.0f}", (xpos, v), textcoords="offset points", xytext=(0, off),
                         ha="center", va=va, color=INK, fontsize=10, fontweight="bold")
@@ -456,7 +456,7 @@ def fig_decoupling(root, outdir):
     lows = [min(np.median(l), np.median(i)) for _, l, i in got]
     top, bot = max(highs + [vmed]), min(lows + [0.0])
     ax.set_ylim(bot - (top - bot) * 0.14, top + (top - bot) * 0.42)
-    ax.annotate("inert", (-w / 2 - 0.012, np.median(got[0][2])), textcoords="offset points",
+    ax.annotate("frozen", (-w / 2 - 0.012, np.median(got[0][2])), textcoords="offset points",
                 xytext=(0, 30), ha="center", color=AQUA, fontsize=10.5, fontweight="bold")
     ax.annotate("live", (w / 2 + 0.012, np.median(got[0][1])), textcoords="offset points",
                 xytext=(0, 30), ha="center", color=ORANGE, fontsize=10.5, fontweight="bold")
@@ -469,7 +469,7 @@ def fig_decoupling(root, outdir):
            subtitle="weaken them together and the benefit vanishes; force them apart and the "
                     "agent breaks")
     ax.text(0.995, -0.26,
-            "linear monotone drift, 8 seeds. Mechanism (live − inert): −0.1 at ρ=0.05 (p=1.000), "
+            "linear monotone drift, 8 seeds. Mechanism (live − frozen): −0.1 at ρ=0.05 (p=1.000), "
             "+3.1 at ρ=0.15 (p=0.130), −205.6 decoupled (p=0.010).",
             transform=ax.transAxes, color=INK_2, fontsize=8.5, ha="right", va="top")
     _save(fig, outdir, "decoupling")
@@ -481,7 +481,7 @@ def fig_decoupling(root, outdir):
 # be read side by side with the earlier ones rather than in a private format.
 
 HC_ARMS = [("vanilla PPO", "van", GREY), ("PPO + shrinkage", "van_shrink", BLUE),
-           ("pt_full live", "pt", ORANGE), ("pt_full inert", "inert", AQUA)]
+           ("pt_full live", "pt", ORANGE), ("pt_full frozen", "inert", AQUA)]
 
 
 def fig_return_curves(root, outdir):
@@ -552,7 +552,7 @@ def fig_consolidation_internals(root, outdir):
     Three panels because three different quantities share one x — never a dual axis.
     """
     recs = {}
-    for label, cell in (("pt_full live", "pt"), ("pt_full inert", "inert")):
+    for label, cell in (("pt_full live", "pt"), ("pt_full frozen", "inert")):
         rows = []
         for f in sorted(glob.glob(os.path.join(root, "stage14_results", cell,
                                                "*_consolidation_records.pkl"))):
@@ -578,12 +578,12 @@ def fig_consolidation_internals(root, outdir):
         ax.set_title(title, color=INK, fontsize=10.5, fontweight="bold", loc="left", pad=8)
         if key == "alpha_p_used":
             ax.set_yscale("log")
-            # the inert arm sits at exactly 0, which a log axis cannot render -- say so rather
+            # the frozen-permanent arm sits at exactly 0, which a log axis cannot render -- say so rather
             # than let the reader infer the series is missing
-            ax.text(0.98, 0.06, "inert arm is exactly 0\n(not drawable on a log axis)",
+            ax.text(0.98, 0.06, "frozen-permanent arm is exactly 0\n(not drawable on a log axis)",
                     transform=ax.transAxes, color=INK_2, fontsize=8.5, ha="right", va="bottom")
     axes[0].legend(frameon=False, fontsize=9, labelcolor=INK_2, loc="best")
-    fig.suptitle("Consolidation telemetry — the mechanism runs, and the inert control provably "
+    fig.suptitle("Consolidation telemetry — the mechanism runs, and the frozen-permanent control provably "
                  "does not\n1.0 = the permanent absorbed exactly the ρ it was asked for",
                  color=INK, fontsize=12, fontweight="bold", x=0.005, ha="left", y=1.13)
     fig.subplots_adjust(top=0.80)
@@ -650,7 +650,7 @@ def fig_lr_perm_sweep(root, outdir):
     vanilla reference is the thing every arm has to beat, so it carries the rule and the arms are
     one series -- this is not a categorical comparison, it is one curve against one threshold.
     """
-    arms = [("0\n(inert)", "lr0"), ("3e−5", "lr3e5"), ("1e−4", "lr1e4"),
+    arms = [("0\n(frozen)", "lr0"), ("3e−5", "lr3e5"), ("1e−4", "lr1e4"),
             ("3e−4", "lr3e4"), ("1e−3", "lr1e3")]
     vals = [final_window(root, "stage20", c, 0.2) for _, c in arms]
     van = final_window(root, "stage15", "van", 0.2)
@@ -685,11 +685,11 @@ def fig_lr_perm_sweep(root, outdir):
     _save(fig, outdir, "lr_perm_sweep")
 
 
-def fig_his_config(root, outdir):
-    """HalfCheetah at the supervisor's exact published configuration (FULL_PT §25c)."""
+def fig_published_config(root, outdir):
+    """HalfCheetah at the published configuration (FULL_PT §25c)."""
     arms = [("vanilla PPO", "van", GREY),
             ("vanilla + shrink, every 16 updates", "van_shrink", BLUE),
-            ("pt_full — his exact published config", "pt_hisexact", ORANGE)]
+            ("pt_full — the published config", "pt_hisexact", ORANGE)]
     data = {c: final_phase(root, "stage18", c) for _, c, _ in arms}
     if any(len(v) == 0 for v in data.values()):
         print("  [skip] his_config"); return
@@ -708,15 +708,15 @@ def fig_his_config(root, outdir):
     ax.set_yticklabels([a[0] for a in reversed(arms)], color=INK, fontsize=10)
     pv = mannwhitney_exact(data["pt_hisexact"], data["van_shrink"])
     _style(ax, xlabel="final-phase return  (6 seeds, HalfCheetah, 3.07M steps)", grid="x",
-           title="At his own published settings, periodic shrinkage beats the method",
+           title="At the published settings, periodic shrinkage beats the method",
            subtitle=f"k=16, consolidation_epochs=3, [256,256]/[64,64] — the PT-B row of "
                     f"PT_full.md, verbatim")
     ax.text(0.995, -0.26,
             f"shrink-only vs pt_full: {np.median(data['van_shrink']) - np.median(data['pt_hisexact']):+,.0f}"
-            f"  (p = {pv:.3f}).  His config gives pt_full 153,684 parameters against vanilla's "
+            f"  (p = {pv:.3f}).  That config gives pt_full 153,684 parameters against vanilla's "
             f"11,085 — the shrink-only control wins with 1/14 the capacity.",
             transform=ax.transAxes, color=INK_2, fontsize=8.5, ha="right", va="top")
-    _save(fig, outdir, "his_config_halfcheetah")
+    _save(fig, outdir, "published_config_halfcheetah")
 
 
 def main():
@@ -746,7 +746,7 @@ def main():
     fig_consolidation_internals(root, outdir)
     fig_consolidation_loss(root, outdir)
     fig_lr_perm_sweep(root, outdir)
-    fig_his_config(root, outdir)
+    fig_published_config(root, outdir)
 
 
 if __name__ == "__main__":

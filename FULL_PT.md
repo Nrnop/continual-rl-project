@@ -1,7 +1,7 @@
 # PT-PPO: the benefit is periodic policy shrinkage, not permanent–transient memory
 
-Sessions of 2026-08-08/09. Covers the review of the supervisor's PT-PPO specification, the audit
-of his `pt_full` implementation, and ~1000 controlled runs across `DirectionalPointMass`,
+Sessions of 2026-08-08/09. Covers the review of the PT-PPO specification, the audit
+of the `pt_full` implementation, and ~1000 controlled runs across `DirectionalPointMass`,
 `DriftingPointMass` and MuJoCo `HalfCheetah-v5`.
 
 > **READ THIS BEFORE THE SECTIONS.** This document was written as the investigation ran, so early
@@ -10,7 +10,7 @@ of his `pt_full` implementation, and ~1000 controlled runs across `DirectionalPo
 > checking §18b, §19 and §21 first. The final position is §27, and the figures are §26.
 
 **Headline.** `pt_full` beats vanilla PPO. The cause is not the permanent–transient decomposition.
-At the supervisor's own published configuration on HalfCheetah, periodic policy shrinkage added to plain PPO
+At the published configuration on HalfCheetah, periodic policy shrinkage added to plain PPO
 **significantly outperform the full method** (1275 vs 515, p = 0.041) while carrying a fourteenth
 of its parameters (§25c).
 It is one incidental side-effect: every *k* updates the algorithm multiplies the policy's output
@@ -104,9 +104,9 @@ above — the value split is value-preserving and therefore invisible at the poi
 
 ---
 
-## 4. The supervisor's `pt_full` implementation
+## 4. The `pt_full` implementation
 
-Arrived on `origin/main` as PR #1 (`EMZEDI:double-actor`), commit `5b2c257`, author Shahrad.
+Arrived on `origin/main` as PR #1 (`EMZEDI:double-actor`), commit `5b2c257`, the original author.
 Single commit on top of `5648a00`; **not** a descendant of our `split-actor` work, so the two
 implementations were developed independently.
 
@@ -121,17 +121,17 @@ ours**, implementing everything we had identified as missing:
 
 ### 4a. Correction: the two codebases disagree on `absorbed_frac`
 
-His follows spec Eq. (24) and normalises by **ρ·V_T**, so `1.0` means "absorbed exactly the ρ it
+The reference follows spec Eq. (24) and normalises by **ρ·V_T**, so `1.0` means "absorbed exactly the ρ it
 was asked for" — healthy. Ours normalises by the full transient.
 
-| | his 0.948 | ours 0.13 |
+| | the reference's 0.948 | ours 0.13 |
 |---|---|---|
 | effective absorption of the transient | ≈ 0.47 | ≈ 0.13 |
 
-An earlier reading of his 0.948 as "absorbs 95% of the transient per consolidation, ~24× too
-eager" was wrong. His consolidation is converging correctly.
+An earlier reading of the reference's 0.948 as "absorbs 95% of the transient per consolidation, ~24× too
+eager" was wrong. The reference consolidation is converging correctly.
 
-### 4b. His committed results (3 seeds, HalfCheetah)
+### 4b. The committed reference results (3 seeds, HalfCheetah)
 
 | method | boundary drop ↓ | 20-update jumpstart ↑ | final-phase return ↑ |
 |---|---:|---:|---:|
@@ -172,7 +172,7 @@ question: whether to keep a thin compatibility shim for people who now run from 
 
 ## 6. Stage 1: design
 
-`DirectionalPointMass` (his `mock_continual.yaml`): 9 phases / 8 switches at 40 000 steps, so
+`DirectionalPointMass` (`mock_continual.yaml`): 9 phases / 8 switches at 40 000 steps, so
 every task is revisited 3–5× — the repeated-revisit structure the HalfCheetah runs never had.
 Asymmetric task sets need **no code change**: `set_task()` takes any float and
 `target = direction × target_magnitude`.
@@ -232,7 +232,7 @@ Final-phase return, medians of 5 seeds:
 |---|---:|---:|---:|
 | vanilla (σ anneals) | −457 | −180 | +104 |
 | vanilla, σ frozen | −475 | −25 | +105 |
-| `pt_full`, **inert** permanent | **−64** | **+79** | **+123** |
+| `pt_full`, **frozen** permanent | **−64** | **+79** | **+123** |
 | `pt_full`, **live** permanent | −166 | +59 | +120 |
 
 Attribution:
@@ -240,8 +240,8 @@ Attribution:
 | | sym | asym | three |
 |---|---|---|---|
 | σ alone | −18 (p=.69) | +155 (p=.31) | +0.3 (p=1.0) |
-| **architecture** (inert vs σ-matched vanilla) | **+412 (p=.008)** | **+103 (p=.016)** | +18 (p=.056) |
-| **the PT mechanism** (live vs inert) | **−102 (p=.016)** | **−20 (p=.032)** | −3 (p=.55) |
+| **architecture** (frozen vs σ-matched vanilla) | **+412 (p=.008)** | **+103 (p=.016)** | +18 (p=.056) |
+| **the PT mechanism** (live vs frozen) | **−102 (p=.016)** | **−20 (p=.032)** | −3 (p=.55) |
 
 Exact permutation test (n=5 vs 5, 252 splits; scipy is not installed in this venv).
 
@@ -252,9 +252,9 @@ collapsed much further.
 ### 8a. Retraction
 
 An earlier claim in this session — that PT's retention result was the first signal not explained
-away — is **withdrawn**. In `sym` the inert permanent scores `mse_perm` **0.035 against the live
+away — is **withdrawn**. In `sym` the frozen permanent scores `mse_perm` **0.035 against the live
 permanent's 0.522, p = 0.008**. A permanent that never moves retains trivially well. This is
-precisely what §8.4(b) of the specification warns about: *"on sign-symmetric task pairs an inert
+precisely what §8.4(b) of the specification warns about: *"on sign-symmetric task pairs an frozen
 permanent otherwise scores spuriously well."*
 
 ---
@@ -265,12 +265,12 @@ permanent otherwise scores spuriously well."*
 
 | | ‖μ_P‖ | RMS per state | interpretation |
 |---|---:|---:|---|
-| inert | 0.056 | 0.002 | the permanent **is the zero policy** |
+| frozen | 0.056 | 0.002 | the permanent **is the zero policy** |
 | live | 0.07 → 36.6 | 1.14 | a **saturated** policy (actions clip at ±1) |
 
 The KL-to-prior is `‖μ_T‖²/2σ²`, an anchor pulling the acting policy toward `μ_P`. So:
 
-- **Inert permanent** → the anchor points at *"do nothing."* A neutral regulariser that keeps the
+- **Frozen permanent** → the anchor points at *"do nothing."* A neutral regulariser that keeps the
   policy small and makes switching cheap. That is the +412.
 - **Live permanent** → the anchor points at a *committed, saturated gait*. Under a symmetric flip
   that gait is confidently wrong half the time, and the KL then actively **resists** `μ_T`
@@ -278,7 +278,7 @@ The KL-to-prior is `‖μ_T‖²/2σ²`, an anchor pulling the acting policy tow
 
 The damage scales with how uninformative the task centroid is:
 
-| task set | E_τ[target] | live − inert |
+| task set | E_τ[target] | live − frozen |
 |---|---|---|
 | `sym` | 0 | **−102** (p=.016) |
 | `asym` | +0.75 | −20 (p=.032) |
@@ -298,14 +298,14 @@ It also confirms, with a number, that the symmetric ±1 reward flip is not merel
 
 The asymmetric sets changed magnitude as well as symmetry: +2/−0.5 and +2/+0.5/−1 are *easier*
 than ±2, since smaller targets are simpler to reach and hold. So "asymmetry helps" is confounded
-with "easier task" in §7. The §9 live-minus-inert gradient is not affected — it is a
+with "easier task" in §7. The §9 live-minus-frozen gradient is not affected — it is a
 within-task-set comparison — but any cross-task-set claim about difficulty is not yet supported.
 
 ---
 
 ## 11. Stage 2: the centroid ladder — the mechanism never pays
 
-§9 predicted that (live − inert) crosses zero once Theorem 5's fixed point carries real
+§9 predicted that (live − frozen) crosses zero once Theorem 5's fixed point carries real
 information. Stage 1's task sets confounded asymmetry with difficulty, so this ladder holds both
 targets exactly **2.50 apart** with mean |target| fixed at **1.25**, sliding only the centroid.
 5 levels × 3 arms × **8 seeds = 120 runs, 0 errors**.
@@ -313,7 +313,7 @@ Runner: [scripts/run_stage2.sh](scripts/run_stage2.sh).
 
 Final-phase return, medians:
 
-| level | E_τ[target] | vanilla (σ frozen) | **inert** perm | **live** perm | live − inert | p |
+| level | E_τ[target] | vanilla (σ frozen) | **frozen** perm | **live** perm | live − frozen | p |
 |---|---:|---:|---:|---:|---:|---:|
 | L00 | 0.00 | 38.8 | **93.4** | 69.2 | **−24.3** | **0.005** |
 | L05 | 0.50 | 24.6 | **90.4** | 58.6 | **−31.8** | **0.005** |
@@ -330,7 +330,7 @@ most of the task, the live permanent is still −3.3 against a permanent that ne
 The best the permanent–transient dynamic achieves, across every task design tested, is
 *harmless*.
 
-Meanwhile the inert arm beats σ-matched vanilla at **every** level, by +30 to +147. The
+Meanwhile the frozen-permanent arm beats σ-matched vanilla at **every** level, by +30 to +147. The
 architecture result from §8 replicates at 8 seeds across 5 independent task designs.
 
 ### 11a. Caveat: difficulty was not perfectly held constant
@@ -363,9 +363,9 @@ Also correct and worth noting: the coherent entry snapshot (Eq. 13), the ρ-spli
 (Eq. 15/19), and output-layer-only decay at `(1−ρ)`, which makes the operator **preserving** —
 absorb ρ, retain 1−ρ.
 
-![Consolidation telemetry: absorbed fraction on the critic and the actor, and the Robbins-Monro step size, for the live and inert arms. The live arm absorbs 0.6-1.0 of the rho it was asked for; the inert arm is flat at zero.](plots/figures_pt_full/consolidation_internals.png)
+![Consolidation telemetry: absorbed fraction on the critic and the actor, and the Robbins-Monro step size, for the live and frozen-permanent arms. The live arm absorbs 0.6-1.0 of the rho it was asked for; the frozen-permanent arm is flat at zero.](plots/figures_pt_full/consolidation_internals.png)
 
-*The mechanism's own telemetry. The live arm absorbs the ρ it is asked for throughout; the inert
+*The mechanism's own telemetry. The live arm absorbs the ρ it is asked for throughout; the frozen
 control sits at exactly zero on both critic and actor — the contrast the whole study rests on.*
 
 ![The permanent regression's loss within four consolidation cycles sampled across the run, each descending.](plots/figures_pt_full/consolidation_loss_curves.png)
@@ -390,7 +390,7 @@ magnitude **including zero**, at centroid E = 0, 8 seeds. 96 runs, 0 errors.
 
 Reference: vanilla with σ frozen, no anchor = **38.8**.
 
-| β (`kl_prior_coef`) | INERT perm | p vs vanilla | LIVE perm | live − inert | p |
+| β (`kl_prior_coef`) | FROZEN perm | p vs vanilla | LIVE perm | live − frozen | p |
 |---|---:|---:|---:|---:|---:|
 | **0.0 — no anchor at all** | **93.7** | **0.000** | 77.7 | −16.0 | **0.010** |
 | 0.001 | 94.0 | 0.000 | 61.6 | −32.5 | **0.002** |
@@ -400,13 +400,13 @@ Reference: vanilla with σ frozen, no anchor = **38.8**.
 
 **Two results.**
 
-1. **The anchor explains nothing.** The inert arm beats vanilla by the same margin with the KL
+1. **The anchor explains nothing.** The frozen-permanent arm beats vanilla by the same margin with the KL
    switched completely off (93.7 vs 38.8, p = 0.000), and is flat to within noise across
    β ∈ [0, 0.1]. Only β = 1.0 does anything, and it *hurts*. The §9 attribution is **withdrawn**.
-2. **The mechanism's cost replicates and strengthens.** live − inert is negative at every β and
+2. **The mechanism's cost replicates and strengthens.** live − frozen is negative at every β and
    now **significant at all five** (p ≤ 0.010), against two of three task sets at 5 seeds in §8.
 
-![Final-phase return against the KL coefficient beta, for the inert and live permanent arms. The inert arm is flat across four orders of magnitude and beats vanilla even at beta = 0.](plots/figures_pt_full/beta_sweep.png)
+![Final-phase return against the KL coefficient beta, for the frozen and live permanent arms. The frozen-permanent arm is flat across four orders of magnitude and beats vanilla even at beta = 0.](plots/figures_pt_full/beta_sweep.png)
 
 *The anchor is switched fully off at β = 0 and the gain over vanilla is unchanged. Only β = 1.0
 moves either arm, and it moves both downward.*
@@ -414,14 +414,14 @@ moves either arm, and it moves both downward.*
 
 ### 13a. What is left, and the capacity confound
 
-With the anchor eliminated, what still separates the inert arm from vanilla? The leading
-candidate is **actor capacity**. In the inert arm μ_P is frozen at init with `out_gain = 0.01`
+With the anchor eliminated, what still separates the frozen-permanent arm from vanilla? The leading
+candidate is **actor capacity**. In the frozen-permanent arm μ_P is frozen at init with `out_gain = 0.01`
 (measured RMS |μ_P| = 0.002 — the zero function), so the acting policy is effectively μ_T alone
 at `actor_trans_hidden_sizes = [32, 32]`, against vanilla's `[64, 64]`. "PT's architecture wins"
 may reduce to "a narrower policy net wins on this task."
 
 Stage 5 controls this directly: vanilla with a [32,32] actor and the critic held at [64,64], with
-and without the anchor. If that reproduces the inert arm, the entire measured effect is capacity.
+and without the anchor. If that reproduces the frozen-permanent arm, the entire measured effect is capacity.
 
 ---
 
@@ -434,13 +434,13 @@ The continuity type never tested. Dynamics drift continuously (sinusoidal drag, 
 |---|---:|---:|---:|---:|
 | vanilla (σ frozen) | 195.7 | — | 183.4 | — |
 | EWC | **195.7** | **1.000** | **183.4** | **1.000** |
-| `pt_full` INERT perm | 191.7 | 0.328 | 179.6 | 0.000 |
+| `pt_full` FROZEN perm | 191.7 | 0.328 | 179.6 | 0.000 |
 | `pt_full` LIVE perm | **197.3** | **0.015** | 183.6 | 0.721 |
 
-**live − inert = +5.6, p = 0.000.**
+**live − frozen = +5.6, p = 0.000.**
 
 This is the **first setting in this project where the permanent–transient mechanism helps.** The
-live permanent beats the inert one significantly, reversing the sign of every discrete-switching
+live permanent beats the frozen one significantly, reversing the sign of every discrete-switching
 result (§8, §11, §13). It is also the setting the thesis proposal originally specified.
 
 Two honest qualifications: the effect is **small** (+5.6 on ~195, under 3%), and it is confined
@@ -457,9 +457,9 @@ which is the clearest argument in the study for evaluating continual methods off
 
 ## 15. Stage 5: actor capacity refuted; a strong μ-penalty partially reproduces the arm
 
-Reference points: `pt_full` INERT = 93.4, vanilla (σ frozen) = 38.8.
+Reference points: `pt_full` FROZEN = 93.4, vanilla (σ frozen) = 38.8.
 
-| arm | return | vs pt_full-inert | vs vanilla |
+| arm | return | vs pt_full frozen-permanent | vs vanilla |
 |---|---:|---|---|
 | actor [32,32], no penalty ← **capacity control** | 38.7 | −54.8 (p=0.000) | **−0.1 (p=0.721)** |
 | actor [32,32] + penalty 0.01 | 37.2 | −56.2 (p=0.000) | −1.6 (p=0.505) |
@@ -472,8 +472,8 @@ Reference points: `pt_full` INERT = 93.4, vanilla (σ frozen) = 38.8.
 nothing (38.7 vs 38.8, p = 0.721).
 
 A *strong* μ-penalty (0.1) does recover most of the gap and is no longer distinguishable from the
-inert arm (p = 0.105). But this cannot be the explanation on its own, because §13 showed the
-inert arm reaches 93.7 with **its own anchor switched off entirely**. So `pt_full`-inert obtains
+frozen-permanent arm (p = 0.105). But this cannot be the explanation on its own, because §13 showed the
+frozen-permanent arm reaches 93.7 with **its own anchor switched off entirely**. So `pt_full` frozen-permanent obtains
 anchor-like behaviour without an anchor, from somewhere in its parameterisation. The one
 remaining untested difference is the **critic**: `pt_full`'s learned critic is the [32,32]
 transient with a *frozen random* [64,64] permanent added to it, against vanilla's single [64,64].
@@ -486,7 +486,7 @@ Stage 8 tests exactly that.
 The frequency ladder holds both tasks byte-identical (+2.0 / −2.0) and varies only visitation
 frequency. 96 runs, 8 seeds.
 
-| level | fwd:bwd | E_τ[target] | vanilla | INERT | LIVE | live − inert | p |
+| level | fwd:bwd | E_τ[target] | vanilla | FROZEN | LIVE | live − frozen | p |
 |---|---|---:|---:|---:|---:|---:|---:|
 | f5 | 5:4 | 0.222 | −467.7 | −43.5 | −165.7 | −122.1 | 0.000 |
 | f6 | 6:3 | 0.667 | −542.0 | −59.4 | −721.0 | **−661.6** | 0.000 |
@@ -501,11 +501,11 @@ design; by the criterion stated before the run — *the conclusion is only safe 
 designs agree* — the trend is not supported. The harm is also non-monotone and at f6
 catastrophic (−661.6).
 
-What **does** replicate, and is now the most robust finding in the study: **live − inert is
+What **does** replicate, and is now the most robust finding in the study: **live − frozen is
 negative everywhere**, across 5 task sets (§8, §11), 5 anchor strengths (§13), and 4 frequency
 levels here.
 
-Also striking: vanilla collapses on this ladder (−467 to −715) while the inert arm holds
+Also striking: vanilla collapses on this ladder (−467 to −715) while the frozen-permanent arm holds
 (−21 to −59). Whatever the parameterisation is doing, it is worth hundreds of points here.
 
 ---
@@ -530,22 +530,22 @@ the test is not conclusive for HalfCheetah. Settling §2 properly needs the Half
 
 ### 18a. Everything architectural is eliminated (Stage 8)
 
-| arm | return | vs vanilla | vs `pt_full`-inert |
+| arm | return | vs vanilla | vs `pt_full` frozen-permanent |
 |---|---:|---:|---:|
 | vanilla actor[64,64] critic[64,64] | 38.8 | — | −54.9 (p=0.000) |
 | vanilla actor[64,64] critic **[32,32]** | 32.1 | −6.6 (p=0.442) | −61.6 (p=0.000) |
 | vanilla actor[32,32] critic[32,32] | 38.7 | −0.1 (p=0.959) | −55.0 (p=0.000) |
-| `pt_full` INERT, permanent **random** | 93.7 | +54.9 | — |
-| `pt_full` INERT, permanent **zeroed exactly** | 92.1 | +53.4 | −1.6 (**p=1.000**) |
+| `pt_full` FROZEN, permanent **random** | 93.7 | +54.9 | — |
+| `pt_full` FROZEN, permanent **zeroed exactly** | 92.1 | +53.4 | −1.6 (**p=1.000**) |
 
 Not critic capacity, not actor capacity, and not the frozen random permanent — zeroing it changes
 nothing. With `perm_zero_init` + `lr_perm=0` + `β=0`, `pt_full` should reduce to *exactly*
 `van_a32c32`. It scores 92.1 against 38.7.
 
 Learning curves localise it: the two are identical at the end of phase 1 (98.6 vs 98.7) and
-diverge only as switches accumulate — vanilla decays to 58.5, `pt_full`-inert *rises* to 117.3.
+diverge only as switches accumulate — vanilla decays to 58.5, `pt_full` frozen-permanent *rises* to 117.3.
 
-### 18b. **Correction: the "inert permanent" control was mislabelled**
+### 18b. **Correction: the "frozen permanent" control was mislabelled**
 
 `_consolidate()` runs every `k` updates regardless of `lr_perm`, and unconditionally applies
 
@@ -559,7 +559,7 @@ policy toward zero**, at ρ=0.5 every 8 updates, for the entire run.
 
 Every statement in §8, §11 and §13 attributing the *gain* to "the architecture" is therefore
 **wrong**: the gain is the shrinkage. The conclusion that the permanent–transient *dynamic* is a
-cost under discrete switching is unaffected — that comparison was always live-vs-inert with both
+cost under discrete switching is unaffected — that comparison was always live-vs-frozen with both
 arms decaying identically — but the attribution of the benefit was wrong until Stage 9.
 
 ### 18c. Stage 9: a clean dose–response in ρ
@@ -627,7 +627,7 @@ period. The specification's §8.1 makes a directional prediction about that axis
 drift should favour the transient, low-frequency structural drift should let consolidation capture
 a centroid — so the gap should **grow** with the period. 72 runs, 8 seeds, 3 periods.
 
-| period | cycles | Lipschitz L | vanilla | INERT | LIVE | live − inert | p |
+| period | cycles | Lipschitz L | vanilla | FROZEN | LIVE | live − frozen | p |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | 40 000 | 9.00 | 7.9e−5 | 192.9 | 191.8 | 197.2 | **+5.4** | 0.000 |
 | 80 000 | 4.50 | 3.9e−5 | 195.7 | 191.7 | 197.3 | **+5.6** | 0.000 |
@@ -652,7 +652,7 @@ holding position at a fixed origin is easy at any drag. The drift changes the dy
 meaningfully changing the optimal policy, so the task is nearly stationary in difficulty.
 
 **Consequently §14 must be read as: on a task where all methods are within 4% of solved, the live
-permanent ends 2.8% closer to the ceiling than the inert one.** That is not evidence the mechanism
+permanent ends 2.8% closer to the ceiling than the frozen one.** That is not evidence the mechanism
 handles smooth non-stationarity, and the claim in §14 that this is "the one regime where PT pays"
 is **withdrawn pending a non-saturated test**.
 
@@ -685,16 +685,16 @@ and `log_std` frozen on **every** arm so `pt_full`'s Constraint-C4 freeze cannot
 | vanilla PPO | −517.3 | −214.4 | — | — |
 | **PPO + shrinkage (×0.5)** | **−416.1** | −341.2 | **+101.2** | **0.002** |
 | `pt_full` LIVE permanent | −579.2 | −290.9 | −61.9 | 0.485 |
-| `pt_full` INERT permanent | −450.4 | −396.4 | +66.9 | 0.026 |
+| `pt_full` frozen permanent | −450.4 | −396.4 | +66.9 | 0.026 |
 
 | | | |
 |---|---:|---:|
 | **the reduction** — van_shrink vs `pt_full` | **+163.1** | p = 0.065 |
-| **the mechanism** — live vs inert | **−128.8** | p = 0.065 |
+| **the mechanism** — live vs frozen | **−128.8** | p = 0.065 |
 
 **Periodic policy shrinkage on vanilla PPO beats vanilla by +101.2 (p = 0.002) and are, if anything, better than
 the entire PT-PPO apparatus** (+163.1, p = 0.065). Meanwhile the full apparatus with a live
-permanent is statistically indistinguishable from plain vanilla (p = 0.485), and the live-vs-inert
+permanent is statistically indistinguishable from plain vanilla (p = 0.485), and the live-vs-frozen
 cost replicates in sign and marginal significance.
 
 The point-mass conclusion therefore holds on real physics: **the measured benefit is periodic
@@ -728,7 +728,7 @@ The goal now drifts smoothly (`target_amplitude`), so the optimal policy changes
 | moving goal, amplitude 1.0 | **26.5%** |
 | moving goal, amplitude 1.5 | **79.9%** |
 
-| amplitude | vanilla | INERT | LIVE | live − inert | p | live − vanilla | p |
+| amplitude | vanilla | FROZEN | LIVE | live − frozen | p | live − vanilla | p |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | 1.0 | 147.4 | **171.7** | 163.9 | **−7.8** | **0.005** | +16.4 | 0.002 |
 | 1.5 | 92.2 | **158.9** | 138.2 | **−20.7** | **0.001** | +46.0 | 0.010 |
@@ -740,7 +740,7 @@ demands adaptation, the live permanent costs 8–21 points against a permanent t
 **There is now no regime tested in which the permanent–transient mechanism helps** — not discrete
 switching (§8, §11, §13, §16), not HalfCheetah (§20), and not smooth drift (here).
 
-The shrinkage, meanwhile, keeps paying and pays *more* as the task gets harder: the inert arm beats
+The shrinkage, meanwhile, keeps paying and pays *more* as the task gets harder: the frozen-permanent arm beats
 vanilla by +24.3 at amplitude 1.0 and +66.7 at amplitude 1.5.
 
 ---
@@ -763,9 +763,9 @@ has never seen — the harder and more honest test of "consolidation captures th
 |---|---:|---:|---:|
 | vanilla (σ frozen) | **126.1** | — | — |
 | `pt_full` LIVE permanent | 115.7 | −10.4 | 0.001 |
-| `pt_full` INERT permanent | 107.5 | −18.6 | 0.000 |
+| `pt_full` frozen permanent | 107.5 | −18.6 | 0.000 |
 
-**mechanism (live − inert) = +8.2, p = 0.010.**
+**mechanism (live − frozen) = +8.2, p = 0.010.**
 
 **Both signs invert here, and coherently.** The shrinkage, which pays everywhere else, *costs*
 18.6; the permanent, which costs everywhere else, *pays* 8.2. Against a monotonically moving
@@ -795,7 +795,7 @@ vanilla, p = 0.002.
 | stage 14 arm | σ actually used |
 |---|---|
 | `van`, `van_shrink` | **1.000** — config silently ignored |
-| `pt`, `inert` | **0.368** — config applied |
+| `pt`, `frozen` | **0.368** — config applied |
 
 The comparison handed `pt_full` a 3× better exploration level. This is precisely the confound §2
 identified and Stage 12 deliberately controlled for, reintroduced through a plumbing gap.
@@ -834,13 +834,13 @@ config, so the fix could not touch them.
 | vanilla PPO | 49.9 | 589.5 | — | — |
 | **PPO + shrinkage (×0.5)** | **710.9** | 745.8 | **+661.0** | **0.002** |
 | `pt_full` LIVE permanent | 760.1 | 784.0 | +710.3 | 0.015 |
-| `pt_full` INERT permanent | 551.3 | 594.9 | +501.5 | 0.002 |
+| `pt_full` frozen permanent | 551.3 | 594.9 | +501.5 | 0.002 |
 
 | | | |
 |---|---:|---:|
 | **the reduction** — pt vs van_shrink | +49.3 | **p = 0.485** |
-| the mechanism — pt vs inert | +208.8 | p = 0.394 |
-| shrinkage alone — inert vs vanilla | **+501.5** | **p = 0.002** |
+| the mechanism — pt vs frozen | +208.8 | p = 0.394 |
+| shrinkage alone — frozen vs vanilla | **+501.5** | **p = 0.002** |
 
 **The reduction holds at a normal operating point.** Periodic policy shrinkage on vanilla PPO is statistically
 indistinguishable from the complete PT-PPO apparatus (p = 0.485) and worth +661 over the baseline
@@ -867,7 +867,7 @@ Per-seed final-phase returns, sorted:
 ```
 van          -411.5  -361.6   -48.5   148.2   336.7   375.2      spread  787
 van_shrink    702.9   704.9   708.3   713.4   734.1   752.3      spread   49
-inert         541.9   544.2   551.0   551.7   565.6   588.0      spread   46
+frozen         541.9   544.2   551.0   551.7   565.6   588.0      spread   46
 pt            229.9   365.3   734.2   786.1   931.1  1252.9      spread 1023
 ```
 
@@ -880,7 +880,7 @@ This reframes the finding: the active ingredient is best described as a **stabil
 permanent–transient dynamic as something that trades that stability away for a higher ceiling on
 some seeds. Reporting means alone hides both halves.
 
-![Per-seed final-phase returns on HalfCheetah for four arms. Vanilla and the live-permanent arm are widely scattered; the shrink-only arm and the inert arm are tightly clustered.](plots/figures_pt_full/reduction_halfcheetah.png)
+![Per-seed final-phase returns on HalfCheetah for four arms. Vanilla and the live-permanent arm are widely scattered; the shrink-only arm and the frozen-permanent arm are tightly clustered.](plots/figures_pt_full/reduction_halfcheetah.png)
 
 *Every seed shown, medians marked. Two findings in one figure: the shrink-only arm sits on top of
 the full apparatus (p = 0.485), and the shrinking arms are ~16× tighter across seeds.*
@@ -906,7 +906,7 @@ monotone drift. Vanilla reference = 126.1.
 | **`pt_decoup`** | 0.5 | **0.0** | **−82.5** | **−208.6** |
 | `inert_decoup` | 0.5 | 0.0 | 123.1 | −3.0 |
 
-| mechanism (live − inert) | | |
+| mechanism (live − frozen) | | |
 |---|---:|---:|
 | at ρ = 0.05 | −0.1 | p = 1.000 |
 | at ρ = 0.15 | +3.1 | p = 0.130 |
@@ -925,7 +925,7 @@ monotone drift. Vanilla reference = 126.1.
 The sanity control validates the setup: `inert_decoup` — no permanent learning *and* no shrinkage
 — lands on vanilla (123.1 vs 126.1), exactly as it should.
 
-![Final-window return for live and inert permanents at three settings under linear monotone drift. At weak rho the two are equal; decoupled, the live arm collapses far below vanilla.](plots/figures_pt_full/decoupling.png)
+![Final-window return for live and frozen permanents at three settings under linear monotone drift. At weak rho the two are equal; decoupled, the live arm collapses far below vanilla.](plots/figures_pt_full/decoupling.png)
 
 *Weakening ρ removes the mechanism's benefit along with the shrinkage; forcing them apart with
 `decay_rho = 0` breaks the composition and the agent with it.*
@@ -938,36 +938,36 @@ same knob, and under monotone drift they point in opposite directions.*
 
 ---
 
-## 25a. Stage 17: the fidelity check at the supervisor's own k
+## 25a. Stage 17: the fidelity check at the published k
 
 Every dose-response and reduction result above used `k = 8`. `PT_full.md` specifies **k = 16 with
 `consolidation_epochs = 3`**. Since the shrink *frequency* is the mechanism identified in §18c,
-the reduction has to be re-tested at his k before it can be claimed against his configuration.
+the reduction has to be re-tested at the published k before it can be claimed against the published configuration.
 24 runs, 8 seeds, point-mass at centroid E = 0.
 
-| arm | k = 8 (ours) | **k = 16 (his)** |
+| arm | k = 8 (ours) | **k = 16 (published)** |
 |---|---:|---:|
 | PPO + shrinkage | 93.9 | **73.9** |
 | `pt_full` live | 69.2 | **54.3** |
-| `pt_full` inert | 93.4 | **93.9** |
+| `pt_full` frozen | 93.4 | **93.9** |
 | vanilla (reference) | 38.8 | 38.8 |
 
 | at k = 16 | | |
 |---|---:|---:|
 | **the reduction** — pt vs PPO + shrinkage | **−19.6** | p = 0.105 |
-| **the mechanism** — pt vs inert | **−39.5** | **p = 0.001** |
+| **the mechanism** — pt vs frozen | **−39.5** | **p = 0.001** |
 | pt vs vanilla | +15.6 | p = 0.038 |
 | shrink-only vs vanilla | +35.2 | **p = 0.000** |
 
-**The headline survives, and strengthens.** At his own k the full apparatus sits *below* the
+**The headline survives, and strengthens.** At the published k the full apparatus sits *below* the
 shrink-only control, and the mechanism's cost rises from p = 0.005 to **p = 0.001**.
 
 ### 25a.1 One sub-claim does not transfer
 
-At k = 8, `inert` and `PPO + shrinkage` matched exactly (93.4 vs 93.9). At k = 16 they diverge
-(93.9 vs 73.9). The inert arm has two things the shrink-only control does not: it also shrinks the
+At k = 8, `frozen` and `PPO + shrinkage` matched exactly (93.4 vs 93.9). At k = 16 they diverge
+(93.9 vs 73.9). The frozen-permanent arm has two things the shrink-only control does not: it also shrinks the
 **critic's** transient, and it carries the **KL anchor**. At half the shrink frequency one of them
-starts to matter, and the shrinkage reduction of the *inert arm* is therefore k-dependent.
+starts to matter, and the shrinkage reduction of the *frozen-permanent arm* is therefore k-dependent.
 
 This does not touch the claim that matters — *the full method is not better than periodic shrinkage alone* holds
 at both k. But it means the equivalence in §18d should be stated as holding at k = 8 and tested,
@@ -980,8 +980,8 @@ not assumed, at other frequencies. Stage 19 isolates which of the two is respons
 |---|---:|
 | vanilla PPO | 38.8 |
 | vanilla + policy shrink only | 73.9 |
-| `pt_full` inert, KL anchor **on** | 93.9 |
-| `pt_full` inert, KL anchor **off** | 93.9 |
+| `pt_full` frozen, KL anchor **on** | 93.9 |
+| `pt_full` frozen, KL anchor **off** | 93.9 |
 
 Removing the anchor changes **nothing** (+0.0, p = 0.878), so the anchor is not what the control
 is missing.
@@ -996,10 +996,10 @@ the policy — and Stage 21 refuted that too.**
 | vanilla PPO | 38.8 |
 | PPO + policy shrink | 73.9 |
 | PPO + policy **and critic** shrink | 77.5 |
-| `pt_full` inert (the target) | **93.9** |
+| `pt_full` frozen (the target) | **93.9** |
 
 Adding the critic shrink is worth +3.5 and is not significant (p = 0.959); the two-part shrink still sits
-16.4 below the inert arm (p = 0.010).
+16.4 below the frozen-permanent arm (p = 0.010).
 
 ### 25a.4 Stage 22: the flush does not close it either — and then the statistics catch up
 
@@ -1016,7 +1016,7 @@ Adding each candidate to the control, cumulatively:
 | + policy shrink | 73.9 | −20.0 (p = 0.010) |
 | + critic shrink | 77.5 | −16.4 (p = 0.010) |
 | + Adam flush | 82.1 | −11.8 (p = 0.038) |
-| `pt_full` inert | 93.9 | — |
+| `pt_full` frozen | 93.9 | — |
 
 Each addition helps a little (+3.5, then +4.6) and neither is individually significant.
 
@@ -1030,15 +1030,15 @@ noise.** Chasing it further would be exactly the seed-fishing this project has a
 retract five selection criteria for (REINVESTIGATION.md §5).
 
 **Where that leaves the k = 16 story.** The three components of the shrinkage — policy decay,
-critic decay, optimizer flush — recover 82.1 of the inert arm's 93.9 from a vanilla baseline of
+critic decay, optimizer flush — recover 82.1 of the frozen-permanent arm's 93.9 from a vanilla baseline of
 38.8, i.e. **~78% of the gap**, with the remainder inside corrected noise. The headline is
 unchanged and never depended on this: at k = 16 the full apparatus (54.3) is *below* the
 shrink-only control (73.9).
 
 **What this does and does not change.** The headline is unaffected: at k = 16 the full apparatus
 (54.3) is still *below* the shrink-only control (73.9), so the method is not better than a few
-lines of shrinkage at his own setting. What is weakened is the stronger claim that the shrinkage
-is a *complete* account of the inert arm — that holds exactly at k = 8 and has a 16-point residual
+lines of shrinkage at the published setting. What is weakened is the stronger claim that the shrinkage
+is a *complete* account of the frozen-permanent arm — that holds exactly at k = 8 and has a 16-point residual
 at k = 16 that we cannot yet attribute. Stated here rather than smoothed over.
 
 ---
@@ -1046,14 +1046,14 @@ at k = 16 that we cannot yet attribute. Stated here rather than smoothed over.
 ## 25b. Stage 20: the last axis, and it closes the question
 
 Every comparison in this document set the permanent's learning rate to either **full speed**
-(3e-4) or **zero** (inert). The intermediate rates were never swept — and `lr_perm` is
+(3e-4) or **zero** (frozen). The intermediate rates were never swept — and `lr_perm` is
 **independent of ρ**, so it varies the mechanism while holding the shrinkage *exactly* fixed. That
 is the decoupling Stage 16 could not achieve through ρ. Run under linear monotone drift, the one
 regime where the permanent had measured a genuine benefit. 40 runs, 8 seeds.
 
-| `lr_perm` | return | vs inert | p | vs vanilla | p |
+| `lr_perm` | return | vs frozen | p | vs vanilla | p |
 |---|---:|---:|---:|---:|---:|
-| 0 (inert) | 107.5 | — | — | −18.6 | 0.000 |
+| 0 (frozen) | 107.5 | — | — | −18.6 | 0.000 |
 | 3e−5 | 79.7 | −27.8 | 0.000 | −46.4 | 0.000 |
 | 1e−4 | **44.1** | −63.4 | 0.003 | −82.0 | 0.000 |
 | 3e−4 | 112.7 | +5.2 | 0.505 | −13.4 | 0.001 |
@@ -1081,38 +1081,38 @@ help here, and it was measured rather than argued.
 of it reaches the baseline.*
 
 
-## 25c. Stage 18: HalfCheetah at his exact published configuration
+## 25c. Stage 18: HalfCheetah at the published configuration
 
 Stage 14 used our hyperparameters. This runs the **PT-B row of `PT_full.md` verbatim** — k = 16,
 `consolidation_epochs` = 3, hidden [256,256], transient [64,64], `lr_perm` = `lr_perm_actor` =
 3e-4, ρ = 0.5, `kl_prior_coef` = 0.01, `rm_power` = 0.6 — so the reduction is tested against the
-configuration he actually reports rather than ours. 18 runs, 6 seeds. σ frozen at −1.0 on every
+configuration actually reported in PT_full.md rather than ours. 18 runs, 6 seeds. σ frozen at −1.0 on every
 arm and verified identical before launch.
 
 | arm | final phase | whole run | vs vanilla | p |
 |---|---:|---:|---:|---:|
 | vanilla PPO | 49.9 | 589.5 | — | — |
 | **vanilla + shrink ×0.5 every 16 updates** | **1275.3** | 1287.4 | **+1225.4** | **0.002** |
-| `pt_full`, his exact config | 514.7 | 743.3 | +464.8 | 0.004 |
+| `pt_full`, the published config | 514.7 | 743.3 | +464.8 | 0.004 |
 
 | | | |
 |---|---:|---:|
 | **the reduction** — pt vs shrink-only | **−760.6** | **p = 0.041** |
 
-**At his own settings the shrink-only control does not merely match the method — it significantly
+**At the published settings the shrink-only control does not merely match the method — it significantly
 beats it.** Both beat vanilla, so the method works; but the part of it that works is the shrinkage,
 and the rest of the apparatus is a net drag of 760 points.
 
-**With 1/14 the parameters.** His configuration gives `pt_full` **153,684** parameters against
+**With 1/14 the parameters.** That configuration gives `pt_full` **153,684** parameters against
 vanilla's **11,085**. The shrink-only control wins while carrying a fourteenth of the capacity.
 
 Note also that shrinking every 16 updates (1275.3) beats shrinking every 8 (710.9 in §24) on this
 benchmark — so the shrink cadence is itself an untuned hyper-parameter of the *simple* method, and
 the number reported here is not its optimum.
 
-![Per-seed final-phase returns on HalfCheetah at the supervisor's exact published configuration. The shrink-only control sits clearly above the full method.](plots/figures_pt_full/his_config_halfcheetah.png)
+![Per-seed final-phase returns on HalfCheetah at the published configuration. The shrink-only control sits clearly above the full method.](plots/figures_pt_full/published_config_halfcheetah.png)
 
-*His published configuration, run verbatim. Every seed of the shrink-only control lands above
+*The published configuration, run verbatim. Every seed of the shrink-only control lands above
 every seed but one of the full apparatus.*
 
 ---
@@ -1141,12 +1141,12 @@ number is recomputed from the result pickles rather than transcribed.
 | `return_curves` | return over training, four arms, switches marked |
 | `phase_means_main` | per-phase mean return |
 | `boundary_drop` | mean return drop at a switch |
-| `consolidation_internals` | **the mechanism's own telemetry** — absorbed fraction on critic and actor, and the Robbins–Monro step size, live vs inert |
+| `consolidation_internals` | **the mechanism's own telemetry** — absorbed fraction on critic and actor, and the Robbins–Monro step size, live vs frozen |
 | `consolidation_loss_curves` | the permanent regression's within-cycle descent, sampled across the run |
 
 Note on `mechanism_by_regime`: effects are reported in **pooled seed standard deviations**, not as
-a percentage of the inert arm. Percent-of-baseline is undefined here — on the frequency ladder the
-inert arm sits at −21.4, so the ratio explodes to −987% purely from a near-zero denominator. The
+a percentage of the frozen-permanent arm. Percent-of-baseline is undefined here — on the frequency ladder the
+frozen-permanent arm sits at −21.4, so the ratio explodes to −987% purely from a near-zero denominator. The
 standardised form is well-defined at any sign or scale and answers the question the reader has:
 how large is this against the seed noise?
 
@@ -1156,7 +1156,7 @@ how large is this against the seed noise?
 
 ![Standardised effect of the permanent-transient mechanism across five regimes. Negative under discrete switching and sinusoidal drift, positive only under linear monotone drift.](plots/figures_pt_full/mechanism_by_regime.png)
 
-*The mechanism on its own — live minus inert, in pooled seed standard deviations, across every
+*The mechanism on its own — live minus frozen, in pooled seed standard deviations, across every
 regime tested. Grey = not significant.*
 
 
@@ -1171,7 +1171,7 @@ regime tested. Grey = not significant.*
    Eliminated by direct experiment: the permanent (p=1.000), the KL anchor, actor capacity,
    critic capacity, and the Adam flush (p=0.234).
 4. **Under discrete switching the permanent–transient dynamic is a consistent cost** — live vs
-   inert negative across 5 task sets (§8, §11), 5 anchor strengths (§13) and 4 frequency
+   frozen negative across 5 task sets (§8, §11), 5 anchor strengths (§13) and 4 frequency
    levels (§16).
 5. **The sinusoidal-drift positive was a saturated-benchmark artifact and is refuted**
    (§19, §21). On a *sinusoidal* drift benchmark that actually demands adaptation the mechanism
@@ -1208,7 +1208,7 @@ Stage 20 was the last untested axis: the permanent's learning rate, varied with 
 exactly fixed, in the regime most favourable to the mechanism. Every setting loses to vanilla
 (p ≤ 0.001), and the curve is worst in the middle — a partially-learning permanent is worse than
 either a frozen one or a fast one. Combined with §16 (ρ cannot separate the permanent from the
-shrinkage) and §25a (the conclusion holds at the supervisor's own k), there is no remaining
+shrinkage) and §25a (the conclusion holds at the published k), there is no remaining
 configuration of `pt_full` in which the permanent–transient mechanism produces a net benefit.
 
 ### Remaining work
@@ -1226,7 +1226,7 @@ configuration of `pt_full` in which the permanent–transient mechanism produces
 
 - **The one-line-regulariser control** (now the highest-value run). Vanilla + L2 on μ toward zero
   + frozen σ. If it
-  reproduces the inert arm, everything `pt_full` buys on this benchmark is a one-line
+  reproduces the frozen-permanent arm, everything `pt_full` buys on this benchmark is a one-line
   regulariser — a finding worth stating plainly rather than discovering later.
 - **EWC without `log_std` in the Fisher penalty**, to determine how much of "EWC wins" is
   exploration preservation (§2).
@@ -1253,7 +1253,7 @@ python scripts/analyze_stage1.py    # the horizon x task-set grid (§7)
 
 Results in `../stage1_results/` and `../stage2_results/`, logs alongside. The Stage 1 control
 arms (§8) are `stage1_ptinert_<taskset>` / `stage1_vanfrozen_<taskset>`; the Stage 2 arms are
-`stage2_{pt,inert,van}_L{00,05,07,10,12}`. Both attribution tables are computed from the same
+`stage2_{pt,frozen,van}_L{00,05,07,10,12}`. Both attribution tables are computed from the same
 result pkls.
 
 **Machine note.** Every run here is CPU-only point-mass. On 8 cores at 7-way parallelism the two

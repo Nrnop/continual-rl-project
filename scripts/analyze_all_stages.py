@@ -76,8 +76,8 @@ def stage3():
     print("=" * 100)
     ref = final_return("stage2", "van_L00")          # vanilla, sigma frozen, no anchor
     print(f"  reference: vanilla (sigma frozen, no anchor) = {np.median(ref):.1f}\n")
-    print(f"  {'beta':<10}{'INERT perm':>12}{'p vs van':>10}{'LIVE perm':>12}{'p vs van':>10}"
-          f"{'  LIVE-INERT':>13}{'p':>8}")
+    print(f"  {'beta':<10}{'FROZEN perm':>12}{'p vs van':>10}{'LIVE perm':>12}{'p vs van':>10}"
+          f"{'  LIVE-FROZEN':>13}{'p':>8}")
     for lab, b in [("b000", 0.0), ("b0001", 0.001), ("b001", 0.01), ("b01", 0.1), ("b1", 1.0)]:
         i, p = final_return("stage3", f"inert_{lab}"), final_return("stage3", f"pt_{lab}")
         if not len(i) or not len(p):
@@ -101,7 +101,7 @@ def stage4():
     ref_f, ref_o = final_return("stage4", "van", frac=0.2), overall_return("stage4", "van")
     print(f"  {'arm':<24}{'final 20%':>11}{'p':>8}{'whole run':>12}{'p':>8}")
     for arm, desc in [("van", "vanilla (sigma frozen)"), ("ewc", "EWC (degenerate here)"),
-                      ("inert", "pt_full INERT perm"), ("pt", "pt_full LIVE perm")]:
+                      ("inert", "pt_full FROZEN perm"), ("pt", "pt_full LIVE perm")]:
         f, o = final_return("stage4", arm, frac=0.2), overall_return("stage4", arm)
         if not len(f):
             continue
@@ -110,7 +110,7 @@ def stage4():
         print(f"  {desc:<24}{np.median(f):>11.1f}{pf:>8}{np.median(o):>12.1f}{po:>8}")
     i, p = final_return("stage4", "inert", frac=0.2), final_return("stage4", "pt", frac=0.2)
     if len(i) and len(p):
-        print(f"\n  THE PT MECHANISM (live - inert): {np.median(p) - np.median(i):+.1f}  p={mw(p, i):.3f}")
+        print(f"\n  THE PT MECHANISM (live - frozen): {np.median(p) - np.median(i):+.1f}  p={mw(p, i):.3f}")
     e, v = overall_return("stage4", "ewc"), ref_o
     if len(e):
         print(f"  EWC vs vanilla (should be ~0 -- no boundaries, so no Fisher is ever accumulated):"
@@ -120,11 +120,11 @@ def stage4():
 def stage5():
     print("\n" + "=" * 100)
     print("STAGE 5 -- THE ONE-LINE REGULARISER. vanilla + frozen sigma + KL-to-zero-prior.")
-    print("            Does it reproduce pt_full's inert arm?")
+    print("            Does it reproduce pt_full's frozen-permanent arm?")
     print("=" * 100)
     target = final_return("stage3", "inert_b001")
     van = final_return("stage2", "van_L00")
-    print(f"  target  pt_full INERT (beta=0.01) = {np.median(target):.1f}")
+    print(f"  target  pt_full FROZEN (beta=0.01) = {np.median(target):.1f}")
     print(f"  floor   vanilla (sigma frozen)    = {np.median(van):.1f}\n")
     arms = [("r0001", "actor[64,64] mu_l2=0.001"), ("r001", "actor[64,64] mu_l2=0.01"),
             ("r01", "actor[64,64] mu_l2=0.1"), ("r1", "actor[64,64] mu_l2=1.0"),
@@ -134,7 +134,7 @@ def stage5():
     for lab, desc in arms:
         a = final_return("stage5", f"van_{lab}")
         if len(a):
-            print(f"  {desc:<42}{np.median(a):>9.1f}   vs pt_full-inert "
+            print(f"  {desc:<42}{np.median(a):>9.1f}   vs pt_full frozen-permanent "
                   f"{np.median(a) - np.median(target):+8.1f} p={mw(a, target):.3f}"
                   f"   vs vanilla {np.median(a) - np.median(van):+8.1f} p={mw(a, van):.3f}")
 
@@ -149,8 +149,8 @@ def stage6():
     print("  and Stage 6 therefore carry DIFFERENT confounds -- the conclusion is only safe where")
     print("  they agree, which is what makes running both worthwhile.")
     print("=" * 100)
-    print(f"  {'level':<7}{'fwd:bwd':>9}{'E[target]':>11}{'van':>9}{'INERT':>9}{'LIVE':>9}"
-          f"{'  LIVE-INERT':>13}{'p':>8}")
+    print(f"  {'level':<7}{'fwd:bwd':>9}{'E[target]':>11}{'van':>9}{'FROZEN':>9}{'LIVE':>9}"
+          f"{'  LIVE-FROZEN':>13}{'p':>8}")
     gaps, Es = [], []
     for lab, ratio, E in [("f5", "5:4", 0.222), ("f6", "6:3", 0.667),
                           ("f7", "7:2", 1.111), ("f8", "8:1", 1.556)]:
@@ -169,7 +169,7 @@ def stage6():
         rho = np.corrcoef(rx, ry)[0, 1]
         null = [np.corrcoef(rx, ry[list(pm)])[0, 1] for pm in itertools.permutations(range(len(g)))]
         pv = float(np.mean(np.abs(np.array(null)) >= abs(rho) - 1e-12))
-        print(f"\n  TREND of (live-inert) against centroid: Spearman rho={rho:+.3f}, exact p={pv:.4f}")
+        print(f"\n  TREND of (live-frozen) against centroid: Spearman rho={rho:+.3f}, exact p={pv:.4f}")
 
 
 def stage7():

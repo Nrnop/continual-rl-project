@@ -65,7 +65,7 @@ done
 wait
 echo "=== Stage 1 DONE $(date)  launched ${N} runs ==="
 echo
-echo "CHECK FIRST -- an inert or saturated permanent makes a cell meaningless:"
+echo "CHECK FIRST -- an frozen or saturated permanent makes a cell meaningless:"
 echo "  grep -h 'absorbed' ${LOG_DIR}/pt_*.log | tail"
 echo "  absorbed_frac is normalised by rho*transient here, so ~1.0 is HEALTHY"
 echo "  (it means the permanent absorbed the rho it was asked to), not saturated."

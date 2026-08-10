@@ -1,8 +1,8 @@
 # STAGE 16 -- CAN THE PERMANENT WIN? Linear monotone drift, permanent decoupled from decay.
 #
 # Stage 15 (linear drift, rho=0.5) was the ONLY regime where the signs invert:
-#     shrinkage (inert - van) = -18.6  p=0.000    <- the shrinkage HURTS here
-#     mechanism (live - inert) = +8.2  p=0.010    <- the permanent HELPS here
+#     shrinkage (frozen - van) = -18.6  p=0.000    <- the shrinkage HURTS here
+#     mechanism (live - frozen) = +8.2  p=0.010    <- the permanent HELPS here
 # but both arms still lost to vanilla (126.1), because rho couples the two: you cannot
 # have the permanent without also paying for the shrinkage.
 #

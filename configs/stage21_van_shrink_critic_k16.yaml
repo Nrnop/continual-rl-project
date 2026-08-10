@@ -1,5 +1,5 @@
 # STAGE 21 -- close the k=16 gap. Stage 19 ruled out the KL anchor, leaving the CRITIC decay as
-# the only remaining difference between pt_full-inert (93.9) and vanilla+policy-shrink (73.9).
+# the only remaining difference between pt_full frozen-permanent (93.9) and vanilla+policy-shrink (73.9).
 # This arm gives the vanilla control the value-side shrink too. If it lands on ~94 the reduction
 # is complete and simply needs the critic decay too; if it stays at ~74, something else
 # in pt_full is doing the work at this frequency and the reduction is incomplete at k=16.

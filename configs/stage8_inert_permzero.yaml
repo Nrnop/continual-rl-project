@@ -1,9 +1,9 @@
 # STAGE 8 -- REDUCTION LADDER. Stage 5 refuted actor capacity (vanilla at [32,32] scores
-# 38.7, identical to [64,64]'s 38.8), yet pt_full's INERT arm scores 93.4 with NO anchor
+# 38.7, identical to [64,64]'s 38.8), yet pt_full's FROZEN arm scores 93.4 with NO anchor
 # (Stage 3, beta=0). Something else in the parameterisation is responsible. The remaining
 # untested difference is the CRITIC: pt_full's learned critic is the [32,32] transient,
 # with a FROZEN RANDOM [64,64] permanent added to it, against vanilla's single [64,64].
-# pt_full INERT, beta=0, but perm_zero_init=True so V_perm == 0 and mu_P == 0 EXACTLY.
+# pt_full FROZEN, beta=0, but perm_zero_init=True so V_perm == 0 and mu_P == 0 EXACTLY.
 # If this drops to vanilla's level, the frozen RANDOM permanent was the active element.
 env_mode: point_tasks
 point_target_magnitude: 2.0

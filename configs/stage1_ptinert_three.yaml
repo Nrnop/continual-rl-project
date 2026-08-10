@@ -1,4 +1,4 @@
-# STAGE 1 CONTROL -- pt_full with an INERT permanent (lr_perm = lr_perm_actor = 0).
+# STAGE 1 CONTROL -- pt_full with an FROZEN permanent (lr_perm = lr_perm_actor = 0).
 # Identical to stage1_pt_rho50_k8_three including the frozen sigma; only the permanent's
 # learning is removed. If this matches the live-permanent arm, the PT mechanism
 # contributes nothing and the gap to vanilla is architecture + exploration.

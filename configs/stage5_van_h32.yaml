@@ -1,4 +1,4 @@
-# STAGE 5 CAPACITY CONTROL. In pt_full's INERT arm mu_P is frozen at init (out_gain 0.01,
+# STAGE 5 CAPACITY CONTROL. In pt_full's FROZEN arm mu_P is frozen at init (out_gain 0.01,
 # measured RMS |mu_P| = 0.002), so the ACTING policy is effectively just mu_T at
 # actor_trans_hidden_sizes = [32,32], against vanilla's [64,64]. The Stage-1/2
 # 'architecture wins' result is therefore confounded with actor CAPACITY. These arms give

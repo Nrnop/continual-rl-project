@@ -12,9 +12,9 @@
 #   van          vanilla PPO
 #   van_shrink   vanilla + policy shrink x0.5 every 8 updates   <- THE REDUCTION
 #   pt           full pt_full apparatus, live permanent
-#   inert        pt_full with lr_perm=0 (shrink still active)
+#   frozen        pt_full with lr_perm=0 (shrink still active)
 #
-# PREDICTION: van_shrink ~= pt ~= inert, and all three > van.
+# PREDICTION: van_shrink ~= pt ~= frozen, and all three > van.
 # If van_shrink falls short of pt on HalfCheetah, the reduction is point-mass-specific and the
 # mechanism is doing something the shrinkage does not capture -- which would be a positive result
 # for the method and should be reported as such.
@@ -40,7 +40,7 @@ fi
 
 echo "=== Stage 12 START $(date)  seeds=[$SEEDS] ==="
 for seed in $SEEDS; do
-  for A in van van_shrink pt inert; do
+  for A in van van_shrink pt frozen; do
     AG=$(python -c "import yaml;print(yaml.safe_load(open('src_continuous_control/configs/stage14_${A}.yaml'))['agent'])")
     while [ "$(jobs -rp | wc -l)" -ge "$MAXJOBS" ]; do sleep 5; done
     python -u -m src_continuous_control.train --agent "$AG" --config "stage14_${A}" --seed "$seed" \

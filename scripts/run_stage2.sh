@@ -16,7 +16,7 @@
 #   L10  +2.25 / -0.25   E = 1.00
 #   L12  +2.50 / +0.00   E = 1.25     permanent's fixed point IS most of the task
 #
-# THE MEASUREMENT is not "does pt beat vanilla". It is (live - inert) as a function of E: the
+# THE MEASUREMENT is not "does pt beat vanilla". It is (live - frozen) as a function of E: the
 # same architecture, the same frozen sigma, the same KL anchor, differing only in whether the
 # permanent learns. Prediction: that gap is negative at L00 and crosses zero as E grows.
 #

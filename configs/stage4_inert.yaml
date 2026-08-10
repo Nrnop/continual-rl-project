@@ -3,7 +3,7 @@
 # EWC computes its Fisher AT a boundary, so with none it never accumulates one and
 # degenerates structurally into vanilla. PT consolidates on a TIMER and is unaffected.
 # This is PT's strongest remaining case and what the thesis proposal actually specified.
-# ARM: inert
+# ARM: frozen
 env_mode: point_drift
 point_target: 0.0
 point_dt: 0.1

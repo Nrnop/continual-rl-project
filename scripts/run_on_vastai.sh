@@ -7,7 +7,7 @@
 #   van          vanilla PPO
 #   van_shrink   vanilla + policy shrink x0.5 every 8 updates   <- THE REDUCTION
 #   pt           full pt_full apparatus, live permanent
-#   inert        pt_full with lr_perm=0 (shrink still active)
+#   frozen        pt_full with lr_perm=0 (shrink still active)
 #
 # Locally this is ~290 min at 7-way parallelism. On 24 threads it is ~90 min, which is why it
 # moved to the box; everything else in the study is point-mass and finished locally.
@@ -60,7 +60,7 @@ PY
 
 echo "=== Stage 14 START $(date) ==="
 for seed in $SEEDS; do
-  for A in van van_shrink pt inert; do
+  for A in van van_shrink pt frozen; do
     AG=$(python -c "import yaml;print(yaml.safe_load(open('src_continuous_control/configs/stage14_${A}.yaml'))['agent'])")
     while [ "$(jobs -rp | wc -l)" -ge "$MAXJOBS" ]; do sleep 5; done
     python -u -m src_continuous_control.train --agent "$AG" --config "stage14_${A}" --seed "$seed" \

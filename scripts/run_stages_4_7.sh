@@ -22,9 +22,9 @@ MAXJOBS=${MAXJOBS:-7}; SEEDS=${SEEDS:-"0 1 2 3 4 5 6 7"}
 
 # stage:config-basename:agent
 JOBS=""
-for a in pt inert van ewc;      do JOBS="$JOBS stage4:stage4_${a}:AUTO"; done
+for a in pt frozen van ewc;      do JOBS="$JOBS stage4:stage4_${a}:AUTO"; done
 for r in r0001 r001 r01 r1 h32 h32_r001 h64_r001; do JOBS="$JOBS stage5:stage5_van_${r}:vanilla"; done
-for f in f5 f6 f7 f8; do for a in pt inert van; do JOBS="$JOBS stage6:stage6_${a}_${f}:AUTO"; done; done
+for f in f5 f6 f7 f8; do for a in pt frozen van; do JOBS="$JOBS stage6:stage6_${a}_${f}:AUTO"; done; done
 for e in withstd nostd;         do JOBS="$JOBS stage7:stage7_ewc_${e}:ewc"; done
 
 for STAGE in stage4 stage5 stage6 stage7; do

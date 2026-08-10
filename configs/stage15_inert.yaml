@@ -11,7 +11,7 @@
 # NOT RATE-MATCHED, and cannot be: a bounded ramp travels 3.0 units of target over the run
 # against the sinusoid's 27, so this is slow monotone drift at ~1/9 the rate. Read it as a
 # separate regime, not as a matched control against Stage 13.
-# ARM: inert; target ramps 0 -> 3.0 over 360k steps (rate 8.3e-6/step)
+# ARM: frozen; target ramps 0 -> 3.0 over 360k steps (rate 8.3e-6/step)
 env_mode: point_drift
 point_target: 0.0
 point_dt: 0.1

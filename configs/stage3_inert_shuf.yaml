@@ -1,7 +1,7 @@
 # STAGE 3 -- consolidation_shuffle=True. Tests the sequential-minibatch defect found in
 # the audit: the consolidation regression iterated the visit-ordered buffer in fixed
 # order, so the newest states always took the last gradient step of each epoch.
-# ARM: INERT permanent
+# ARM: FROZEN permanent
 env_mode: point_tasks
 point_target_magnitude: 2.0
 point_dt: 0.1

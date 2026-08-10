@@ -1,7 +1,7 @@
-# STAGE 17 -- FIDELITY CHECK at the supervisor's k. Every dose-response and reduction result
+# STAGE 17 -- FIDELITY CHECK at the published k. Every dose-response and reduction result
 # so far used k=8; PT_full.md specifies k=16 with consolidation_epochs=3. Since the shrink
-# FREQUENCY is the mechanism we identified, the reduction has to be re-tested at his k
-# before it can be claimed against his configuration.
+# FREQUENCY is the mechanism we identified, the reduction has to be re-tested at the published k
+# before it can be claimed against the published configuration.
 # ARM: pt_k16
 env_mode: point_tasks
 point_target_magnitude: 2.0

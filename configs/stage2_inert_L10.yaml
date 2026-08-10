@@ -3,7 +3,7 @@
 #   |t1 - t2|       = 2.50   (constant: switching distance held fixed)
 #   mean|target|    = 1.25   (constant: difficulty held fixed)
 # Stage 1 confounded asymmetry with difficulty; this family does not.
-# ARM: INERT permanent (lr_perm=0) -- the control
+# ARM: FROZEN permanent (lr_perm=0) -- the control
 env_mode: point_tasks
 point_target_magnitude: 2.0
 point_dt: 0.1

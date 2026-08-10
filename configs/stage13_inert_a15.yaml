@@ -8,7 +8,7 @@
 # flip, with the target unobserved exactly as it is there. Reward swing is now comparable
 # to the switching benchmark, so the arms have room to separate.
 # target drifts over +/-1.5 (position_limit 2.0)
-# ARM: inert
+# ARM: frozen
 env_mode: point_drift
 point_target: 0.0
 point_dt: 0.1
