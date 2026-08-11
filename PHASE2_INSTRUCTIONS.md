@@ -1,8 +1,9 @@
 # Phase 2 — instructions
 
 Decisions from the supervisor meeting, turned into a work plan, with the follow-up clarifications
-folded in. This supersedes the experimental design in `FULL_PT.md`; that document becomes part of
-the Phase 1 archive.
+folded in. This supersedes the Phase 1 design; that record is now at `archive/phase1/FULL_PT.md`.
+
+**Status: archiving is done, no code work has started.** Begin at §6, task T1.
 
 **The key clarification:** task boundaries **stay**. What changes at a boundary is the *physics*
 (friction, damping, …) instead of the reward sign. That resolves both open blockers from the first
@@ -18,7 +19,7 @@ draft — EWC works unchanged, and forward/backward transfer keep their standard
 |---|---|
 | **Environment** | HalfCheetah only. Point-mass dropped entirely. |
 | **Non-stationarity** | At each task switch, **physics parameters change**. Reward function is fixed (always "run forward"). |
-| **Parameters** | Start with `["damping", "friction"]`. Then a harder variant changing **all** of them (§5). |
+| **Parameters** | Start with `["damping", "friction"]`. Then a harder variant changing **all** of them (§2.4). |
 | **Agents** | `vanilla`, `ewc`, `pt` — where `pt` is the current `pt_full`: split actor **and** split critic. |
 | **Seeds** | 5 per method. |
 | **Task boundaries** | Observable, as in the paper's *semi-continual* setting. |
@@ -158,117 +159,115 @@ agents — this is exactly the failure mode that cost a week in Phase 1.
 
 ---
 
-## 5. Files to ARCHIVE — for your approval
+## 5. Archiving — DONE ✅
 
-Nothing deleted. Proposal: move to `archive/` in one commit, so history is preserved and Phase 1
-stays reproducible by checking out the previous tag.
+Completed and pushed. `main` is tagged **`phase1-final`** at the last Phase 1 commit; everything
+below is recoverable with `git checkout phase1-final -- <path>` or by moving files back.
 
-### 5a. Old PT implementation
-```
-agents/ppo_pt.py                      the critic-only PT agent
-configs/ppo_pt.yaml  pt_fixed.yaml  pt_paper.yaml  pt_paper_asym.yaml
-configs/pt_slow.yaml  pt_klambda.yaml  pt_zeroperm.yaml  vanilla_paper.yaml
-tests/test_pt_consolidation.py
-plots/make_consolidation_figure.py  plot_consolidation_insitu.py  plot_consolidation_internals.py
-```
+**Archived to `archive/phase1/`** — 205 files:
 
-### 5b. Point-mass benchmark
-```
-envs/mock_continual.py  envs/simple_drift.py
-configs/mock_continual.yaml  simple_drift.yaml
-tests/test_simple_drift.py  test_simple_drift_plot.py
-plots/plot_mock_continual.py  plot_simple_drift.py
-```
-
-### 5c. Reward-switch benchmark
-```
-envs/directional_half_cheetah.py      the +1/−1 reward flip
-tests/test_task_switching.py
-```
-⚠️ **Check first:** `train.py:29` imports it and `_set_env_task` traverses for it. Must stay until
-`set_task` is re-routed to the drift wrapper (§4).
-
-### 5d. Phase 1 reduction study
-```
-configs/stage*.yaml                                       130 files
-scripts/run_stage1.sh  run_stage2.sh  run_stage3.sh  run_stages_4_7.sh
-scripts/run_stage12_halfcheetah.sh  run_stage14_halfcheetah.sh  run_on_vastai.sh
-scripts/analyze_all_stages.py  analyze_stage1.py  gen_stage1_configs.py
-plots/make_pt_full_figures.py
-```
-**Keep `plots/figures_pt_full/`** — the figures are committed and are the evidence for the Phase 1
-result. Archiving the generator means they can no longer be regenerated, which is acceptable only
-because the images themselves are in git.
-
-### 5e. Older ablation rounds
-```
-configs/abl_*.yaml                                        23 files
-scripts/run_ablation.sh … run_ablation7.sh                7 files
-scripts/hp_focused_sweep.py  hp_sweep_expanded.py
-scripts/run_singletask_baseline.sh  run_vanilla_5seeds.py  run_all_5seeds_eval.py
-plots/make_reinvestigation_figures.py  plot_drift_and_r7.py  analyze_final_comparison.py
-plots/plot_singletask_live.py  plot_thesis_figures.py
-configs/cleanrl_match.yaml  continual_fast.yaml  drift_fast.yaml  drift_twoscale.yaml
-```
-
-### 5f. Results / report documents — **all of them**
-```
-FULL_PT.md                  Phase 1 record, §1–§27
-figures_full_pt_guide.md    the figure walkthrough
-MEETING_BRIEF.md            (untracked) plain-language brief
-SESSION_LOG.md              (untracked) handoff log
-FINDINGS.md                 pre-reduction results, several since retracted
-REINVESTIGATION.md          the investigation preceding Phase 1
-PT_REFERENCE_MAPPING.md     mapping to the old critic-only implementation
-VASTAI_SETUP.md             remote-box notes, no longer needed
-```
-
-**Recommend keeping two out of the archive:**
-- **`PT_full.md`** — the specification. Not a result; still the reference for what `pt` must do.
-- **`README.md`, `CLAUDE.md`** — to be rewritten, not archived.
-
-⚠️ **Before archiving `FULL_PT.md`:** it is the only record of the Phase 1 negative result, and
-that result is still likely to appear in the thesis (the reduction, the benchmark critique, the
-actor-critic cancellation). Archiving is fine; **losing track of it is not.** Suggest
-`archive/phase1/` with a one-page `archive/README.md` saying what is in there and why.
-
-### Summary
-
-| group | files |
+| group | count |
 |---|---:|
-| 5a old PT | 13 |
-| 5b point-mass | 8 |
-| 5c reward switch | 2 |
-| 5d Phase 1 study | ~140 |
-| 5e old ablations | ~40 |
-| 5f documents | 8 |
-| **total** | **~211 of 355 tracked** |
+| `configs/` — 130 `stage*`, 23 `abl_*`, 11 Phase 1 overlays | 164 |
+| `scripts/` — stage runners, ablation runners, sweeps, analysis | 22 |
+| `plots/` — Phase 1 and pre-Phase-1 figure generators | 11 |
+| `docs/` — `FULL_PT.md`, `FINDINGS.md`, `REINVESTIGATION.md`, `PT_REFERENCE_MAPPING.md`, `VASTAI_SETUP.md`, `figures_full_pt_guide.md`, `MEETING_BRIEF.md`, `SESSION_LOG.md` | 8 |
+| `tests/test_simple_drift_plot.py` (tested an archived plot script) | 1 |
 
-Leaves ~44 source files.
+`archive/phase1/README.md` records what the supervisors' decision on the shrinkage baseline does
+and does not invalidate — several Phase 1 measurements stand independently of it and may still be
+cited. **Read it before reusing any Phase 1 number.**
+
+**Deliberately NOT archived:**
+- `plots/figures_pt_full/` — committed images, still the evidence for Phase 1.
+- `PT_full.md` — the specification, not a result.
+- `envs/directional_half_cheetah.py` — **`drift_half_cheetah.py` imports `make_base_env` from it.**
+  The file stays; only the reward-flip *usage* is being dropped.
+
+**Left in place until the code work happens** (archiving them now would break imports — they go in
+tasks T2/T4 below): `agents/ppo_pt.py`, `envs/mock_continual.py`, `envs/simple_drift.py`, and the
+tests that cover them.
+
+**Working tree now:** 8 configs, 5 scripts, 2 plot modules, 5 markdown files. **76 tests pass.**
 
 ---
 
-## 6. Order of work
+## 6. The task list — start here
 
-Each step leaves the test suite green.
+Each task leaves the test suite green. Run `python -m pytest src_continuous_control/tests -q` from
+the **parent** directory after every one.
 
-1. **Tag `main` as `phase1-final`.** Everything below is irreversible without it.
-2. **Branch `phase2`.**
-3. **`schedule="step"`** in the drift env, plus its test (§3). Do this *first* — it is the only new
-   science, and everything else is plumbing.
-4. **Rename** `pt_full` → `pt`; delete the old agent; update the registry and three PT tests.
-5. **Strip** the shrink code from `ppo_base.py`.
-6. **Re-route `set_task`** in `train.py` to the drift wrapper; then `directional_half_cheetah.py`
-   is safe to archive.
-7. **Archive** the approved lists in one commit, with `archive/README.md`.
-8. **Rewrite** `CLAUDE.md`, `README.md`, `configs/default.yaml`.
-9. **Transfer-matrix eval** + test.
-10. **Smoke test** — 3 agents × 1 seed × 60k steps. Confirm: all three train; EWC's penalty is
-    non-zero; `absorbed_frac > 0.01` for `pt`; the physics actually differ between tasks.
-11. **Dynamic-range check** (§7) — one vanilla run, full length.
-12. **Full sweep** — 3 × 5 seeds, ≈4 h.
-13. **Figures** (a), (b), (c).
-14. **Hard variant** (§2.4 run 2), same protocol.
+### T1 — `schedule="step"` in the drift env  ⬅ **do this first**
+The only new science; everything else is plumbing.
+`envs/drift_half_cheetah.py` currently produces only continuous `sin` / `linear` multipliers.
+Phase 2a needs the multiplier **held constant within a task and changed at the boundary**:
+```yaml
+schedule: step
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]     # cycles, so tasks 2/4 and 3/5 repeat
+```
+Add a branch in `multiplier()` and a `set_task(i)` that selects the entry. Keep `sin`/`linear`
+intact — Phase 2b uses them.
+**Add a test** asserting the physics differ between tasks and stay fixed within one. A silently
+constant env looks exactly like a working experiment and yields three identical agents.
+
+### T2 — rename `pt_full` → `pt`
+- `agents/ppo_pt_full.py` → `agents/ppo_pt.py`, class `PPOPTFull` → `PPOPT`.
+- **Archive the old critic-only agent first** (`agents/ppo_pt.py` → `archive/phase1/`).
+- `agents/__init__.py`: register the renamed class as `"pt"`, remove `"pt_full"`.
+- `configs/ppo_pt_full.yaml` → `configs/ppo_pt.yaml` (overwrites the old).
+- Update the tests that import the old agent: `conftest.py`, `test_online_updates.py`,
+  `test_optim_state_reset.py`, `test_paper_fidelity.py`, `test_pt_full_agent.py`,
+  `test_task_switching.py`. Archive `tests/test_pt_consolidation.py` (it tests the old agent).
+
+### T3 — strip the shrinkage control from `ppo_base.py`
+Remove `policy_shrink_every`, `policy_shrink_factor`, `critic_shrink`, `shrink_flush_optim` and the
+whole shrink block in `post_update` (~lines 63–70 and 148–170). `PPOVanilla.post_update` reverts to
+a no-op. **Keep** `mu_l2_coef`, `log_std_init`, `freeze_log_std`.
+
+### T4 — retire the point-mass benchmark
+Remove the `point_tasks` / `point_drift` env modes from `train.py` and its imports (lines 34–35),
+then archive `envs/mock_continual.py`, `envs/simple_drift.py`, `configs/mock_continual.yaml`,
+`configs/simple_drift.yaml`, `tests/test_simple_drift.py`.
+
+### T5 — route `set_task` to the drift wrapper
+`train.py:_set_env_task` currently searches for `DirectionalHalfCheetah`. It must call the drift
+wrapper's `set_task(i)` instead, so a boundary changes physics rather than reward sign.
+`envs/directional_half_cheetah.py` stays (T-note above), but its `set_task` is no longer used.
+
+### T6 — transfer matrix
+`evaluate_transfer_matrix()` in `utils/metrics.py`: for each pair (i, j), mean return of the
+policy after task *i* evaluated on task *j*'s physics — frozen policy, no exploration noise,
+10 episodes per cell. Then BWT and FWT per §2.2. Add a test on a 2×2 case.
+
+### T7 — configs
+`configs/default.yaml`: `env_mode: drift`, `schedule: step`, `drift_targets: ["damping","friction"]`,
+`task_multipliers`, 5 phases, 5 seeds.
+New `configs/phase2_hard.yaml`: all four drift targets, for §2.4 run 2.
+`configs/ppo_ewc.yaml`: unchanged for 2a.
+
+### T8 — pre-flight, before any long run
+Cheap checks that would each have saved days in Phase 1:
+1. **Smoke test** — 3 agents × 1 seed × 60k steps. All three train; EWC's penalty is non-zero;
+   `actor_absorbed_frac > 0.01` for `pt`; physics differ between tasks.
+2. **Dynamic range** — one full-length vanilla run. **If its return varies by less than ~20% across
+   the task sequence the benchmark cannot separate the methods** and the amplitude must go up.
+   Do not skip this.
+3. **Parameter parity** — print the parameter count of all three agents. Phase 1 found a published
+   config giving PT 13.9× the baseline's parameters.
+4. **σ parity** — assert the realised `log_std` is identical across agents before the sweep.
+
+### T9 — the sweep
+3 agents × 5 seeds, ≈4 h locally at 7-way parallelism. Pin threads
+(`OMP_NUM_THREADS=1` etc.) or throughput collapses.
+
+### T10 — figures
+New `plots/make_phase2_figures.py`, reading raw per-seed pickles so nothing is transcribed:
+**(a)** return vs timestep, boundaries marked · **(b)** FWT/BWT · **(c)** the three-bar ablation
+(§2.3). Load the `dataviz` skill before writing chart code.
+
+### T11 — the harder variant
+Repeat T9/T10 with `phase2_hard.yaml`. This is the directional test of the paper's own
+"big world – small agent" claim (§2.4).
 
 ---
 
