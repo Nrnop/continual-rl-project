@@ -11,7 +11,12 @@ Produces:
     5. Asymptotic vs. online cumulative return chart.
     6. Physical velocity curve.
 
-Outputs saved under src_continuous_control/plots/figures/.
+Outputs saved under src_continuous_control/plots/figures_phase2/.
+
+NOTE: the old default was plots/figures/, which is now archive/phase1/plots/figures/ --
+the reward-switch figure set. Phase 2 output goes to its own directory so the two sets
+cannot be confused; mixing them is exactly how stale figures survived once before
+(see archive/phase1/plots/README.md).
 """
 import argparse
 import os
@@ -142,7 +147,7 @@ def main():
     parser.add_argument("--n-steps", type=int, default=2048,
                         help="PPO rollout length (used for old-format x-axis inference)")
     parser.add_argument("--smooth", type=int, default=20)
-    parser.add_argument("--out-dir", type=str, default="src_continuous_control/plots/figures")
+    parser.add_argument("--out-dir", type=str, default="src_continuous_control/plots/figures_phase2")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
