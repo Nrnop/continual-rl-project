@@ -104,3 +104,8 @@ plots/figures_rerun/
 # Meeting prep -- a plain-language summary of FULL_PT.md for the supervisor meeting.
 # Working note, not a thesis document; the citable record is FULL_PT.md.
 MEETING_BRIEF.md
+
+# Local working files -- kept on disk, out of git.
+# PHASE2_INSTRUCTIONS.md is the active plan; export_numeric_logs.py is a local utility.
+PHASE2_INSTRUCTIONS.md
+export_numeric_logs.py

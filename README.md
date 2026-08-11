@@ -93,8 +93,8 @@ archive/    Phase 1 — see archive/phase1/README.md
 
 - **`CLAUDE.md`** — how the repo works, the PT mechanism in detail, and the failure modes this
   project has actually hit.
-- **`PHASE2_INSTRUCTIONS.md`** — the current work plan.
-- **`PT_full.md`** — the implementation specification for the PT agent.
+- **`PHASE2_INSTRUCTIONS.md`** — the current work plan *(local working file, not tracked)*.
+- **`PT_SPECIFICATION.md`** — the implementation specification for the PT agent.
 
 ## Status
 
