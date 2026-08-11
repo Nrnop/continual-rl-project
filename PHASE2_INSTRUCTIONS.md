@@ -159,6 +159,64 @@ agents — this is exactly the failure mode that cost a week in Phase 1.
 
 ---
 
+## 4.1 Tests — full disposition (audited)
+
+76 tests across 14 files. Nothing here has been archived yet; each moves with the code task that
+frees it. **Run the suite after every task.**
+
+| file | tests | subject | verdict |
+|---|---:|---|---|
+| `test_buffers.py` | 4 | `utils.buffers` | keep, unchanged |
+| `test_scalar_persistence.py` | 2 | `utils.logger` | keep, unchanged |
+| `test_logging_and_plotting.py` | 3 | logger + `plot_compare` | keep — uses `tmp_path`, does not touch the archived figures dir |
+| `test_determinism.py` | 3 | `train` | keep; re-verify after the T4/T5 surgery |
+| `test_normalizer_freeze.py` | 3 | `train` | keep; re-verify after the T4/T5 surgery |
+| `test_drift_env.py` | 8 | `drift_half_cheetah` | keep and **extend in T1** with `schedule="step"` |
+| `test_pt_full_agent.py` | 6 | `ppo_pt_full` | keep; import rename only (T2) |
+| `test_pt_consolidation.py` | 1 | `ppo_pt_full` | keep; import rename only (T2) |
+| `test_split_actor.py` | 9 | `models.actor/critic` | keep; reference rename only (T2) |
+| **`test_paper_fidelity.py`** | **21** | **old critic-only `ppo_pt`** | **PORT — see T2b. Do not archive.** |
+| `test_optim_state_reset.py` | 4 | old `ppo_pt` | port to `pt` — it also flushes optimizer state (C2) |
+| `test_online_updates.py` | 3 | old `ppo_pt` + ewc + vanilla | drop the old-PT arm, add `pt` |
+| `conftest.py` | — | old `ppo_pt` + directional env | update fixtures (T2/T5) |
+| `test_simple_drift.py` | 4 | point-mass drift | archive with T4 |
+| `test_task_switching.py` | 3 | reward flip | archive with T5 |
+
+Net: 7 tests retire with their benchmarks, 25 need porting, the rest carry over.
+
+---
+
+## 4.2 T2b — port the paper-fidelity suite ⚠️ **the biggest risk in this plan**
+
+`test_paper_fidelity.py` is **21 of the 76 tests — 28% of the suite** — and every one is written
+against the *old* critic-only agent that T2 removes. Archiving it with the agent would silently
+delete the project's entire "does the implementation match the paper" coverage.
+
+What it guards:
+
+- **Theorem 1** — transient is the zero function at init; `perm_zero_init` makes the PT loss
+  identical to vanilla; the transient does not leave zero spuriously.
+- **Eq. (4) / Alg. 4 line 15** — the consolidation target is the full acting value (keep = 1), with
+  the `value_preserving` flag restoring the old behaviour.
+- **§6.1 / C.3 parameter parity** — `critic_hidden_sizes` narrows the critic *without* touching the
+  actor. This is the property that keeps every agent comparison honest.
+- **Thm 6/7/8 instrumentation** — jumpstart windowing, retention scoring only inactive tasks,
+  boundary-trough capture.
+- **Exactness** — output-mode decay is exact, params-mode is not; actor and critic are clipped
+  **separately**; Robbins-Monro α_P decays and defaults off.
+- **`absorbed_frac` detects an inert permanent**, on *and* off distribution, and retention does not
+  reward a frozen one.
+
+That last group is the direct guard against the defect that went undetected for this project's
+whole history — a permanent that never learned while every metric still looked plausible.
+
+**These theorems are about the value decomposition, which `pt_full` also has (`SplitCritic`), so
+most should port with an agent-class swap plus config-key updates.** Budget real time for it and
+port them *before* archiving the old agent, so the suite never goes green on missing coverage.
+If any test genuinely cannot port, record why in the file rather than deleting it silently.
+
+---
+
 ## 5. Archiving — DONE ✅
 
 Completed and pushed. `main` is tagged **`phase1-final`** at the last Phase 1 commit; everything
@@ -217,7 +275,14 @@ constant env looks exactly like a working experiment and yields three identical 
 - `configs/ppo_pt_full.yaml` → `configs/ppo_pt.yaml` (overwrites the old).
 - Update the tests that import the old agent: `conftest.py`, `test_online_updates.py`,
   `test_optim_state_reset.py`, `test_paper_fidelity.py`, `test_pt_full_agent.py`,
-  `test_task_switching.py`. Archive `tests/test_pt_consolidation.py` (it tests the old agent).
+  `test_task_switching.py`.
+**Correction to an earlier draft:** `test_pt_consolidation.py` tests `ppo_pt_full`, i.e. the *new*
+agent — **keep it**, only update the import.
+
+### T2b — port the paper-fidelity tests ⚠️
+21 tests, 28% of the suite, currently written against the agent T2 deletes. **Port before
+archiving**, so the suite is never green on absent coverage. Details and the full list of what they
+guard: §4.2. Same for `test_optim_state_reset.py` (4 tests) — `pt` flushes optimizer state too.
 
 ### T3 — strip the shrinkage control from `ppo_base.py`
 Remove `policy_shrink_every`, `policy_shrink_factor`, `critic_shrink`, `shrink_flush_optim` and the
