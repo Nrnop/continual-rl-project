@@ -1,0 +1,63 @@
+# PHASE 1 STAGE 14 CONFIG, PLUS A BOUNDARY RESET — the one-variable test.
+#
+# The archived Phase 1 runs (24 of them, 6 seeds x 4 arms) are on disk at `stage14_results/` and
+# reproduce their reported numbers, so the BASELINE does not need re-running. This config is
+# identical to `archive/phase1/configs/stage14_{arm}.yaml` in every respect except one:
+#
+#     reset_on_task_switch: true
+#
+# So a difference against the archived data is attributable to the reset and nothing else. That
+# matters because our reward-flip study changed TWO things at once (the reset AND learned sigma)
+# and found PT losing by 648 where Phase 1 had it winning by 710. This separates them.
+#
+# Sigma stays FROZEN at log_std_init = -1.0 (sigma 0.368), as Phase 1 had it — deliberately not
+# the learned sigma used elsewhere in Phase 2, because matching the archive is the whole point.
+#
+# The transfer matrix and decay probe are off: neither existed in Phase 1, and the transfer matrix
+# would crash on the third boundary here anyway (it sizes itself from len(tasks) = 2).
+reset_on_task_switch: true
+env_mode: "directional"
+transfer_eval_episodes: 0
+decay_gain_probe: false
+
+adam_eps: 1.0e-05
+agent: vanilla
+anneal_lr: false
+async_envs: true
+clip_coef: 0.2
+clip_obs: 10.0
+clip_reward: 10.0
+critic_hidden_sizes:
+- 64
+- 64
+ent_coef: 0.0
+env_id: HalfCheetah-v5
+epochs: 10
+freeze_log_std: true
+gae_lambda: 0.95
+gamma: 0.99
+hidden_sizes:
+- 64
+- 64
+joint_grad_clip: false
+jumpstart_window_updates: 20
+log_std_init: -1.0
+lr_actor: 0.0003
+lr_critic: 0.0003
+lr_trans: 0.0003
+max_grad_norm: 0.5
+minibatch_size: 64
+n_steps: 256
+normalize_advantage: true
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 100000
+num_envs: 8
+probe_states: 256
+step_by_step: false
+switch: 614400
+target_kl: null
+tasks:
+- 1
+- -1
+total_steps: 3072000

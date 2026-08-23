@@ -1,0 +1,20 @@
+# Online EWC on cartpole-swingup — the SECOND environment (envs/cartpole_swingup.py).
+#
+# Identical to cartpole_van.yaml in every environment and exploration key; the only difference is
+# the agent, whose own knobs come from ppo_ewc.yaml. See cartpole_van.yaml for why the overlays are
+# symmetric and why sigma is frozen.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+freeze_log_std: true
+log_std_init: -1.0
+
+# Same width as vanilla: EWC is a penalty on the baseline network, not a different architecture.
+hidden_sizes: [64, 64]
+
+max_episode_steps: 1000

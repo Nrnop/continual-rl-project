@@ -15,6 +15,18 @@ multiplier m(t) applied to their ORIGINAL values (never compounding):
 
 with s = sin(2*pi*t/period + phase) by default, or t/period for schedule="linear".
 
+PHASE 2a USES schedule="step" INSTEAD, which is NOT a drift at all: the multiplier is held
+constant within a task and changed only when `set_task(i)` is called at an observable boundary
+(the paper's *semi-continual* setting). The multiplier is then a function of the TASK INDEX, not
+of the clock:
+
+    m = task_multipliers[i % len(task_multipliers)]
+
+The list cycles deliberately, so tasks revisit physics the agent has already seen — with
+`[1.0, 1.6, 0.6, 1.6, 0.6]`, tasks 2/4 and 3/5 are the same physics. Backward transfer is
+undefined on a sequence that never revisits. `sin`/`linear` stay intact for Phase 2b, which
+removes boundaries again.
+
 The OPTIONAL SECOND COMPONENT is what makes this a real test of a dual-timescale method. With one
 slow component the physics move ~0.5% per PPO update at the default period — far slower than a
 single critic tracks, so a permanent/transient split has nothing to do and PT necessarily ties the
@@ -65,10 +77,14 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
     amplitude : float
         Peak relative deviation. 0.5 means parameters swing over [0.5x, 1.5x] their nominal value.
     period : int
-        Steps for one full cycle, in GLOBAL env steps (see CLOCK above).
-    schedule : {"sin", "linear"}
+        Steps for one full cycle, in GLOBAL env steps (see CLOCK above). Unused by "step".
+    schedule : {"sin", "linear", "step"}
+        "step" is the Phase 2a piecewise-constant mode; see the module docstring.
     phase : float
         Radians, for "sin". Lets different runs start at different points of the cycle.
+    task_multipliers : sequence[float]
+        For schedule="step": the multiplier held during each task. Cycles, so the sequence
+        revisits earlier physics and backward transfer stays well-defined.
     clock_scale : int
         Virtual steps advanced per env.step() — set to num_envs by the vectorised factory.
     """
@@ -76,6 +92,7 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
     def __init__(self, env_id="HalfCheetah-v5", drift_targets=("damping", "friction"),
                  amplitude=0.5, period=1228800, schedule="sin", phase=0.0,
                  amplitude2=0.0, period2=30720, phase2=0.0,
+                 task_multipliers=(1.0, 1.6, 0.6, 1.6, 0.6),
                  clock_scale=1, max_episode_steps=1000, render_mode=None):
         env = make_base_env(env_id, max_episode_steps=max_episode_steps, render_mode=render_mode)
         super().__init__(env)
@@ -83,8 +100,22 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
         bad = [t for t in drift_targets if t not in _TARGETS]
         if bad:
             raise ValueError(f"unknown drift target(s) {bad}; valid: {_TARGETS}")
-        if schedule not in ("sin", "linear"):
-            raise ValueError(f"unknown schedule {schedule!r}; valid: 'sin', 'linear'")
+        if schedule not in ("sin", "linear", "step"):
+            raise ValueError(
+                f"unknown schedule {schedule!r}; valid: 'sin', 'linear', 'step'")
+
+        self.task_multipliers = tuple(float(x) for x in task_multipliers)
+        if schedule == "step":
+            if not self.task_multipliers:
+                raise ValueError("schedule='step' needs a non-empty task_multipliers")
+            # A single repeated value means the physics never actually change at a boundary —
+            # a silently-constant env looks exactly like a working experiment (Phase 1 lost a
+            # week to this), so refuse it rather than run it.
+            if len(set(self.task_multipliers)) == 1:
+                raise ValueError(
+                    "schedule='step' with a constant task_multipliers "
+                    f"{self.task_multipliers} would never change the physics")
+        self.task_idx = 0               # which entry of task_multipliers is currently applied
 
         self.drift_targets = tuple(drift_targets)
         self.amplitude = float(amplitude)
@@ -108,13 +139,20 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
             "armature": np.array(m.dof_armature, copy=True),
         }
         self._needs_setconst = "mass" in self.drift_targets
+        self._applied_mult = None       # last multiplier written to the model; see _apply
         self._apply(self.multiplier())
 
     # ------------------------------------------------------------------
     # Schedule
     # ------------------------------------------------------------------
     def multiplier(self, t=None):
-        """Smooth scaling factor applied to the nominal parameters at virtual time t."""
+        """Scaling factor applied to the nominal parameters at virtual time t.
+
+        For "step" the multiplier is a function of the TASK INDEX, not of the clock, so `t` is
+        ignored — the physics are constant within a task and change only in `set_task`.
+        """
+        if self.schedule == "step":
+            return self.task_multipliers[self.task_idx % len(self.task_multipliers)]
         t = self.t if t is None else t
         if self.schedule == "sin":
             s = np.sin(2.0 * np.pi * t / self.period + self.phase)
@@ -125,11 +163,29 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
             m += self.amplitude2 * np.sin(2.0 * np.pi * t / self.period2 + self.phase2)
         return m
 
+    def set_task(self, i):
+        """Switch to task `i` (semi-continual boundary). Only "step" changes physics here.
+
+        For "sin"/"linear" the multiplier is driven by the clock, so there is nothing for a
+        boundary to do; the index is still recorded, and `current_params()` reports it, so a
+        misconfigured run shows up in the logs rather than looking like a working experiment.
+        """
+        self.task_idx = int(i)
+        if self.schedule == "step":
+            self._apply(self.multiplier())
+        return self.task_idx
+
     def lipschitz_constant(self):
         """Max |change in the multiplier| per GLOBAL env step — the eps of ||P_{t+1}-P_t|| <= eps.
 
         Multiply by a parameter's nominal magnitude for that parameter's absolute per-step bound.
+
+        For "step" this is 0: the physics are constant *within* a task. The discontinuity at a
+        boundary is deliberate and is not covered by the bound — its size is
+        max |task_multipliers[i+1] - task_multipliers[i]|.
         """
+        if self.schedule == "step":
+            return 0.0
         slow = (abs(self.amplitude) * 2.0 * np.pi / self.period) if self.schedule == "sin"             else (abs(self.amplitude) / self.period)
         fast = abs(self.amplitude2) * 2.0 * np.pi / self.period2
         return slow + fast
@@ -138,6 +194,24 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
     # Applying the drift
     # ------------------------------------------------------------------
     def _apply(self, mult):
+        # RE-APPLYING THE SAME MULTIPLIER MUST BE A NO-OP, and for "mass" it was not.
+        #
+        # `mj_setConst` recomputes MuJoCo's inertia-derived constants. Calling it every step —
+        # which is what happened, because `step` re-applied unconditionally — perturbs the
+        # simulation even when body_mass is written back unchanged. Measured: with the multiplier
+        # pinned at 1.0, so that the physics are nominal by construction, adding "mass" to
+        # drift_targets changed the trajectory outright (mean x_velocity -0.93 vs -0.12 over the
+        # same 150 actions from the same seed) and made the task LOOK EASIER — vanilla was scoring
+        # ~3500 at 80k steps against ~-200 without it. A "harder" variant that is really a
+        # different, easier physics is exactly the kind of silent confound this project keeps
+        # hitting, so the guard below is the fix: skip the work entirely when nothing changed.
+        #
+        # It is also free performance: under schedule="step" the multiplier is constant within a
+        # task, so the physics are now written once per boundary instead of once per env step.
+        if self._applied_mult is not None and mult == self._applied_mult:
+            return
+        self._applied_mult = mult
+
         m = self.unwrapped.model
         if "damping" in self.drift_targets:
             m.dof_damping[:] = self._base["damping"] * mult
@@ -147,18 +221,26 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
             # Only the sliding-friction column; the torsional/rolling columns stay nominal.
             m.geom_friction[:, 0] = self._base["friction"][:, 0] * mult
         if "mass" in self.drift_targets:
-            m.body_mass[:] = self._base["mass"] * mult
-            # MuJoCo caches inertia-derived constants; refresh them after a mass change.
-            try:
-                import mujoco
-                mujoco.mj_setConst(m, self.unwrapped.data)
-            except Exception:
-                pass
+            new_mass = self._base["mass"] * mult
+            # Second guard, on the VALUES rather than the multiplier: a multiplier of exactly 1.0
+            # leaves body_mass identical, and there is then nothing to refresh. Without this,
+            # constructing the env with mass in drift_targets perturbs it before the run even
+            # starts, so "same physics" would not be the same physics across two configs.
+            if not np.array_equal(np.asarray(m.body_mass), new_mass):
+                m.body_mass[:] = new_mass
+                # MuJoCo caches inertia-derived constants; refresh them after a mass change.
+                try:
+                    import mujoco
+                    mujoco.mj_setConst(m, self.unwrapped.data)
+                except Exception:
+                    pass
 
     def current_params(self):
         """Diagnostics: the drift multiplier and a representative scaled value per target."""
         m = self.unwrapped.model
         out = {"drift_multiplier": float(self.multiplier())}
+        if self.schedule == "step":
+            out["drift_task"] = float(self.task_idx)
         if "damping" in self.drift_targets:
             out["drift_damping"] = float(np.asarray(m.dof_damping)[3])
         if "friction" in self.drift_targets:
@@ -190,24 +272,27 @@ class LipschitzDriftHalfCheetah(gym.Wrapper):
 
 def _make_single_drift(env_id, drift_targets, amplitude, period, schedule, phase,
                        clock_scale, max_episode_steps, render_mode=None,
-                       amplitude2=0.0, period2=30720, phase2=0.0):
+                       amplitude2=0.0, period2=30720, phase2=0.0,
+                       task_multipliers=(1.0, 1.6, 0.6, 1.6, 0.6)):
     """Module-level factory so functools.partial stays picklable for AsyncVectorEnv."""
     return LipschitzDriftHalfCheetah(
         env_id=env_id, drift_targets=drift_targets, amplitude=amplitude, period=period,
         schedule=schedule, phase=phase, amplitude2=amplitude2, period2=period2, phase2=phase2,
+        task_multipliers=task_multipliers,
         clock_scale=clock_scale, max_episode_steps=max_episode_steps, render_mode=render_mode,
     )
 
 
 def make_drift_env(env_id="HalfCheetah-v5", drift_targets=("damping", "friction"),
                    amplitude=0.5, period=1228800, schedule="sin", phase=0.0,
-                   amplitude2=0.0, period2=30720, phase2=0.0, clock_scale=1,
+                   amplitude2=0.0, period2=30720, phase2=0.0,
+                   task_multipliers=(1.0, 1.6, 0.6, 1.6, 0.6), clock_scale=1,
                    max_episode_steps=1000, render_mode=None, normalize_obs=False,
                    normalize_reward=False, gamma=0.99, clip_obs=10.0, clip_reward=10.0):
     """Single drifting env, optionally with the CleanRL-style normalisation wrappers."""
     env = _make_single_drift(env_id, drift_targets, amplitude, period, schedule, phase,
                              clock_scale, max_episode_steps, render_mode,
-                             amplitude2, period2, phase2)
+                             amplitude2, period2, phase2, tuple(task_multipliers))
     if normalize_obs:
         env = gym.wrappers.NormalizeObservation(env)
         env = gym.wrappers.TransformObservation(
@@ -222,6 +307,7 @@ def make_drift_vector_env(env_id="HalfCheetah-v5", num_envs=1,
                           drift_targets=("damping", "friction"), amplitude=0.5,
                           period=1228800, schedule="sin", phase=0.0,
                           amplitude2=0.0, period2=30720, phase2=0.0,
+                          task_multipliers=(1.0, 1.6, 0.6, 1.6, 0.6),
                           max_episode_steps=1000, gamma=0.99, normalize_obs=False,
                           normalize_reward=False, clip_obs=10.0, clip_reward=10.0,
                           asynchronous=True):
@@ -233,7 +319,7 @@ def make_drift_vector_env(env_id="HalfCheetah-v5", num_envs=1,
     fns = [
         functools.partial(_make_single_drift, env_id, tuple(drift_targets), amplitude, period,
                           schedule, phase, num_envs, max_episode_steps, None,
-                          amplitude2, period2, phase2)
+                          amplitude2, period2, phase2, tuple(task_multipliers))
         for _ in range(num_envs)
     ]
     base = gym.vector.AsyncVectorEnv(fns) if (asynchronous and num_envs > 1) \

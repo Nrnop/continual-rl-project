@@ -1,0 +1,29 @@
+# LAYERNORM on every hidden layer -- vanilla on the PHYSICS change benchmark at sigma 0.37.
+#
+# ONE VARIABLE against `van_physics_s037.yaml`: `layer_norm: true`. Every other key below is copied
+# from that file mechanically (generated, not retyped), so a difference in the result is
+# attributable to the normalisation and to nothing else. The unnormalised control is the EXISTING
+# run directory for van_physics_s037 -- nothing needs re-running to get it.
+#
+# WHY. Under a changing task distribution networks lose plasticity: weight norms grow, units
+# saturate, the effective step size decays, and the agent adapts worse at each successive
+# boundary. That is this project's exact failure signature -- pt degrades after switch 2 and
+# recovers more slowly than its baselines. Normalising hidden activations is the standard
+# mitigation and it is applied to ALL THREE ARMS here, so it cannot flatter one of them.
+#
+# Sigma is frozen at 0.37 because PHASE2_RESULTS.md shows learned sigma collapsing at different
+# rates per arm; running this at learned sigma would confound normalisation with exploration.
+#
+# LayerNorm adds 2h parameters per hidden layer, so parameter parity shifts slightly. Verified
+# after generation: it stays within 1% and pt does NOT gain relative capacity.
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+layer_norm: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

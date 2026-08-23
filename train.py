@@ -31,11 +31,11 @@ from .envs.directional_half_cheetah import (
     make_vector_env,
 )
 from .envs.drift_half_cheetah import make_drift_env, make_drift_vector_env
-from .envs.simple_drift import make_point_drift_env, make_point_drift_vector_env
-from .envs.mock_continual import make_directional_point_env, make_directional_point_vector_env
+from .envs.cartpole_swingup import make_cartpole_env, make_cartpole_vector_env
 from .utils.logger import Logger
 from .utils.metrics import (ValueDriftProbe, BoundaryReturnTracker,
-                            JumpstartTracker, RetentionProbe)
+                            JumpstartTracker, RetentionProbe, TransferMatrix,
+                            evaluate_policy_on_tasks)
 from .utils.seeding import seed_everything, seed_env
 
 
@@ -133,31 +133,67 @@ def parse_args():
     # HalfCheetah's value scale the inherited sgd/1e-5 transfers 0.04% per consolidation, i.e. the
     # permanent never learns. These two flags exist so the sweep can be driven from the CLI.
     p.add_argument("--perm-optimizer", type=str, default=None, choices=["sgd", "adam"])
+    p.add_argument("--lr-perm-actor", type=float, default=None)
     p.add_argument("--consolidation-epochs", type=int, default=None)
     # Settable from the CLI so a missing/stale config cannot SILENTLY disable Robbins-Monro
-    # annealing (it defaults to 0.0 = off, which reproduces the very defect it exists to fix).
-    p.add_argument("--alpha-p-rm-power", type=float, default=None)
-    # "output" = exact V_trans <- decay*V_trans (Alg. 2 line 9). "params" = the reference's
-    # p.data *= decay, which over-decays badly on a nonlinear net.
-    p.add_argument("--decay-mode", type=str, default=None, choices=["params", "output"])
+    # annealing, which Theorem 5's premise requires (rm_power = 0 makes alpha_P constant).
+    p.add_argument("--rm-power", type=float, default=None)
+    p.add_argument("--alpha-p-rm-power", type=float, default=None, help="alias for --rm-power")
+    # The transfer split: the permanent absorbs rho, the transient retains (1-rho). ONE knob, on
+    # purpose — see CLAUDE.md. --decay-rho decouples the two halves and exists only to reproduce
+    # the divergence that follows.
+    p.add_argument("--rho", type=float, default=None)
+    p.add_argument("--decay-rho", type=float, default=None)
+    p.add_argument("--kl-prior-coef", type=float, default=None)
     p.add_argument("--k", type=int, default=None)
-    p.add_argument("--decay", type=float, default=None)
     p.add_argument("--lr-critic", type=float, default=None)
+
+    # Env non-stationarity
+    p.add_argument("--drift-schedule", type=str, default=None,
+                   choices=["step", "sin", "linear"],
+                   help="'step' = physics change at observable boundaries (Phase 2a); "
+                        "'sin'/'linear' = continuous drift, no boundaries (Phase 2b)")
+    p.add_argument("--task-multipliers", type=float, nargs="+", default=None,
+                   help="drift_schedule=step: one physics multiplier per task, cycled")
 
     # EWC-specific
     p.add_argument("--ewc-lambda", type=float, default=None)
     p.add_argument("--ewc-gamma", type=float, default=None)
 
     # Logging & evaluation
-    p.add_argument("--no-wandb", action="store_true")
-    p.add_argument("--no-tb", action="store_true")
+    #
+    # EVERY store_true FLAG BELOW MUST CARRY default=None. `build_config` merges the CLI over the
+    # YAML with `if val is not None: cfg[key] = val`, so a flag left at argparse's usual
+    # default=False is NOT absent — it is the value False, and it silently overwrites whatever the
+    # config file said. The effect is that these keys CANNOT BE SET FROM YAML AT ALL.
+    #
+    # Found 2026-08-17 building the ceiling test: a config with `disable_task_switch: true` ran and
+    # printed `SWITCH to task 1 (physics x1.6)` anyway. CLAUDE.md failure mode #1 exactly — a
+    # control that was not actually on, and one that looks like a working experiment in every log
+    # line except the ones nobody reads.
+    #
+    # No live Phase 2 config sets any of these, so no Phase 2 result is affected. Phase 1's
+    # `archive/phase1/configs/cleanrl_match.yaml` DOES set `disable_task_switch: true`, so its
+    # "single-task baseline" was switching tasks throughout; and ~30 archived stage configs set
+    # `no_eval`, which was likewise ignored (harmless — eval runs under _isolated_rng()).
+    #
+    # With default=None the flag is absent unless actually passed, the YAML wins when the flag is
+    # not given, and passing the flag still wins over the YAML. Every consumer reads these through
+    # cfg.get(key, False), so an absent key behaves exactly as False did.
+    p.add_argument("--no-wandb", action="store_true", default=None)
+    p.add_argument("--no-tb", action="store_true", default=None)
     p.add_argument("--results-dir", type=str, default=None)
     p.add_argument("--runs-dir", type=str, default=None)
     p.add_argument("--eval-interval-updates", type=int, default=None)
-    p.add_argument("--no-eval", action="store_true")
-    p.add_argument("--save-checkpoints", action="store_true")
-    p.add_argument("--disable-task-switch", action="store_true")
-    p.add_argument("--render", action="store_true")
+    # Episodes per cell of the transfer matrix (0 disables it) and per side of the decay probe.
+    # Both are extra environment steps on top of training, so they are worth being able to trim
+    # when rehearsing the pipeline.
+    p.add_argument("--transfer-eval-episodes", type=int, default=None)
+    p.add_argument("--decay-gain-episodes", type=int, default=None)
+    p.add_argument("--no-eval", action="store_true", default=None)
+    p.add_argument("--save-checkpoints", action="store_true", default=None)
+    p.add_argument("--disable-task-switch", action="store_true", default=None)
+    p.add_argument("--render", action="store_true", default=None)
     p.add_argument("--render-freq", type=int, default=None)
 
     args = p.parse_args()
@@ -226,21 +262,114 @@ def _run_offline_eval(agent, eval_env, n_episodes=5):
 # ---------------------------------------------------------------------------
 # Helper functions for traversing wrappers (e.g. RecordVideo) cleanly
 # ---------------------------------------------------------------------------
-def _set_env_task(env, direction):
-    """Find the DirectionalHalfCheetah wrapper across any stack and call set_task."""
+def _run_deterministic_eval(agent, env, n_episodes=3, max_steps=1000):
+    """Mean return of the policy MEAN — no exploration noise, no gradient steps.
+
+    Separate from `_run_offline_eval`, which samples: a measurement that must attribute a return
+    difference to one specific edit of the policy cannot have sampling noise sitting on top of it.
+    Wrap in `_isolated_rng()`; env.reset() consumes randomness even though the policy does not.
+    """
+    returns = []
+    for _ in range(n_episodes):
+        obs, _ = env.reset()
+        total, done, steps = 0.0, False, 0
+        while not done and steps < max_steps:
+            obs_t = torch.as_tensor(obs, dtype=torch.float32, device=agent.device).unsqueeze(0)
+            with torch.no_grad():
+                action = agent.actor.act_deterministic(obs_t).cpu().numpy()[0]
+            obs, reward, terminated, truncated, info = env.step(action)
+            total += float(info.get("directional_reward", reward))
+            done = bool(terminated or truncated)
+            steps += 1
+        returns.append(total)
+    return float(np.mean(returns))
+
+
+def _decay_gain_probe(agent, probe_env, n_episodes=3, max_steps=1000):
+    """What the DECAY alone does to behaviour: evaluate, decay mu_T, evaluate again.
+
+    No gradient step in between, so the difference is caused by the decomposition's decay operator
+    and nothing else. It is provably 0 for a split CRITIC (the critic does not act), so this
+    isolates what the split ACTOR adds — and with the Phase 1 shrinkage control dropped it is the
+    only thing that can separate "the decomposition works" from "the decay works".
+
+    mu_T's output layer is snapshotted and restored, so the probe cannot perturb the run it is
+    measuring. Returns None for agents without a split actor.
+    """
+    trans = getattr(getattr(agent, "actor", None), "trans_mean", None)
+    if trans is None or not hasattr(agent.actor, "decay_transient"):
+        return None
+    with _isolated_rng():
+        before = _run_deterministic_eval(agent, probe_env, n_episodes, max_steps)
+        snapshot = (trans[-1].weight.detach().clone(), trans[-1].bias.detach().clone())
+        agent.actor.decay_transient(1.0 - agent.decay_rho)
+        try:
+            after = _run_deterministic_eval(agent, probe_env, n_episodes, max_steps)
+        finally:
+            with torch.no_grad():
+                trans[-1].weight.copy_(snapshot[0])
+                trans[-1].bias.copy_(snapshot[1])
+    return {"before": before, "after": after, "gain": after - before}
+
+
+def _actor_perm_trans_corr(agent, states_np, max_states=1024):
+    """Correlation between mu_P and mu_T over visited states.
+
+    Near -1 means the two components are cancelling: the composed policy is the small residue of
+    two large opposed functions, and the two-component ablation will read flat no matter what the
+    mechanism is doing. Worth seeing on run one rather than after the sweep.
+    """
+    actor = getattr(agent, "actor", None)
+    if actor is None or not hasattr(actor, "trans_mean"):
+        return None
+    states = torch.as_tensor(states_np[:max_states], dtype=torch.float32, device=agent.device)
+    with torch.no_grad():
+        mu_p = actor.perm_forward(states).flatten()
+        mu_t = actor.trans_mean(states).flatten()
+    if float(mu_p.std()) < 1e-8 or float(mu_t.std()) < 1e-8:
+        return None            # mu_T is still exactly zero (init); the correlation is undefined
+    stacked = torch.stack([mu_p, mu_t])
+    return float(torch.corrcoef(stacked)[0, 1])
+
+
+def _set_task_id_obs(env, task_idx):
+    """Set the one-hot task label on the TaskIDObservation wrapper. Returns True if found.
+
+    Traversed defensively for the same reason as `_set_env_task`: the wrapper may sit under a
+    RecordVideo or another vector wrapper depending on the config, and a label that silently fails
+    to update is indistinguishable in the logs from one that works.
+    """
+    cur = env
+    for _ in range(16):
+        if hasattr(cur, "set_task_id"):
+            cur.set_task_id(task_idx)
+            return True
+        cur = getattr(cur, "env", None)
+        if cur is None:
+            return False
+    return False
+
+
+def _set_env_task(env, task):
+    """Find the wrapper that owns `set_task` across any stack and call it.
+
+    Works for both benchmarks: `DirectionalHalfCheetah.set_task(direction)` flips the reward sign,
+    `LipschitzDriftHalfCheetah.set_task(i)` selects task i's physics. `RecordVideo` and the vector
+    wrappers hide the inner env, hence the defensive traversal.
+    """
     if hasattr(env, "set_task"):
-        return env.set_task(direction)
+        return env.set_task(task)
     if hasattr(env, "get_wrapper_attr"):
         try:
-            return env.get_wrapper_attr("set_task")(direction)
+            return env.get_wrapper_attr("set_task")(task)
         except AttributeError:
             pass
     cur = env
     while hasattr(cur, "env"):
         cur = cur.env
         if hasattr(cur, "set_task"):
-            return cur.set_task(direction)
-    return getattr(env.unwrapped, "set_task", lambda d: None)(direction)
+            return cur.set_task(task)
+    return getattr(env.unwrapped, "set_task", lambda d: None)(task)
 
 
 def _find_normalize_obs(env):
@@ -402,20 +531,34 @@ def main():
         print("[train] render is not supported with num_envs>1; disabling train-env video.")
 
     # env_mode selects WHERE the non-stationarity lives:
-    #   "directional" (default) -- the REWARD flips sign at discrete task boundaries
-    #   "drift"                 -- HalfCheetah physics drift smoothly, with no boundaries
-    #   "point_drift"           -- tiny CPU-friendly point-mass physics drift benchmark
-    #   "point_tasks"           -- tiny CPU-friendly point-mass with discrete task switches
-    env_mode = str(cfg.get("env_mode", "directional")).lower()
-    drift_mode = env_mode in ("drift", "point_drift")
-    if env_mode not in ("directional", "drift", "point_drift", "point_tasks"):
+    #   "drift" (default) -- the HalfCheetah PHYSICS change; the reward is fixed. Phase 2's design.
+    #                        With drift_schedule="step" they change at observable boundaries; with
+    #                        "sin"/"linear" they drift continuously and there are none.
+    #   "directional"     -- Phase 1's reward-flip benchmark. Retired as a design, kept runnable.
+    # The two point-mass modes were retired with the rest of the point-mass benchmark (T4); they
+    # are recoverable from git tag `phase1-archive`.
+    #   "cartpole"        -- dm_control cartpole-swingup, the SECOND environment. Structurally
+    #                        identical to "drift" (a physics multiplier per task, cycled), on a
+    #                        maximally different task: 1 actuator vs 6, a point attractor vs a
+    #                        gait, and a reward bounded in [0,1] so the return ceiling is exactly
+    #                        1000 by construction. It exists to separate "a property of the PT
+    #                        method" from "a property of HalfCheetah", which no HalfCheetah run
+    #                        can do. See envs/cartpole_swingup.py.
+    env_mode = str(cfg.get("env_mode", "drift")).lower()
+    if env_mode not in ("directional", "drift", "cartpole"):
         raise ValueError(
-            f"unknown env_mode {env_mode!r}; valid: 'directional', 'drift', 'point_drift', "
-            f"'point_tasks'"
-        )
+            f"unknown env_mode {env_mode!r}; valid: 'directional', 'drift', 'cartpole'")
+    cartpole_mode = env_mode == "cartpole"
+    # `drift_mode` means "the non-stationarity is a physics multiplier indexed by task", which is
+    # true of both physics benchmarks. Everything downstream — task labels, boundary bookkeeping,
+    # the transfer matrix, the decay-gain probe — is shared, so the two envs differ only where
+    # they are actually constructed.
+    drift_mode = env_mode in ("drift", "cartpole")
 
     drift_kwargs = dict(
-        drift_targets=tuple(cfg.get("drift_targets", ["damping", "friction"])),
+        drift_targets=tuple(cfg.get(
+            "drift_targets",
+            ["pole_length", "pole_mass"] if cartpole_mode else ["damping", "friction"])),
         amplitude=cfg.get("drift_amplitude", 0.5),
         period=cfg.get("drift_period", 1228800),
         schedule=cfg.get("drift_schedule", "sin"),
@@ -423,55 +566,24 @@ def main():
         amplitude2=cfg.get("drift_amplitude2", 0.0),
         period2=cfg.get("drift_period2", 30720),
         phase2=cfg.get("drift_phase2", 0.0),
+        # schedule="step" only: one multiplier per task, cycled (see LipschitzDriftHalfCheetah).
+        task_multipliers=tuple(cfg.get("task_multipliers", [1.0, 1.6, 0.6, 1.6, 0.6])),
     )
-    point_drift_kwargs = dict(
-        target=cfg.get("point_target", 0.0),
-        # Drifts the GOAL, not only the dynamics. Default 0.0 = the original drag-only drift,
-        # which measured as saturated (every agent at 96-99% of ceiling, FINDINGS §20).
-        target_amplitude=cfg.get("point_target_amplitude", 0.0),
-        dt=cfg.get("point_dt", 0.1),
-        base_drag=cfg.get("point_base_drag", 0.35),
-        drift_amplitude=cfg.get("drift_amplitude", 0.75),
-        drift_period=cfg.get("drift_period", 4000),
-        drift_schedule=cfg.get("drift_schedule", "sin"),
-        drift_phase=cfg.get("drift_phase", 0.0),
-        action_scale=cfg.get("point_action_scale", 1.0),
-        position_limit=cfg.get("point_position_limit", 3.0),
-        velocity_limit=cfg.get("point_velocity_limit", 3.0),
-    )
-    point_tasks_kwargs = dict(
-        target_magnitude=cfg.get("point_target_magnitude", 2.0),
-        dt=cfg.get("point_dt", 0.1),
-        drag=cfg.get("point_drag", 0.35),
-        action_scale=cfg.get("point_action_scale", 1.0),
-        position_limit=cfg.get("point_position_limit", 3.0),
-        velocity_limit=cfg.get("point_velocity_limit", 3.0),
-        ctrl_cost_weight=cfg.get("point_ctrl_cost_weight", 0.01),
-    )
-    if env_mode == "point_drift":
-        env = make_point_drift_vector_env(
+    if cartpole_mode:
+        env = make_cartpole_vector_env(
+            task_name=cfg.get("cartpole_task", "swingup"),
             num_envs=num_envs,
-            max_episode_steps=cfg.get("max_episode_steps", 200),
+            max_episode_steps=cfg.get("max_episode_steps", 1000),
             gamma=cfg["gamma"],
             normalize_obs=normalize_obs,
             normalize_reward=normalize_reward,
             clip_obs=cfg.get("clip_obs", 10.0),
             clip_reward=cfg.get("clip_reward", 10.0),
             asynchronous=async_envs,
-            **point_drift_kwargs,
-        )
-    elif env_mode == "point_tasks":
-        env = make_directional_point_vector_env(
-            direction=cfg["tasks"][0],
-            num_envs=num_envs,
-            max_episode_steps=cfg.get("max_episode_steps", 100),
-            gamma=cfg["gamma"],
-            normalize_obs=normalize_obs,
-            normalize_reward=normalize_reward,
-            clip_obs=cfg.get("clip_obs", 10.0),
-            clip_reward=cfg.get("clip_reward", 10.0),
-            asynchronous=async_envs,
-            **point_tasks_kwargs,
+            reload_tol=cfg.get("cartpole_reload_tol", 0.005),
+            task_id_obs=bool(cfg.get("task_id_obs", False)),
+            n_task_ids=len(drift_kwargs["task_multipliers"]),
+            **drift_kwargs,
         )
     elif drift_mode:
         env = make_drift_vector_env(
@@ -498,11 +610,15 @@ def main():
             clip_obs=cfg.get("clip_obs", 10.0),
             clip_reward=cfg.get("clip_reward", 10.0),
             asynchronous=async_envs,
+            task_id_obs=bool(cfg.get("task_id_obs", False)),
+            n_task_ids=len(cfg["tasks"]),
         )
     obs, _ = env.reset(seed=seed)
     done = np.zeros(num_envs, dtype=np.float32)
     obs_dim = env.single_observation_space.shape[0]
     act_dim = env.single_action_space.shape[0]
+    # NOTE: how many trailing dims are the task label is derived inside the agent (ppo_pt.py) from
+    # `task_id_obs` + `tasks`, deliberately NOT injected into cfg from here — see the comment there.
 
     # --- Agent ---
     AgentClass = AGENTS[cfg["agent"]]
@@ -533,6 +649,37 @@ def main():
     switch_interval = cfg["switch"]
     total_steps = cfg["total_steps"]
     n_steps = cfg["n_steps"]
+
+    # --- Task boundaries ---
+    # Phase 2a is the paper's SEMI-CONTINUAL setting: boundaries are observable, and what changes
+    # at one is the physics. So `drift` has boundaries when its schedule is piecewise-constant, and
+    # none when it is continuous ("sin"/"linear", which is Phase 2b).
+    drift_schedule = str(drift_kwargs["schedule"]).lower()
+    boundaries_enabled = (not cfg.get("disable_task_switch", False)
+                          and (not drift_mode or drift_schedule == "step"))
+    _task_multipliers = list(drift_kwargs["task_multipliers"])
+
+    def _task_label(idx):
+        """Stable identifier for the task at index `idx`, shared by every REVISIT of it.
+
+        Retention and backward transfer compare a task against itself later in the sequence, so
+        the label must repeat when the physics do. With multipliers [1.0, 1.6, 0.6, 1.6, 0.6],
+        tasks 1/3 and 2/4 get the same label because they are the same task.
+        """
+        if drift_mode:
+            return _task_multipliers[idx % len(_task_multipliers)]
+        return tasks[idx % len(tasks)]
+
+    n_tasks = len(_task_multipliers) if drift_mode else len(tasks)
+
+    def _task_arg(idx):
+        """What `set_task` wants for task `idx` on this benchmark (index vs reward direction)."""
+        return idx if drift_mode else tasks[idx % len(tasks)]
+
+    def _task_physics_note(idx):
+        if drift_mode:
+            return f" (physics x{_task_label(idx):g})"
+        return f" (reward direction {_task_label(idx)})"
 
     drift_probe = ValueDriftProbe()
     # NOTE: the window MUST be measured in whole PPO updates. It used to be `n_steps * 5`, written
@@ -581,22 +728,19 @@ def main():
 
     eval_env = None
     if not cfg.get("no_eval", False):
-        if env_mode == "point_drift":
-            eval_env = make_point_drift_env(
-                max_episode_steps=cfg.get("max_episode_steps", 200),
-                normalize_obs=normalize_obs,
-                normalize_reward=False,
-                clip_obs=cfg.get("clip_obs", 10.0),
-                **point_drift_kwargs,
-            )
-        elif env_mode == "point_tasks":
-            eval_env = make_directional_point_env(
-                direction=cfg["tasks"][0],
-                max_episode_steps=cfg.get("max_episode_steps", 100),
-                normalize_obs=normalize_obs,
-                normalize_reward=False,
-                clip_obs=cfg.get("clip_obs", 10.0),
-                **point_tasks_kwargs,
+        if cartpole_mode:
+            eval_env = make_cartpole_env(
+            task_name=cfg.get("cartpole_task", "swingup"),
+            max_episode_steps=cfg.get("max_episode_steps", 1000),
+            render_mode=render_mode,
+            normalize_obs=normalize_obs,
+            normalize_reward=False,           # eval reports the true (un-normalized) return
+            clip_obs=cfg.get("clip_obs", 10.0),
+            reload_tol=cfg.get("cartpole_reload_tol", 0.005),
+            # Must match the training env's observation layout exactly.
+            task_id_obs=bool(cfg.get("task_id_obs", False)),
+            n_task_ids=len(drift_kwargs["task_multipliers"]),
+            **drift_kwargs,
             )
         elif drift_mode:
             eval_env = make_drift_env(
@@ -617,6 +761,9 @@ def main():
             normalize_obs=normalize_obs,      # stats synced from train env before each eval
             normalize_reward=False,           # eval reports the true (un-normalized) return
             clip_obs=cfg.get("clip_obs", 10.0),
+            # Must match the training env's observation layout exactly.
+            task_id_obs=bool(cfg.get("task_id_obs", False)),
+            n_task_ids=len(cfg["tasks"]),
             )
         if cfg.get("render", False):
             video_folder_eval = os.path.join(cfg.get("runs_dir", "src_continuous_control/runs"), "videos", f"{cfg['agent']}_seed_{seed}_eval")
@@ -628,6 +775,71 @@ def main():
             )
         seed_env(eval_env, seed + 10000)
 
+    # --- probe/decay_gain (see _decay_gain_probe) ---
+    # Its OWN env: the eval env may be wrapped in RecordVideo, which would file the probe's
+    # episodes as evaluations, and the probe must never touch the state of anything it measures.
+    probe_env = None
+    if (drift_mode and cfg.get("decay_gain_probe", True)
+            and hasattr(agent, "decay_rho") and not cfg.get("no_eval", False)):
+        if cartpole_mode:
+            probe_env = make_cartpole_env(
+                task_name=cfg.get("cartpole_task", "swingup"),
+                max_episode_steps=cfg.get("max_episode_steps", 1000),
+                normalize_obs=normalize_obs, normalize_reward=False,
+                clip_obs=cfg.get("clip_obs", 10.0),
+                reload_tol=cfg.get("cartpole_reload_tol", 0.005),
+                task_id_obs=bool(cfg.get("task_id_obs", False)),
+                n_task_ids=len(drift_kwargs["task_multipliers"]),
+                **drift_kwargs)
+        else:
+            probe_env = make_drift_env(
+                env_id=cfg.get("env_id", "HalfCheetah-v5"),
+                max_episode_steps=cfg.get("max_episode_steps", 1000),
+                normalize_obs=normalize_obs, normalize_reward=False,
+                clip_obs=cfg.get("clip_obs", 10.0), **drift_kwargs)
+        seed_env(probe_env, seed + 20000)
+
+    # --- Forward / backward transfer (Lopez-Paz & Ranzato) ---
+    # R[i, j] = mean return on task j with the policy frozen at the END of task i. Rows are filled
+    # in at boundaries, so no checkpoints are needed. 0 episodes disables the whole measurement.
+    transfer_episodes = int(cfg.get("transfer_eval_episodes", 10))
+    transfer = None
+    if boundaries_enabled and transfer_episodes > 0 and eval_env is not None:
+        transfer = TransferMatrix(n_tasks)
+
+    def _transfer_row():
+        """Mean return on every task for the CURRENT policy: frozen, and with no exploration noise.
+
+        Runs on the eval env, never the training env — `set_task` changes physics, and doing that
+        to the training env mid-run would corrupt the very thing being measured. The eval env is
+        put back on the training task afterwards, and the RNG is isolated so the extra episodes
+        cannot shift the training action stream.
+        """
+        _sync_obs_stats(env, eval_env)
+
+        def _act(obs_np):
+            obs_t = torch.as_tensor(obs_np, dtype=torch.float32, device=device).unsqueeze(0)
+            with torch.no_grad():
+                return agent.actor.act_deterministic(obs_t).cpu().numpy()[0]
+
+        with _isolated_rng():
+            return evaluate_policy_on_tasks(
+                _act, eval_env,
+                lambda j: (_set_env_task(eval_env, _task_arg(j)),
+                           _set_task_id_obs(eval_env, j) if cfg.get("task_id_obs", False) else None),
+                n_tasks, n_episodes=transfer_episodes,
+                max_steps=cfg.get("max_episode_steps", 1000),
+                # A task INDEX: the set_task lambda above maps it through _task_arg itself.
+                restore_task=task_idx % n_tasks, return_std=True,
+            )
+
+    if transfer is not None:
+        # b_j: a RANDOM-INIT policy's return on each task. Measured before the first update, which
+        # is exactly what "random init" means, and what FWT subtracts.
+        transfer.set_baselines(_transfer_row()[0])
+        print(f"[train] transfer baselines (random init) b_j = "
+              f"{np.array2string(transfer.baselines, precision=1)}")
+
     print(f"[train] agent={cfg['agent']}  seed={seed}  device={device}")
     print(f"[train] total_steps={total_steps}  switch={switch_interval}  n_steps={n_steps}  "
           f"num_envs={num_envs}  async={async_envs and num_envs > 1}  batch={n_steps * num_envs}")
@@ -637,32 +849,44 @@ def main():
         # Print the settings that decide whether the PT mechanism runs at all. Every silent
         # misconfiguration this project has hit (inert permanent, constant alpha_P, a config file
         # that never arrived on the box) would have been visible in one line of the log.
-        _rm = float(cfg.get("alpha_p_rm_power", 0.0))
-        _dm = str(cfg.get("decay_mode", "params")).lower()
-        print(f"[train] PT: lr_perm={cfg.get('lr_perm')} opt={cfg.get('perm_optimizer')} "
-              f"k={cfg.get('k')} decay={cfg.get('decay')} decay_mode={_dm} "
-              f"critic_hidden={cfg.get('critic_hidden_sizes', cfg.get('hidden_sizes'))} "
-              f"alpha_p_rm_power={_rm}")
+        _rho = float(cfg.get("rho", cfg.get("transfer_rate", 0.5)))
+        _rm = float(cfg.get("rm_power", cfg.get("alpha_p_rm_power", 0.6)))
+        _decay_rho = float(cfg.get("decay_rho", _rho))
+        print(f"[train] PT: rho={_rho} k={cfg.get('k')} "
+              f"lr_perm={cfg.get('lr_perm')} lr_perm_actor={cfg.get('lr_perm_actor')} "
+              f"opt={cfg.get('perm_optimizer')} rm_power={_rm} "
+              f"kl_prior_coef={cfg.get('kl_prior_coef')} "
+              f"critic_hidden={cfg.get('critic_hidden_sizes', cfg.get('hidden_sizes'))}")
         # Both of these silently change what the run MEANS, so say so in words, not just values.
         if _rm <= 0.0:
             print("[train] PT:   ^ CONSTANT alpha_P (Robbins-Monro OFF) — Theorem 5's premise "
                   "is not satisfied")
-        if _dm != "output":
-            print("[train] PT:   ^ decay_mode=params — scaling PARAMETERS, not the value "
-                  "function. V_trans does NOT shrink by `decay`; a lambda sweep in this mode "
-                  "sweeps an uncontrolled function of lambda, not lambda.")
-    if env_mode == "point_drift":
-        print(f"[train] env_mode=point_drift  base_drag={point_drift_kwargs['base_drag']}  "
-              f"amplitude={point_drift_kwargs['drift_amplitude']}  "
-              f"period={point_drift_kwargs['drift_period']}  "
-              f"schedule={point_drift_kwargs['drift_schedule']}")
-    elif drift_mode:
-        print(f"[train] env_mode=drift  targets={drift_kwargs['drift_targets']}  "
-              f"amplitude={drift_kwargs['amplitude']}  period={drift_kwargs['period']}  "
-              f"schedule={drift_kwargs['schedule']}")
-        print(f"[train] Lipschitz bound on the drift multiplier: "
-              f"{_drift_lipschitz(cfg):.3e} per env step "
-              f"({cfg['total_steps'] / max(int(cfg.get('drift_period', 1)), 1):.2f} full cycles)")
+        if _decay_rho != _rho:
+            print(f"[train] PT:   ^ decay_rho={_decay_rho} != rho={_rho} — the absorb and the "
+                  "decay are DECOUPLED, so the transfer is not composition-preserving and the "
+                  "acting value jumps at every consolidation. Watch for divergence.")
+    if drift_mode:
+        _sched = str(drift_kwargs["schedule"])
+        print(f"[train] env_mode={env_mode}  targets={drift_kwargs['drift_targets']}  "
+              f"schedule={_sched}")
+        if cartpole_mode:
+            # The whole reason this benchmark was chosen: r in [0,1] over exactly
+            # max_episode_steps steps with no early termination, so the ceiling is known rather
+            # than guessed. Print it, so every log says what "good" would be.
+            print(f"[train] cartpole task={cfg.get('cartpole_task', 'swingup')}  "
+                  f"return ceiling = {cfg.get('max_episode_steps', 1000)} "
+                  f"(reward in [0,1], no early termination)")
+        if _sched == "step":
+            # Piecewise-constant physics: the multiplier is a function of the task index, so the
+            # only thing worth printing is the sequence itself and that it actually varies.
+            print(f"[train] task_multipliers={list(drift_kwargs['task_multipliers'])} "
+                  f"(cycled; switch every {switch_interval} steps)")
+        else:
+            print(f"[train] amplitude={drift_kwargs['amplitude']}  "
+                  f"period={drift_kwargs['period']}")
+            print(f"[train] Lipschitz bound on the drift multiplier: "
+                  f"{_drift_lipschitz(cfg):.3e} per env step "
+                  f"({cfg['total_steps'] / max(int(cfg.get('drift_period', 1)), 1):.2f} full cycles)")
     if cfg.get("disable_task_switch", False):
         print("[train] Task switching disabled (Single-Task Baseline)")
     if cfg.get("render", False):
@@ -680,18 +904,59 @@ def main():
             agent.anneal_lr(frac)
 
         # ---- Task switching ----
-        if not drift_mode and not cfg.get("disable_task_switch", False):
+        if boundaries_enabled:
             next_switch = (task_idx + 1) * switch_interval
             if global_step >= next_switch:
                 # Snapshot the FINISHING task's converged values first (Theorem 7's v_i). Must
                 # happen before on_task_switch, which consolidates and decays and so moves V.
                 if probe_states is not None:
-                    retention_probe.snapshot(tasks[task_idx % len(tasks)],
-                                             _v_full, probe_states)
+                    retention_probe.snapshot(_task_label(task_idx), _v_full, probe_states)
+                # Same ordering argument for R[i, :]: it is the policy AT THE END of task i, so it
+                # must be measured before the switch and before consolidation.
+                if transfer is not None:
+                    transfer.add_row(task_idx, *_transfer_row())
 
                 task_idx += 1
-                direction = tasks[task_idx % len(tasks)]
-                env.unwrapped.call("set_task", direction)  # propagates to every sub-env
+                # What crosses the boundary differs by benchmark: `directional` passes the reward
+                # DIRECTION, `drift` passes the TASK INDEX, which selects that task's physics.
+                # The reward function is fixed in drift mode — the non-stationarity is all in the
+                # transition kernel.
+                switch_arg = task_idx if drift_mode else tasks[task_idx % len(tasks)]
+                env.unwrapped.call("set_task", switch_arg)  # propagates to every sub-env
+
+                # Update the one-hot task label in the observation. This is a wrapper on the OUTER
+                # (vector) env, not on the sub-envs, so `call` above does not reach it — it has to
+                # be set here or the label would stay stuck on task 0 for the whole run while the
+                # reward silently flipped underneath it, which is worse than having no label at all.
+                # _set_task_id_obs walks the wrapper stack and returns whether it found the wrapper.
+                if cfg.get("task_id_obs", False):
+                    if not _set_task_id_obs(env, task_idx):
+                        raise RuntimeError(
+                            "task_id_obs is on but no TaskIDObservation wrapper was found — the "
+                            "observation would carry a task label that never changes")
+
+                # RESET THE ENVIRONMENT AT THE BOUNDARY, so a task starts from a defined state.
+                #
+                # Without this the cheetah carries its pose, velocity and body angle straight
+                # across the switch: a boundary that lands mid-stride, mid-flight or upside-down
+                # starts the new task from an arbitrary state, and how good that state happens to
+                # be is pure luck that differs per seed and per arm. It also blurs what "adaptation
+                # after a boundary" means, which is the quantity this whole study measures.
+                #
+                # It matters MORE for the physics benchmark than for the reward flip: changing
+                # mass or damping while the body is airborne is not a well-defined transition at
+                # all. The drift clock deliberately survives the reset (the physics are a property
+                # of the world, not of the episode), and the in-flight episode is discarded —
+                # RecordEpisodeStatistics simply reports no return for it.
+                # DEFAULT FALSE, deliberately. Turning it on mid-study would give the runs launched
+                # afterwards a different benchmark from the ones already finished — the silent
+                # within-study inconsistency this project keeps getting burned by. The Phase 2a
+                # study now completing ran WITHOUT it; set `reset_on_task_switch: true` in the
+                # config for the next study, where it is the intended design.
+                if cfg.get("reset_on_task_switch", False):
+                    obs, _ = env.reset()
+                    done = np.zeros(num_envs, dtype=np.float32)
+
                 agent.on_task_switch(global_step)
 
                 # Value-drift measurement at boundary
@@ -708,9 +973,24 @@ def main():
                     if drift is not None:
                         logger.log_scalar("boundary/value_drift", drift, global_step)
 
+                # What the DECAY alone buys, measured with no gradient step in between. Run
+                # AFTER the switch so it is measured on the physics the agent must now adapt to.
+                if probe_env is not None:
+                    _sync_obs_stats(env, probe_env)
+                    _set_env_task(probe_env, _task_arg(task_idx))
+                    rec = _decay_gain_probe(agent, probe_env,
+                                            n_episodes=int(cfg.get("decay_gain_episodes", 3)))
+                    if rec is not None:
+                        logger.log_scalars({"probe/decay_gain": rec["gain"],
+                                            "probe/decay_before": rec["before"],
+                                            "probe/decay_after": rec["after"]}, global_step)
+                        print(f"[train]   probe/decay_gain = {rec['gain']:+.1f} "
+                              f"({rec['before']:.1f} -> {rec['after']:.1f}, no gradient step)")
+
                 boundary_tracker.on_switch(global_step, avg_return)
                 jumpstart_tracker.on_switch(global_step)
-                print(f"[train] step {global_step}: SWITCH to task {direction}  avg_return={avg_return:.1f}")
+                print(f"[train] step {global_step}: SWITCH to task {task_idx}"
+                      f"{_task_physics_note(task_idx)}  avg_return={avg_return:.1f}")
 
         # ---- Collect rollout ----
         obs, done, episode_returns = agent.collect_rollout(env, obs, done)
@@ -738,8 +1018,10 @@ def main():
                     "consol/delta_pi": fresh_drift["delta_pi"],
                 }, global_step)
 
-        # Track velocity
-        velocity_curve.append((global_step, float(np.mean(agent._velocities))))
+        # Track velocity. HalfCheetah reports x_velocity in info; cartpole has no such quantity,
+        # so the list is empty there and np.mean would return nan with a warning every update.
+        if agent._velocities:
+            velocity_curve.append((global_step, float(np.mean(agent._velocities))))
 
         # Track episodic returns (EMA, mirrors baseline's avg_return = 0.99 * avg_return + 0.01 * epi_return)
         ema = cfg.get("eval_ema", 0.99)
@@ -770,10 +1052,16 @@ def main():
         if eval_interval is None:
             eval_interval = 50
         if eval_env is not None and (update_idx % eval_interval == 0 or update_idx == 1):
-            if drift_mode:
+            if drift_mode and drift_schedule == "step":
+                _set_env_task(eval_env, task_idx)        # evaluate on THIS task's physics
+            elif drift_mode:
                 _sync_drift_clock(eval_env, global_step)  # evaluate on the CURRENT physics
             else:
                 _set_env_task(eval_env, tasks[task_idx % len(tasks)])  # match current train task
+                # ...and the task LABEL too, or eval runs the policy with a label that says task 0
+                # while the reward is task 1 — a mismatch that would show up as a fake collapse.
+                if cfg.get("task_id_obs", False):
+                    _set_task_id_obs(eval_env, task_idx)
             _sync_obs_stats(env, eval_env)  # evaluate with the training normalizer's stats
             with _isolated_rng():          # the eval must not perturb the training RNG stream
                 clean_eval_ret = _run_offline_eval(agent, eval_env, n_episodes=5)
@@ -792,9 +1080,12 @@ def main():
                 "train/approx_kl": metrics["approx_kl"],
                 "train/global_step": global_step,
             }
+            corr = _actor_perm_trans_corr(agent, agent.buffer.obs.reshape(-1, obs_dim))
+            if corr is not None:
+                scalars["diag/actor_perm_trans_corr"] = corr
             for metric_name in (
                     "kl_prior", "clip_fraction", "value_perm_l2", "value_trans_l2",
-                    "policy_perm_l2", "policy_trans_l2", "log_std_mean",
+                    "policy_perm_l2", "policy_trans_l2", "log_std_mean", "log_std_min",
                     "grad_norm_trans_actor", "grad_norm_perm_actor",
                     "grad_norm_trans_critic", "grad_norm_perm_critic"):
                 if metric_name in metrics:
@@ -834,7 +1125,16 @@ def main():
             if drift_mode:
                 # Record where on the drift schedule we are, so return curves can be read against
                 # the physics that produced them.
-                scalars["drift/multiplier"] = _drift_multiplier(cfg, global_step)
+                #
+                # `_drift_multiplier` only knows the CLOCK-driven schedules. Under "step" — which
+                # is Phase 2a's default on both physics benchmarks — the multiplier is a function
+                # of the task index, and asking the clock formula for it returned the "linear"
+                # branch: a ramp from 1.0 to 2.25 over a run whose physics were actually cycling
+                # through [1.0, 1.6, 0.6, ...]. Diagnostic-only, but it is a logged quantity that
+                # said something untrue, so it is read from the task label here instead.
+                scalars["drift/multiplier"] = (
+                    float(_task_label(task_idx)) if drift_schedule == "step"
+                    else _drift_multiplier(cfg, global_step))
             logger.log_scalars(scalars, step=global_step)
 
         # Sample probe states lazily (first rollout provides good coverage)
@@ -886,7 +1186,7 @@ def main():
         # Reported for the permanent component and for the full acting value; the paper predicts
         # the permanent degrades less. Silent until the first task has finished.
         if probe_states is not None and retention_probe.snapshots:
-            ret = retention_probe.measure(tasks[task_idx % len(tasks)], _value_fns, probe_states)
+            ret = retention_probe.measure(_task_label(task_idx), _value_fns, probe_states)
             if ret:
                 logger.log_scalars(
                     {f"retention/mse_{name}": v for name, v in ret.items()}, step=global_step)
@@ -901,6 +1201,34 @@ def main():
                   f"critic_loss={metrics['critic_loss']:.4f}")
 
     # --- Finalize ---
+    if transfer is not None:
+        # The last task never hits a boundary, so its row is measured here, at the end of training.
+        # If the run went round the cycle more than once there is no row left to fill; the matrix
+        # is then incomplete and bwt()/fwt() return None rather than a number built from a
+        # row that belongs to a different pass.
+        if task_idx < n_tasks:
+            transfer.add_row(task_idx, *_transfer_row())
+        summary = transfer.summary()
+        # Two independent reads on evaluation noise: the within-cell standard error, and the
+        # disagreement between columns that are the SAME task (the sequence revisits, so those
+        # should agree). If a method difference is not comfortably larger than these, the
+        # transfer figure is noise.
+        summary["repeat_noise"] = transfer.repeat_noise(
+            [_task_label(j) for j in range(n_tasks)])
+        logger.save_object(summary, "transfer_matrix")
+        print("[train] transfer matrix R[i, j] (return on task j after finishing task i):")
+        print(np.array2string(summary["transfer_matrix"], precision=1, suppress_small=True))
+        if summary["bwt"] is not None:
+            logger.log_scalar("transfer/bwt", summary["bwt"], global_step)
+            print(f"[train] BWT = {summary['bwt']:.2f}")
+        if summary["fwt"] is not None:
+            logger.log_scalar("transfer/fwt", summary["fwt"], global_step)
+            print(f"[train] FWT = {summary['fwt']:.2f}")
+        mean_se = float(np.nanmean(summary["cell_standard_errors"]))
+        print(f"[train] transfer cell noise: mean SE = {mean_se:.1f}"
+              + (f", repeated-task disagreement = {summary['repeat_noise']:.1f}"
+                 if summary["repeat_noise"] is not None else ""))
+
     fname = logger.save_returns(returns_curve)
     if all_episode_returns:
         logger.save_returns(all_episode_returns, suffix="ep_returns")
@@ -918,7 +1246,7 @@ def main():
         print(f"[train] mean post-switch jumpstart return "
               f"({cfg.get('jumpstart_window_updates', 20)}-update window): {mean_js:.2f}")
     if retention_probe.snapshots and probe_states is not None:
-        final_ret = retention_probe.measure(tasks[task_idx % len(tasks)],
+        final_ret = retention_probe.measure(_task_label(task_idx),
                                             _value_fns, probe_states)
         if final_ret:
             print("[train] final retention MSE vs inactive task(s): "
@@ -942,6 +1270,8 @@ def main():
         env.close()
     if eval_env is not None and hasattr(eval_env, "close"):
         eval_env.close()
+    if probe_env is not None and hasattr(probe_env, "close"):
+        probe_env.close()
     logger.close()
     print(f"[train] Scalars ({len(logger.history)} series) saved to {scalars_file}")
     elapsed = time.time() - t0

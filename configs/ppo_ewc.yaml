@@ -7,8 +7,22 @@ agent: "ewc"
 lr_critic: 0.0003
 
 # EWC-specific hyperparameters
-ewc_lambda: 50.0    # penalty strength
+# 0.0088 in the CORRECTED units (the penalty no longer divides by parameter count, so this is the
+# textbook lambda). Chosen because it reproduces the effective strength of every earlier run
+# (old lambda 50 / 5708 params = 0.0088) and because a sweep over 0.003 / 0.0088 / 0.03 moved the
+# whole-run return by less than the seed noise (1532 / 1502 / 1528) — lambda is not the lever here.
+ewc_lambda: 0.0088  # penalty strength
 ewc_gamma: 0.95     # Fisher consolidation decay factor
 
 # Match the frozen-normalizer comparison protocol used by PT-PPO.
 normalizer_freeze_after: 100000
+
+# Exclude log_std from BOTH the Fisher and the penalty, so EWC protects WEIGHTS only.
+#
+# Without this, the Fisher runs over actor.named_parameters(), which includes log_std, so EWC
+# anchors the exploration schedule as a side effect. Measured on the corrected 4-parameter runs:
+# EWC settles at sigma 0.133 while vanilla reaches 0.071 and pt 0.062 — nearly double. Phase 1
+# measured the same ordering (log_std -1.97 / -2.48 / -2.63) and noted the return ranking followed
+# it exactly. An EWC arm carrying 2x the exploration of the arms it is compared against is not
+# measuring weight protection, so this is on.
+ewc_exclude_log_std: true

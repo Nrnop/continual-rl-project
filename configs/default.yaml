@@ -1,34 +1,99 @@
-# Shared defaults for both agents. CLI flags override these (see train.py).
+# Shared defaults for every agent. CLI flags override these (see train.py).
+#
+# PHASE 2a: HalfCheetah, boundary-based DYNAMICS change. At each boundary the PHYSICS change
+# (damping and ground friction); the reward function is fixed — always "run forward". Boundaries
+# are observable, as in the paper's semi-continual setting.
 
 # --- environment ---
 env_id: "HalfCheetah-v5"        # falls back to v4 automatically if v5 is unavailable
-tasks: [1, -1]                  # directional: +1 = forward, -1 = backward
-switch: 614400                  # env steps between task flips (cyclic)
-total_steps: 3072000            # total env steps (5 clean phases)
-step_by_step: true              # per-step online updates instead of batch PPO
+env_mode: "drift"               # "drift" = physics change; "directional" = Phase 1's reward flip
+
+# The physics multiplier per task, cycled. THE SEQUENCE MUST REVISIT or backward transfer is
+# undefined: with this one, tasks 1/3 and 2/4 are the same physics, so BWT compares a task against
+# itself later in the sequence. Amplitude (+/-60% of nominal) is the single knob that decides
+# whether the benchmark can separate the methods at all — check the dynamic range before a sweep.
+drift_schedule: "step"          # "sin"/"linear" = continuous drift, no boundaries (Phase 2b)
+drift_targets: ["damping", "friction"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+switch: 614400                  # env steps per task
+total_steps: 3072000            # 5 phases of 614400
 max_episode_steps: 1000
+step_by_step: false             # batch PPO, not per-step online updates
+
+# `tasks` is the reward-direction sequence, used only by env_mode: "directional". Kept so the
+# shared code paths stay valid; it has no effect under "drift", where the reward never changes.
+tasks: [1, -1]
 
 # --- PPO core ---
 gamma: 0.99
 gae_lambda: 0.95
 clip_coef: 0.2
-n_steps: 2048                   # rollout length per update
+n_steps: 256                    # rollout length per env (batch = n_steps * num_envs)
+num_envs: 8
+async_envs: true
 epochs: 10                      # PPO epochs per update
 minibatch_size: 64
 ent_coef: 0.0
 max_grad_norm: 0.5
 target_kl: null                 # set a float (e.g. 0.03) to enable early-stop; null disables
 normalize_advantage: true
+# OFF, and this is a correctness fix rather than a preference.
+#
+# `anneal_lr` is CleanRL's linear decay to zero — right for a single task, wrong here for two
+# reasons measured on the Phase 2a sweep:
+#
+#   1. It OVERWRITES pt's Robbins-Monro schedule. anneal_lr() runs every update and sets
+#      lr = frac * initial_lr on EVERY optimizer, wiping whatever _set_next_permanent_lrs() wrote
+#      at the last consolidation. The observed alpha_P matched the anneal prediction to four
+#      significant figures and diverged from Robbins-Monro by up to 100x, so `rm_power` was a dead
+#      parameter and Theorem 5's premise was never satisfied — while the log printed rm_power=0.6
+#      as though it were.
+#   2. In a FIVE-TASK continual benchmark it decays every arm's learning rate to ~20% by phase 5
+#      and ~2% by the end, so adaptation at the later boundaries is crippled by construction —
+#      which is precisely what the experiment exists to measure.
+#
+# Set true only to reproduce a pre-2026-08-12 run.
 anneal_lr: false
+adam_eps: 0.00001
 
 # --- actor ---
 lr_actor: 0.0003
-hidden_sizes: [256, 256]
+lr_critic: 0.0003
+hidden_sizes: [64, 64]
+
+# SIGMA: LEARNED ON EVERY ARM. This is CleanRL's standard PPO, whose `log_std` is a trainable
+# nn.Parameter, and it is matched across arms because ALL THREE learn it — so the comparison is
+# both standard and fair at the same time.
+#
+# It is a deliberate departure from Constraint C4 of the supervisor's PT specification, which
+# freezes log_std for `pt` ("owned by the permanent set, held on a global schedule"). Freezing it
+# on every arm restores parity but makes vanilla non-standard and holds all three at sigma = 1.0,
+# which is heavy exploration noise for HalfCheetah and depresses every arm's return. Unfreezing
+# only vanilla/ewc would be standard but would reintroduce exactly the sigma confound Phase 1
+# removed. Unfreezing all three is the one option that is standard AND matched; the cost is the
+# departure from C4, which should be agreed with the supervisor.
+#
+# `configs/pt_supervisor.yaml` pins this back to true, because that arm exists to reproduce the
+# supervisor's agent exactly.
+freeze_log_std: false
+log_std_init: 0.0
+
+# --- normalization: identical across every arm, and frozen after warmup ---
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 100000
+clip_obs: 10.0
+clip_reward: 10.0
 
 # --- logging / bookkeeping ---
 log_interval_updates: 1         # how often (in updates) to flush scalar logs
-probe_states: 256              # # of states sampled to measure value drift at boundaries
+probe_states: 256               # states sampled to measure value drift at boundaries
 eval_ema: 0.99                  # smoothing for the running episodic-return curve
+transfer_eval_episodes: 10      # episodes per cell of the transfer matrix; 0 disables it
 results_dir: "src_continuous_control/results"
 runs_dir: "src_continuous_control/runs"
 wandb_project: "pt-continuous-control"
+
+# Seeds for the sweep: 5 per method (scripts iterate these; train.py takes one --seed).
+seeds: [0, 1, 2, 3, 4]

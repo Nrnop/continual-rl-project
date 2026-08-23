@@ -1,0 +1,33 @@
+# `pt` on cartpole with STANDARD PPO exploration — learned sigma, starting at 1.0.
+#
+# Twin of cartpole_van_learned.yaml; see that file for why this check exists. Same widths as
+# cartpole_pt.yaml so parameter parity stays at 0.9996x, and the ONLY difference from the frozen-
+# sigma study is the two sigma keys below.
+#
+# `pt` MATTERS MOST HERE. On HalfCheetah it was the arm whose sigma collapsed FASTEST — 0.054 at the
+# final boundary against vanilla's 0.072 and EWC's 0.094 — so a learned-sigma comparison there
+# handed `pt` roughly 60% of the exploration of the arms it was measured against. If the same thing
+# happens on cartpole, our win at frozen 0.37 may not survive the standard setup, and we need to
+# know that ourselves rather than be told it.
+#
+# Note this is a deliberate departure from Constraint C4 of the supervisor's PT specification, which
+# freezes log_std for `pt`. That is the point: the question is what happens under STANDARD PPO.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+# --- THE ONE CHANGE vs cartpole_pt.yaml ---
+freeze_log_std: false
+log_std_init: 0.0
+
+# Widths unchanged from cartpole_pt.yaml — parity 0.9996x at obs 5 / act 1.
+hidden_sizes: [55, 55]
+actor_trans_hidden_sizes: [30, 30]
+critic_hidden_sizes: [55, 55]
+critic_trans_hidden_sizes: [30, 30]
+
+max_episode_steps: 1000

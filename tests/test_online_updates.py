@@ -19,13 +19,14 @@ def test_online_step_update_gradient_flow_and_weight_changes(any_agent):
     reward = 1.5
     done_flag = 0.0
 
-    # Get initial logprob using actor
+    # The old logprob must be that of THIS action under the current policy, so the ratio starts at
+    # 1 and the clipped surrogate is inside its trust region. Using the logprob of some other
+    # sampled action can put the ratio outside the clip, where `torch.clamp` has zero gradient —
+    # and `pt` has no entropy bonus to move the actor anyway, so the step becomes a silent no-op.
     with torch.no_grad():
         obs_t = torch.as_tensor(obs, device=agent.device).unsqueeze(0)
         action_t = torch.as_tensor(action, device=agent.device).unsqueeze(0)
-        _, entropy = agent.actor.evaluate_actions(obs_t, action_t)
-        # Or act to get exact old_logprob
-        _, logprob_t = agent.actor.act(obs_t)
+        logprob_t, entropy = agent.actor.evaluate_actions(obs_t, action_t)
         old_logprob = logprob_t.item()
 
     al, cl, ent, kl, ext = agent._online_step_update(obs, action, old_logprob, reward, next_obs, done_flag)

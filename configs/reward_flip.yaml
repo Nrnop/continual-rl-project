@@ -1,0 +1,32 @@
+# REWARD-FLIP BENCHMARK, WITH A RESET AT EVERY BOUNDARY.
+#
+#   python -m src_continuous_control.train --agent vanilla --config reward_flip --seed 0
+#   python -m src_continuous_control.train --agent ewc     --config reward_flip --seed 0
+#   python -m src_continuous_control.train --agent pt      --config reward_flip --seed 0
+#
+# The physics stay fixed; the REWARD flips sign at each boundary, so the cheetah must run forward,
+# then backward, then forward again. Five phases: +1, -1, +1, -1, +1.
+#
+# THE CHANGE THAT DEFINES THIS STUDY: `reset_on_task_switch`. Without it the cheetah carries its
+# pose, joint velocities and body angle straight across the switch, so a boundary landing mid-stride
+# or upside-down starts the new task from an arbitrary state — luck that differs per seed and per
+# arm, and that blurs every post-boundary measurement. With it, each task starts from a standing
+# position and the transition is well defined.
+reset_on_task_switch: true
+
+env_mode: "directional"
+tasks: [1, -1]
+
+# The transfer matrix is OFF, for a correctness reason as well as a cost one.
+#
+# `TransferMatrix` is indexed by task number and sized from `len(tasks)` = 2 here, but the run
+# crosses 5 boundaries, so `add_row(task_idx)` would be called with 2, 3, 4 and raise on the THIRD
+# boundary — killing the run two thirds of the way through. The physics benchmark never hit this
+# because its task list has 5 entries. Disabling the matrix avoids the code path entirely; Phase 1
+# had no transfer matrix either, so nothing is lost relative to the comparison being reproduced.
+# (Left as a known bug: the matrix needs to size itself from the number of PHASES, not tasks.)
+transfer_eval_episodes: 0
+
+# Everything else — the horizon, the corrected sigma/anneal settings, and each agent's own
+# hyper-parameters — is inherited from default.yaml and ppo_<agent>.yaml, so this study differs
+# from the physics study in exactly two ways: the benchmark, and the boundary reset.

@@ -9,15 +9,42 @@ import torch.nn as nn
 from torch.distributions import Normal
 
 
-def mlp(in_dim, hidden_sizes, out_dim, activation=nn.Tanh, out_gain=0.01):
-    """Build an MLP with orthogonal init (PPO convention: small gain on the output layer)."""
+def mlp(in_dim, hidden_sizes, out_dim, activation=nn.Tanh, out_gain=0.01, layer_norm=False):
+    """Build an MLP with orthogonal init (PPO convention: small gain on the output layer).
+
+    `layer_norm` inserts nn.LayerNorm on every HIDDEN layer, before the activation. Every network
+    in this project — GaussianActor, SplitGaussianActor, VanillaCritic, SplitCritic — is built
+    here, so one flag reaches all four and no arm can accidentally get a different architecture
+    from the arm it is compared against.
+
+    WHY IT IS OFFERED. Under a changing task distribution networks lose plasticity: the effective
+    step size decays as weight norms grow and units saturate, and the agent adapts progressively
+    worse at each successive boundary. That is this project's exact failure signature. Normalising
+    hidden activations is the standard mitigation.
+
+    TWO PLACEMENT RULES, and they are not stylistic.
+
+    1. NEVER ON THE OUTPUT LAYER. `SplitCritic.decay_transient(mode="output")` and
+       `SplitGaussianActor.decay_transient` implement Alg. 2 line 9 exactly, by scaling the final
+       Linear's weight and bias:  W·h + b -> decay·(W·h + b).  That identity holds only because the
+       output layer is affine. A LayerNorm after it would re-standardise the result and the decay
+       would silently stop being a decay — the mechanism's central operation, quietly broken.
+    2. The zero-init conditions still hold. Theorem 1 wants V^(T)_0 = 0 and mu_T(s) = 0 at init,
+       which are enforced by zeroing the OUTPUT layer. Normalising upstream of it cannot disturb
+       that: anything times a zero output weight is still zero.
+
+    Off by default, so every existing result reproduces bit-for-bit.
+    """
     layers = []
     last = in_dim
     for h in hidden_sizes:
         linear = nn.Linear(last, h)
         nn.init.orthogonal_(linear.weight, np.sqrt(2))
         nn.init.constant_(linear.bias, 0.0)
-        layers += [linear, activation()]
+        layers.append(linear)
+        if layer_norm:
+            layers.append(nn.LayerNorm(h))
+        layers.append(activation())
         last = h
     out = nn.Linear(last, out_dim)
     nn.init.orthogonal_(out.weight, out_gain)
@@ -28,14 +55,15 @@ def mlp(in_dim, hidden_sizes, out_dim, activation=nn.Tanh, out_gain=0.01):
 
 class GaussianActor(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_sizes=(256, 256), log_std_init=0.0,
-                 freeze_log_std=False):
+                 freeze_log_std=False, layer_norm=False):
         super().__init__()
-        self.mean_net = mlp(obs_dim, list(hidden_sizes), act_dim, out_gain=0.01)
-        # `freeze_log_std` exists ONLY to make a fair comparison against pt_full possible.
+        self.mean_net = mlp(obs_dim, list(hidden_sizes), act_dim, out_gain=0.01,
+                            layer_norm=layer_norm)
+        # `freeze_log_std` exists ONLY to make a fair comparison against pt possible.
         # SplitGaussianActor owns log_std in its PERMANENT set and freezes it (Constraint C4),
         # while this actor learns it — so by default the two arms run different exploration
         # schedules and any return difference confounds the PT mechanism with sigma. Measured on
-        # DirectionalPointMass: vanilla anneals to sigma ~0.58-0.76 while pt_full stays at 1.0.
+        # DirectionalPointMass: vanilla anneals to sigma ~0.58-0.76 while pt stays at 1.0.
         # Default False keeps every earlier run bit-identical.
         self.log_std = nn.Parameter(torch.ones(act_dim) * log_std_init,
                                     requires_grad=not freeze_log_std)
@@ -69,7 +97,7 @@ class GaussianActor(nn.Module):
 
         The single-network analogue of SplitGaussianActor.kl_to_prior, with the permanent
         replaced by the ZERO policy. It exists to test the Stage-1/2 conclusion directly: the
-        measured benefit of pt_full came from its INERT arm, whose permanent is the zero function
+        measured benefit of pt came from its INERT arm, whose permanent is the zero function
         (RMS |mu_P| = 0.002), so its KL anchor is exactly this penalty. If vanilla plus this term
         plus a frozen sigma reproduces the inert arm, then the whole PT apparatus reduces to one
         regularizer and should be reported as such.
@@ -94,16 +122,48 @@ class SplitGaussianActor(nn.Module):
     """
 
     def __init__(self, obs_dim, act_dim, hidden_sizes=(256, 256), trans_hidden_sizes=(64, 64),
-                 log_std_init=0.0):
+                 log_std_init=0.0, freeze_log_std=True, perm_obs_dim=None, layer_norm=False):
         super().__init__()
-        self.perm_mean = mlp(obs_dim, list(hidden_sizes), act_dim, out_gain=0.01)
-        self.trans_mean = mlp(obs_dim, list(trans_hidden_sizes), act_dim, out_gain=0.01)
+        # perm_obs_dim < obs_dim routes the TAIL of the observation to the TRANSIENT ONLY. It is
+        # used to give the transient a task identifier the permanent cannot see, which is how
+        # Anand & Precup's own control experiment is set up: the permanent learns the part that
+        # generalises across tasks (here: locomotion), the transient reads the reward-correlated
+        # feature and supplies the task-specific correction. Leaving it None feeds both nets the
+        # whole observation, which is the original behaviour.
+        self.perm_obs_dim = int(perm_obs_dim) if perm_obs_dim is not None else int(obs_dim)
+        if not 0 < self.perm_obs_dim <= obs_dim:
+            raise ValueError(f"perm_obs_dim {self.perm_obs_dim} outside (0, {obs_dim}]")
+        self.perm_mean = mlp(self.perm_obs_dim, list(hidden_sizes), act_dim, out_gain=0.01,
+                             layer_norm=layer_norm)
+        self.trans_mean = mlp(obs_dim, list(trans_hidden_sizes), act_dim, out_gain=0.01,
+                              layer_norm=layer_norm)
         nn.init.constant_(self.trans_mean[-1].weight, 0.0)
         nn.init.constant_(self.trans_mean[-1].bias, 0.0)
-        self.log_std = nn.Parameter(torch.ones(act_dim) * log_std_init, requires_grad=False)
+        # DEFAULT TRUE, AND THE DEFAULT IS THE SPECIFICATION. Constraint C4 — "log_std is owned by
+        # the PERMANENT set, held on a global schedule (here the trivial constant one), so no
+        # online transient step or autograd path can ever move it" — comes from the supervisor's
+        # own PT-full implementation (PT_SPECIFICATION.md). Do not unfreeze it for this agent
+        # without agreeing that change with them first.
+        #
+        # The flag is threaded from config only so that the SAME key governs every arm: vanilla
+        # and ewc must be frozen too, or PT's C4 freeze confounds the comparison with sigma.
+        # Setting it False everywhere gives standard PPO's learned sigma, symmetric in the other
+        # direction — a legitimate variant, but a departure from the spec.
+        self.log_std = nn.Parameter(torch.ones(act_dim) * log_std_init,
+                                    requires_grad=not freeze_log_std)
+
+    def perm_forward(self, obs):
+        """mu_P(s), with the task-label tail sliced off if the permanent is meant to be blind to it.
+
+        ALWAYS call this instead of `self.perm_mean(obs)` directly. The slice is the whole point of
+        perm_obs_dim, and a caller that skips it either crashes on a shape mismatch or — worse, if
+        the dims happened to line up — silently feeds the permanent the very signal it is supposed
+        not to have.
+        """
+        return self.perm_mean(obs[..., :self.perm_obs_dim])
 
     def _composed_mean(self, obs, detach_perm=False):
-        perm = self.perm_mean(obs)
+        perm = self.perm_forward(obs)
         if detach_perm:
             perm = perm.detach()
         return perm + self.trans_mean(obs)

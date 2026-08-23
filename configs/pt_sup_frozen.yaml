@@ -1,0 +1,48 @@
+# ABLATION: wide PT with the PERMANENT FROZEN, on the physics benchmark.
+#
+# The ablation bar that is missing from the big-network setups. `pt_supervisor` (permanent
+# [256,256] + transient [64,64], 154k params) with lr_perm = 0, so the permanent cannot learn.
+#
+# As in every other frozen arm here, `lr_perm = 0` stops the permanent LEARNING but NOT the
+# transient decay, the consolidation cadence or the KL anchor -- it is the control for "the
+# permanent learns", not for "the split exists". Robbins-Monro annealing of a zero learning rate
+# is a no-op, so rm_power is zeroed too rather than left advertising a schedule that never runs.
+actor_trans_hidden_sizes:
+- 64
+- 64
+clip_obs: 10.0
+clip_reward: 10.0
+consolidation_buffer_size: 20480
+consolidation_epochs: 3
+consolidation_holdout_frac: 0.0
+critic_hidden_sizes:
+- 256
+- 256
+critic_trans_hidden_sizes:
+- 64
+- 64
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+ent_coef: 0.0
+hidden_sizes:
+- 256
+- 256
+k: 10
+kl_prior_coef: 0.01
+lr_actor: 0.0003
+lr_perm: 0.0
+lr_perm_actor: 0.0
+lr_trans: 0.0003
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 100000
+perm_optimizer: adam
+rho: 0.5
+rm_power: 0.0
+rm_power_actor: 0.0
+trans_hidden_sizes:
+- 64
+- 64

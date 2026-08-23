@@ -1,0 +1,40 @@
+# vanilla PPO on cartpole-swingup — the SECOND environment (envs/cartpole_swingup.py).
+#
+# THE POINT OF THIS BENCHMARK is that its ceiling is known by construction: dm_control's reward is
+# in [0,1] per step over exactly 1000 steps with no early termination, so the maximum return is
+# 1000 and every number must be reported as a percentage of optimal alongside the raw return.
+#
+# There are THREE symmetric overlays — cartpole_van / cartpole_pt / cartpole_ewc — and no shared
+# one, deliberately. `pt` needs different widths to hit parameter parity at these dimensions
+# (obs 5 / act 1), so a single shared overlay would silently hand `pt` 0.93x the baseline's
+# parameters. Symmetric names mean there is no config that quietly misconfigures an arm.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"          # fallbacks if this saturates: "swingup_sparse", "two_poles"
+
+# Same schedule and the same multipliers as default.yaml, deliberately: the two benchmarks should
+# differ in the ENVIRONMENT and in nothing else. Tasks 1/3 and 2/4 revisit, so backward transfer
+# is well-defined. A longer, heavier pole is harder to swing up.
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+# --- SIGMA IS FROZEN AND MATCHED ACROSS ALL THREE ARMS ---
+# Not a style preference. On HalfCheetah, learned sigma collapses at different rates per arm (`pt`
+# fastest: 0.054 vs vanilla 0.072 vs ewc 0.094 at the last boundary) and costs a factor of THREE
+# even with no task switches at all — measured on the stationary ceiling run. Every learned-sigma
+# comparison in PHASE2_RESULTS.md is depressed by that PPO pathology, which has nothing to do with
+# continual learning. This benchmark does not repeat the mistake.
+#
+# 0.37 = exp(-1), the value the HalfCheetah sigma sweep settled on. It has NOT been swept here, and
+# a cartpole optimum may well differ — that is a question for after the main comparison, not a
+# reason to let sigma float.
+freeze_log_std: true
+log_std_init: -1.0
+
+# Baseline widths. At obs 5 / act 1 this is 9,219 total parameters; cartpole_pt.yaml matches it.
+hidden_sizes: [64, 64]
+
+# The episode is exactly 1000 steps and never terminates early, so returns are directly comparable
+# across tasks and across arms. Do not change without also changing the reported ceiling.
+max_episode_steps: 1000

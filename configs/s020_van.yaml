@@ -1,0 +1,55 @@
+# Vanilla PPO on reward flips + reset, sigma 0.2
+#
+# sigma = 0.2 (log_std_init = -1.6094), FROZEN, identical for every arm in this row.
+#
+# Part of the SIGMA SWEEP. Only two exploration values have ever been run on this project -- 1.0
+# and 0.37 -- and PT beats vanilla at one and loses at the other. Two points cannot tell a peak
+# from a plateau from the edge of a cliff, so this adds 0.2 to locate the boundary.
+#
+# Benchmark is reward-flip WITH the boundary reset, i.e. identical to the s14reset_* study in
+# every respect except sigma. That is what makes the comparison across sigma clean.
+adam_eps: 1.0e-05
+agent: vanilla
+anneal_lr: false
+async_envs: true
+clip_coef: 0.2
+clip_obs: 10.0
+clip_reward: 10.0
+critic_hidden_sizes:
+- 64
+- 64
+decay_gain_probe: false
+ent_coef: 0.0
+env_id: HalfCheetah-v5
+env_mode: directional
+epochs: 10
+freeze_log_std: true
+gae_lambda: 0.95
+gamma: 0.99
+hidden_sizes:
+- 64
+- 64
+joint_grad_clip: false
+jumpstart_window_updates: 20
+log_std_init: -1.6094
+lr_actor: 0.0003
+lr_critic: 0.0003
+lr_trans: 0.0003
+max_grad_norm: 0.5
+minibatch_size: 64
+n_steps: 256
+normalize_advantage: true
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 100000
+num_envs: 8
+probe_states: 256
+reset_on_task_switch: true
+step_by_step: false
+switch: 614400
+target_kl: null
+tasks:
+- 1
+- -1
+total_steps: 3072000
+transfer_eval_episodes: 0

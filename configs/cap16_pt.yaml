@@ -1,0 +1,40 @@
+# CAPACITY SWEEP, small-agent end — pt at the [16,16]-equivalent width.
+#
+# See `cap16_van.yaml` for what the sweep tests.
+#
+# WIDTHS ARE NOT A FREE CHOICE HERE, they are the parity constraint. pt runs FOUR networks where
+# vanilla runs two, so matching it means matching TOTAL parameters — Sec. 6.1's construction, and
+# the thing that keeps a capacity experiment from confounding the mechanism with the capacity it is
+# supposed to be measuring. Computed against vanilla's [16,16] on HalfCheetah (obs 17, act 6):
+#
+#   vanilla [16,16]                    1,239 params
+#   pt perm [11,11] + trans [8,8]      1,239 params   ->  1.000x   <-- THIS
+#   pt perm [13,13] + trans [8,8]                         1.150x   (proportional scaling of 51/32)
+#
+# The same calculation reproduces 0.993x for the [51,32] scheme at baseline [64,64], which is the
+# 0.99x recorded in `ppo_pt.yaml` — so the rule is the one already in use, applied at a new size.
+# The transient stays at exactly half the baseline width (8 = 16/2), preserving the structure the
+# scheme wants: a permanent near baseline width, a transient at half.
+#
+# ALL FOUR width keys are set explicitly. `ppo_pt.yaml` pins them to [51,51]/[32,32] and this
+# overlay loads after it, so omitting any one would silently leave that network at full size and
+# hand pt a capacity advantage in the one experiment that exists to measure capacity.
+#
+# The hyper-parameters below (rho, k, learning rates) were tuned at [51,51]/[32,32] and are NOT
+# re-tuned here. That is a real limitation: if pt underperforms at [16,16] it could be the width or
+# it could be the untuned rho. Stated so it is read as a directional result, not a final one.
+
+hidden_sizes: [11, 11]                  # permanent actor
+actor_trans_hidden_sizes: [8, 8]        # transient actor  — half the baseline width
+critic_hidden_sizes: [11, 11]           # permanent critic
+critic_trans_hidden_sizes: [8, 8]       # transient critic — half the baseline width
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

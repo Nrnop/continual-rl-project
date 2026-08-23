@@ -1,0 +1,24 @@
+# Online EWC on cartpole with STANDARD PPO exploration — learned sigma, starting at 1.0.
+#
+# Third arm of the learned-sigma study; see cartpole_van_learned.yaml for why that study exists.
+# Identical to cartpole_ewc.yaml except for the two sigma keys.
+#
+# WORTH WATCHING ON THIS ARM SPECIFICALLY. One of the bugs already fixed in this project was EWC
+# ANCHORING log_std, which handed it roughly twice the exploration of the arms it was compared
+# against. That is fixed, but this is the first cartpole study where sigma is trainable at all, so
+# it is the first one where the bug could have re-appeared. `log_std_mean` is logged per arm — check
+# the three arms track each other before trusting any comparison.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+# --- THE ONE CHANGE vs cartpole_ewc.yaml ---
+freeze_log_std: false
+log_std_init: 0.0
+
+hidden_sizes: [64, 64]
+max_episode_steps: 1000

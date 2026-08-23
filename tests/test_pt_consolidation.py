@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from src_continuous_control.agents.ppo_pt_full import PPOPTFull
+from src_continuous_control.agents.ppo_pt import PPOPT
 
 
 def make_cfg():
@@ -38,7 +38,7 @@ def test_consolidation_flush_and_stats():
     obs_dim = 3
     act_dim = 2
     device = "cpu"
-    agent = PPOPTFull(obs_dim, act_dim, cfg, device)
+    agent = PPOPT(obs_dim, act_dim, cfg, device)
 
     # Add synthetic states to the consolidation buffer
     states = np.random.randn(10, obs_dim).astype(np.float32)

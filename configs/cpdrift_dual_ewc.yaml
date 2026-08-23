@@ -1,0 +1,62 @@
+# PHASE 2b -- SMOOTH, BOUNDARY-FREE DRIFT. cartpole-swingup, online EWC, dual condition.
+#
+# THIS IS THE EXPERIMENT THE PROPOSAL IS ACTUALLY ABOUT. Its title is "...under SMOOTH environment
+# non-stationarity" and its abstract promises a method "designed specifically for boundary-free,
+# Lipschitz-continuous environments". Every run in the project so far used discrete, observable
+# task boundaries (drift_schedule: step) -- the setting the proposal argues against. This closes
+# that gap and is the condition hypothesis H1 was written for.
+#
+# There are no task boundaries here at all. train.py sets boundaries_enabled = False whenever the
+# schedule is not "step", so set_task is never called and no task index exists.
+#
+# DUAL-TIMESCALE CONDITION. A slow structural trend plus a fast fluctuation. The regime
+# the method is designed for: the permanent should capture the trend while the transient
+# absorbs the fluctuation without contaminating it.
+#
+# THREE THINGS THIS FIXES relative to the old drift.yaml, which was written early and never
+# revisited. Do not use that file.
+#
+#   1. anneal_lr: true -- drift.yaml still sets it. It is the documented bug that "silently
+#      overwrote pt's Robbins-Monro schedule and made rm_power a dead parameter". Worse here than
+#      anywhere: this experiment is about CONTINUOUS adaptation, and anneal_lr decays every
+#      learning rate toward zero. Off below.
+#   2. No second drift component. The drift env's own docstring warns that with a single slow
+#      component "a permanent/transient split has nothing to do and PT NECESSARILY TIES the
+#      baseline" -- a null by construction rather than by measurement.
+#   3. EWC had no way to consolidate without a boundary, so it was bit-identical to vanilla and
+#      therefore not a baseline at all. MEASURED, not argued: the archived Phase 1 drift runs have
+#      drift_ewc identical to drift_vanilla on all five seeds, max difference 0.000000.
+#      ewc_consolidate_every (added 2026-08-21) gives it a timer.
+#
+# EWC AND PT CONSOLIDATE ON THE SAME CADENCE -- every 10 PPO updates. Deliberate: with the trigger
+# held identical, a difference between them is about the MECHANISM, not about who updates more.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+# --- the drift itself ---
+drift_schedule: "sin"          # cyclic, so the dynamics REVISIT and retention stays measurable;
+                               # "linear" is a never-repeating ramp, which makes it undefined
+drift_targets: ["pole_length", "pole_mass"]
+drift_amplitude: 0.4         # slow structural component: the permanent's job
+drift_period: 1228800          # one full slow cycle in GLOBAL env steps (~2.5 cycles per run)
+drift_amplitude2: 0.2       # fast fluctuation: the transient's job
+drift_period2: 30720           # ~15 PPO updates per fast cycle
+drift_phase: 0.0
+
+# --- standard PPO exploration, matching the learned-sigma studies ---
+freeze_log_std: false
+log_std_init: 0.0
+
+# The Robbins-Monro schedule must survive. See fix 1 above.
+anneal_lr: false
+
+# Same cadence as pt's k, so the comparison is mechanism against mechanism.
+ewc_consolidate_every: 10
+
+# No boundaries means no task index, so the transfer matrix is undefined here.
+transfer_eval_episodes: 0
+
+hidden_sizes: [64, 64]
+
+max_episode_steps: 1000

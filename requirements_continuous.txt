@@ -10,3 +10,13 @@ pyyaml>=6.0
 tensorboard>=2.13.0
 wandb>=0.15.0
 matplotlib>=3.7.0
+
+# --- cartpole-swingup, the second environment (envs/cartpole_swingup.py) ---
+# dm_control supplies the cartpole domain; shimmy converts its dm_env API to gymnasium.
+#
+# dm_control IS PINNED, and the pin is load-bearing. dm_control 1.0.44 requires mujoco >= 3.11 and
+# would upgrade the physics engine underneath ~154 existing HalfCheetah runs, silently making new
+# HalfCheetah numbers non-comparable with every number in PHASE2_RESULTS.md. 1.0.43 is the newest
+# release that runs on mujoco 3.10. Do not unpin without re-running a HalfCheetah reference arm.
+dm_control==1.0.43
+shimmy>=2.0.0

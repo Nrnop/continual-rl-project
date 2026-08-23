@@ -21,6 +21,7 @@ class PPOVanilla(PPOBase):
         self.critic = VanillaCritic(
             obs_dim, hidden_sizes=self._critic_hidden(),
             zero_init=bool(cfg.get("critic_zero_init", False)),
+            layer_norm=bool(cfg.get("layer_norm", False)),
         ).to(device)
         lr_critic = cfg.get("lr_critic", cfg["lr_actor"])
         self.critic_optim = torch.optim.Adam(
@@ -46,10 +47,7 @@ class PPOVanilla(PPOBase):
         return 0.5 * ((v_pred - returns) ** 2).mean()
 
     def post_update(self, update_idx):
-        # Vanilla has no consolidation cadence, but the base implements `policy_shrink_every`
-        # (disabled by default), so this must delegate rather than no-op — otherwise the flag is
-        # silently dead for the one agent it exists to test.
-        super().post_update(update_idx)
+        """No-op: vanilla has no consolidation cadence and nothing else to do after an update."""
 
     # ------------------------------------------------------------------
     # Critic optimizer plumbing

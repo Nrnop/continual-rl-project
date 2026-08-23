@@ -1,0 +1,28 @@
+# PHASE 2a, RUN 2 — the harder dynamics variant. A directional test of the paper's own claim.
+#
+#   python -m src_continuous_control.train --agent vanilla --config phase2_hard --seed 0
+#   python -m src_continuous_control.train --agent ewc     --config phase2_hard --seed 0
+#   python -m src_continuous_control.train --agent pt      --config phase2_hard --seed 0
+#
+# Run 1 changes damping and friction. This one changes ALL FOUR physical parameters at every
+# boundary, which makes the environment more complex relative to a fixed-capacity agent. That is
+# exactly the regime Appendix C.3 names as the method's boundary condition:
+#
+#   "our approach is beneficial in the big world - small agent setup where the computation budget
+#    of the agent is very small compared to the complexity of the environment. When the agent's
+#    capacity is large relative to the complexity of the environment, there's no additional
+#    benefit."
+#
+# So the paper PREDICTS PT should do better here than in run 1. That makes this a hypothesis test,
+# not an extra sweep — and it is the answer to "all three agents landed close together", which
+# would be a benchmark-difficulty finding rather than a null result about PT.
+#
+# NOT INCLUDED: dof_frictionloss is all zeros in this model, so scaling it multiplicatively is a
+# no-op — a silently inert manipulation, which is exactly the failure mode that cost Phase 1 a week.
+
+# `mass` triggers an mj_setConst inertia refresh; the drift wrapper already handles that.
+drift_targets: ["damping", "friction", "mass", "armature"]
+
+# Everything else — the task sequence, the horizon, the agents' hyper-parameters — is inherited
+# unchanged from default.yaml and the per-agent config, so run 1 vs run 2 differs in exactly one
+# thing.

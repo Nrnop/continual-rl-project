@@ -1,0 +1,31 @@
+# vanilla on cartpole with STANDARD PPO exploration — learned sigma, starting at 1.0.
+#
+# WHY THIS EXISTS. Our whole cartpole study runs sigma frozen at 0.37, and 0.37 is not a principled
+# value: it is exp(-1), a round number in LOG space, inherited from HalfCheetah and never swept
+# here. Standard PPO (CleanRL's ppo_continuous_action, and the DART paper on this same environment)
+# makes log_std a trainable parameter initialised at 0, i.e. sigma = 1.0. That is the setting a
+# supervisor or reviewer will ask about, and right now we cannot answer.
+#
+# WE FROZE SIGMA TO FIX A HALFCHEETAH PROBLEM. There, learned sigma collapses toward determinism and
+# costs ~3x even with no task boundaries at all. But DART reports PPO reaching ~620 on stationary
+# cartpole-swingup with learned sigma, against our 562 with it frozen — so that pathology may simply
+# not exist on this environment, and we may have imported a non-standard choice for no reason.
+#
+# This is the CHEAP CHECK: one seed, purely to see whether sigma collapses on cartpole at all.
+# `PPOBase` now logs `log_std_mean` and `log_std_min` for every arm, so the collapse is directly
+# observable rather than reconstructed from entropy afterwards.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+# --- THE ONE CHANGE vs cartpole_van.yaml ---
+freeze_log_std: false
+log_std_init: 0.0
+
+hidden_sizes: [64, 64]
+max_episode_steps: 1000
+

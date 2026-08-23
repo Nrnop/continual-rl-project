@@ -84,6 +84,11 @@ def any_agent(any_agent_cls, mock_cfg):
         cfg["agent"] = "vanilla"
     elif any_agent_cls == PPOPT:
         cfg["agent"] = "pt"
+        # `pt` regularizes the policy with KL-to-permanent instead of an entropy bonus, and
+        # refuses to construct with ent_coef != 0 rather than silently running both.
+        cfg["ent_coef"] = 0.0
+        cfg["kl_prior_coef"] = 0.01
+        cfg["rho"] = 0.5
     elif any_agent_cls == PPOEWC:
         cfg["agent"] = "ewc"
     return any_agent_cls(obs_dim, act_dim, cfg, device)

@@ -1,0 +1,47 @@
+# THE ALLOCATION TEST — give pt's TRAINABLE half the baseline's full width.
+#
+# ONE VARIABLE against `pt_physics_s037.yaml`: the two transient nets go from [32,32] to [64,64].
+# Same benchmark, same frozen sigma 0.37, same seeds, so the existing pt_physics_s037 and
+# van_physics_s037 runs are the controls and neither needs re-running.
+#
+# WHAT IT TESTS. pt's parameter parity is matched on TOTALS, but PPO's gradient only ever reaches
+# the TRANSIENT — `mu_P` is detached in the training forward and the permanent moves only through
+# the slow consolidation regression. So on the axis that decides how fast the policy improves,
+# pt has been running a much smaller network than the arm it is compared against:
+#
+#   vanilla   PPO trains the whole actor + critic                  5,708 + 5,377 learnable
+#   pt        PPO trains only the two transients ([32,32])         1,830 + 1,665 learnable
+#
+# The capacity sweep (2026-08-18) turned this from a suspicion into the leading explanation. Cutting
+# every arm 9x, vanilla was UNAFFECTED (+1.4%, p=0.548) while pt lost 52.8% (p=0.008). An agent
+# whose return collapses when parameters are removed, on a task where the baseline does not care
+# at all, is an agent that is short of trainable capacity — not one whose environment got harder.
+#
+# THIS DELIBERATELY BREAKS TOTAL PARITY. pt becomes ~1.4x vanilla on totals. That is the point: it
+# makes the LEARNABLE halves equal instead, which is the axis the mechanism actually runs on. It is
+# a diagnostic and must never be reported as a headline arm — with more total parameters, a win
+# here is not attributable to the decomposition.
+#
+# HOW TO READ THE RESULT
+#   pt recovers to ~vanilla  -> the Phase 2 null was about capacity ALLOCATION, not the
+#                               decomposition, and every headline in PHASE2_RESULTS.md needs
+#                               restating in those terms.
+#   pt still loses           -> the decomposition genuinely does not help on this benchmark, and
+#                               that now stands even after handing pt both a fair trainable budget
+#                               AND a total-parameter advantage. That is a much stronger negative
+#                               result than anything currently in the file.
+#
+# Both outcomes are worth the 1.5 hours. Right now the data cannot distinguish them.
+
+actor_trans_hidden_sizes: [64, 64]     # was [32, 32]
+critic_trans_hidden_sizes: [64, 64]    # was [32, 32] — PPO trains this one online too
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

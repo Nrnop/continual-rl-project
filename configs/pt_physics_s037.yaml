@@ -1,0 +1,18 @@
+# pt on the PHYSICS benchmark with exploration held at 0.37.
+#
+# Completes the setup: EWC alone at 0.37 cannot answer 'is fixed exploration good for
+# everyone, or only for PT?' — that needs vanilla and PT at the same setting.
+#
+# NOTE on 0.37: it is exp(-1), i.e. `log_std_init = -1.0`, a round number in LOG space.
+# It was never swept — Phase 1 used exactly two values, 1.0 and 0.37 — so we know PT wins at
+# one and loses at the other, and nothing about where the boundary lies.
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

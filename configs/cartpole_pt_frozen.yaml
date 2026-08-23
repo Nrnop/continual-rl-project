@@ -1,0 +1,47 @@
+# ABLATION ARM on cartpole-swingup: `pt` with the PERMANENT FROZEN.
+#
+#   python -m src_continuous_control.train --agent pt --config cartpole_pt_frozen --seed 0 \
+#       --results-dir src_continuous_control/results/cartpole_pt_frozen
+#
+# The cartpole twin of `phase2_ablation_frozen.yaml`, merged with `cartpole_pt.yaml` because only
+# ONE --config overlay is applied — an ablation arm that silently ran HalfCheetah's environment
+# keys would be measuring a different benchmark from the arm it is bar-charted against.
+#
+# The figure decomposes the method into its two halves:
+#   vanilla   -> this arm : what having a SPLIT AT ALL buys (transient, decay, KL anchor to a
+#                           permanent that never moves)
+#   this arm  -> pt       : what the permanent ACTUALLY LEARNING buys
+#
+# WHAT THIS DOES AND DOES NOT TURN OFF. `lr_perm = 0` freezes the permanent's LEARNING. It does
+# NOT turn off the transient decay, the consolidation cadence, or the KL anchor. A control that
+# was not actually off is failure mode #1 in CLAUDE.md, so do not read the config key — assert
+# that this arm's realised `actor_absorbed_frac` is ~0 and the live arm's is not.
+#
+# AND REPORT HOW MUCH THIS ARM LEARNED, ALWAYS. On HalfCheetah the frozen arm scored BWT ~ 0 with a
+# peak return of exactly 0.0: retention metrics improve when an agent simply does not learn. On
+# this benchmark that is easy to state honestly — report its return as a percentage of 1000.
+
+# --- environment: identical to cartpole_pt.yaml ---
+env_mode: "cartpole"
+cartpole_task: "swingup"
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+freeze_log_std: true
+log_std_init: -1.0
+max_episode_steps: 1000
+
+# --- widths: identical to cartpole_pt.yaml (0.9996x parity at obs 5 / act 1) ---
+hidden_sizes: [55, 55]
+actor_trans_hidden_sizes: [30, 30]
+critic_hidden_sizes: [55, 55]
+critic_trans_hidden_sizes: [30, 30]
+
+# --- the ablation itself ---
+lr_perm: 0.0
+lr_perm_actor: 0.0
+
+# Robbins-Monro annealing of a zero learning rate is a no-op; set it off so the log does not
+# advertise a schedule that is not running.
+rm_power: 0.0
+rm_power_actor: 0.0

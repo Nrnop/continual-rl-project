@@ -25,9 +25,9 @@ from .actor import mlp
 class VanillaCritic(nn.Module):
     """Single undivided state-value V(s) (the baseline)."""
 
-    def __init__(self, obs_dim, hidden_sizes=(256, 256), zero_init=False):
+    def __init__(self, obs_dim, hidden_sizes=(256, 256), zero_init=False, layer_norm=False):
         super().__init__()
-        self.net = mlp(obs_dim, list(hidden_sizes), 1, out_gain=1.0)
+        self.net = mlp(obs_dim, list(hidden_sizes), 1, out_gain=1.0, layer_norm=layer_norm)
         # zero_init: V(s) = 0 at t=0, matching a PT agent run with perm_zero_init.
         #
         # Theorem 1 has TWO conditions: V^(T)_0 = 0 AND V^(TD)_0 = V^(P) — the TD baseline must
@@ -69,13 +69,23 @@ class SplitCritic(nn.Module):
     """
 
     def __init__(self, obs_dim, hidden_sizes=(256, 256), perm_zero_init=False,
-                 trans_zero_init=True, perm_init_std=None, trans_hidden_sizes=None):
+                 trans_zero_init=True, perm_init_std=None, trans_hidden_sizes=None,
+                 perm_obs_dim=None, layer_norm=False):
         super().__init__()
         # trans_hidden_sizes=None reuses hidden_sizes (backward compatible with every existing caller).
         if trans_hidden_sizes is None:
             trans_hidden_sizes = hidden_sizes
-        self.perm = mlp(obs_dim, list(hidden_sizes), 1, out_gain=1.0)
-        self.trans = mlp(obs_dim, list(trans_hidden_sizes), 1, out_gain=1.0)
+        # perm_obs_dim < obs_dim hides the observation's tail from the permanent — see the same
+        # argument on SplitGaussianActor. The critic must be split the same way as the actor: a
+        # value function that can see the task while the policy cannot would produce advantages the
+        # policy has no way to act on.
+        self.perm_obs_dim = int(perm_obs_dim) if perm_obs_dim is not None else int(obs_dim)
+        if not 0 < self.perm_obs_dim <= obs_dim:
+            raise ValueError(f"perm_obs_dim {self.perm_obs_dim} outside (0, {obs_dim}]")
+        self.perm = mlp(self.perm_obs_dim, list(hidden_sizes), 1, out_gain=1.0,
+                        layer_norm=layer_norm)
+        self.trans = mlp(obs_dim, list(trans_hidden_sizes), 1, out_gain=1.0,
+                         layer_norm=layer_norm)
 
         # trans_zero_init: V^(T)_0 = 0, Theorem 1's condition.
         #
@@ -140,7 +150,12 @@ class SplitCritic(nn.Module):
 
     def forward(self, obs):
         """Returns (v_perm, v_trans), each shape (batch,)."""
-        return self.perm(obs).squeeze(-1), self.trans(obs).squeeze(-1)
+        return self.perm_forward(obs).squeeze(-1), self.trans(obs).squeeze(-1)
+
+    def perm_forward(self, obs):
+        """V_P(s), with the task-label tail sliced off. Always use this, never `self.perm(obs)` —
+        see the matching note on SplitGaussianActor.perm_forward."""
+        return self.perm(obs[..., :self.perm_obs_dim])
 
     def value(self, obs):
         v_perm, v_trans = self.forward(obs)

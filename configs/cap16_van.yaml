@@ -1,0 +1,34 @@
+# CAPACITY SWEEP, small-agent end — vanilla at [16,16].
+#
+# THE DIRECTIONAL TEST OF THE PAPER'S OWN BOUNDARY CONDITION. Appendix C.3:
+#
+#   "our approach is beneficial in the big world - small agent setup where the computation budget
+#    of the agent is very small compared to the complexity of the environment. When the agent's
+#    capacity is large relative to the complexity of the environment, there's no additional
+#    benefit."
+#
+# So the paper PREDICTS pt should do better, relative to its baselines, as agent capacity falls.
+# Our whole comparison has been run at one capacity ([64,64]) and that prediction has never been
+# tested. This is the small end of a two-point sweep whose large end is the EXISTING
+# `{van,pt,ewc}_physics_s037` runs — same benchmark, same frozen sigma, same seeds, only the width
+# differs. Nothing new needs running to get the [64,64] point.
+#
+# It is also the cheap substitute for the Humanoid plan. The reason Humanoid was attractive was
+# that it enters the "big world" regime by GROWING THE WORLD; shrinking the agent reaches the same
+# regime on a benchmark we have already characterised, at 1.5 h per run instead of ~43, with every
+# hyper-parameter still valid and no new environment to validate.
+#
+# Sigma is frozen at 0.37, matching the [64,64] point and avoiding the exploration confound
+# documented at the top of PHASE2_RESULTS.md.
+
+hidden_sizes: [16, 16]
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

@@ -1,0 +1,23 @@
+# ABLATION ARM for the reward-flip study: `pt` with the PERMANENT FROZEN.
+#
+# Bar 2 of the two-component figure. `lr_perm = 0` stops the permanent LEARNING; it does not stop
+# the transient decay, the consolidation cadence or the KL anchor, which is what makes this the
+# control for "the permanent learns" rather than for "the split exists".
+#
+# Merged rather than stacked because only ONE --config overlay is applied, so this file has to
+# carry the whole reward-flip setup as well as the manipulation. Keep it in sync with
+# reward_flip.yaml.
+
+# --- from reward_flip.yaml ---
+reset_on_task_switch: true
+env_mode: "directional"
+tasks: [1, -1]
+transfer_eval_episodes: 0
+
+# --- the manipulation ---
+lr_perm: 0.0
+lr_perm_actor: 0.0
+# Robbins-Monro annealing of a zero learning rate is a no-op; off, so the log does not advertise a
+# schedule that is not running.
+rm_power: 0.0
+rm_power_actor: 0.0

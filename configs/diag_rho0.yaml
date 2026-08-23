@@ -1,0 +1,21 @@
+# DIAGNOSTIC OVERLAY — separate the ARCHITECTURE from the MECHANISM.
+#
+# rho = 0 switches the permanent-transient TRANSFER off completely while leaving the split
+# architecture exactly as it is:
+#
+#   the permanent absorbs 0 x mu_T          -> no consolidation transfer
+#   the transient retains (1 - 0) = 1.0     -> no decay
+#
+# What remains is the architecture alone: a policy mu = mu_P + mu_T where mu_P is a DETACHED,
+# effectively frozen random function and mu_T is the half-width net PPO actually trains.
+#
+# This is the control that splits the two explanations for pt's slow learning:
+#
+#   if rho=0 is ALSO slow  -> the cause is structural (a detached permanent offset plus a small
+#                             trainable component), and the transfer mechanism is not to blame.
+#   if rho=0 learns fine   -> the cause is the transfer itself (the periodic absorb-and-decay),
+#                             and the architecture is fine.
+#
+# Read it together with diag_bigtrans, which changes the trainable component's SIZE instead.
+drift_targets: ["damping", "friction", "mass", "armature"]
+rho: 0.0

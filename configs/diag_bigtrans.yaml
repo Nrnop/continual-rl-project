@@ -1,0 +1,22 @@
+# DIAGNOSTIC OVERLAY — is PT slow because the part PPO can actually train is TOO SMALL?
+#
+# This is the structural suspect, and it is not a bug so much as a consequence of the design:
+#
+#   vanilla:  PPO's gradient trains the whole actor            -> 5,708 learnable parameters
+#   pt:       mu_P is DETACHED in the training forward, so PPO's gradient reaches only mu_T,
+#             which is the half-width transient net           -> 1,830 learnable parameters
+#
+# Parameter PARITY was matched on the total (0.99x), but the totals count mu_P, which PPO never
+# touches — it moves only by the slow consolidation regression. So on the axis that matters for
+# how fast the policy improves, PT is running a 3x smaller network than the baseline. That alone
+# would explain a much slower learning curve, with the permanent/transient theory playing no part
+# in it.
+#
+# This overlay gives the TRANSIENT actor the baseline's own width, so the component PPO trains is
+# the same size as vanilla's actor. If PT's learning curve recovers here, the Phase 2a result is
+# about capacity allocation rather than about the decomposition, and the honest headline changes.
+#
+# Note this deliberately BREAKS total-parameter parity (PT becomes ~1.5x). That is fine for a
+# diagnostic whose job is to isolate a cause; it would not be fine for a headline arm.
+drift_targets: ["damping", "friction", "mass", "armature"]
+actor_trans_hidden_sizes: [64, 64]

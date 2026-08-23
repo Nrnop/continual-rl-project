@@ -16,6 +16,10 @@ Online Fisher update at each task switch:
 where F_current is the diagonal empirical Fisher accumulated during the
 most-recent task block:
     F_i = (1/N) Σ_t (∂ log π(a_t|s_t) / ∂θ_i)²
+
+NOTE ON `ewc_lambda` UNITS. Before 2026-08-12 the penalty was divided by the actor's parameter
+count, so a configured lambda of 50 acted as 50/5708 = 0.0088. The division is gone; lambda now
+carries its standard meaning. To reproduce a pre-2026-08-12 run, divide its lambda by 5708.
 """
 import copy
 
@@ -41,35 +45,64 @@ class PPOEWC(PPOVanilla):
         # measures weight protection alone. Default False = the behaviour of every earlier run.
         self.ewc_exclude_log_std = bool(cfg.get("ewc_exclude_log_std", False))
 
-        # Store past tasks: list of dicts with 'fisher' and 'anchor'
+        # ONLINE EWC: ONE running Fisher, decayed by gamma at each boundary — not a growing list.
+        #
+        # `ewc_gamma` was previously set in ppo_ewc.yaml and exposed on the CLI while NO code read
+        # it, so the agent accumulated a separate (Fisher, anchor) pair per boundary and summed
+        # their penalties. The policy therefore became monotonically more rigid with every task
+        # (measured penalty: 0 -> 0.0054 -> 0.0139 -> 0.0167 -> 0.0185 across the five phases),
+        # which is the opposite of what online EWC does and is worst exactly where adaptation
+        # matters most. Now:
+        #
+        #     F_new = gamma * F_old + F_current           (Kirkpatrick et al.; Schwarz et al. 2018)
+        #
+        # with a single anchor at the most recent boundary.
+        self.ewc_gamma = float(cfg.get("ewc_gamma", 0.95))
+        self.fisher = {}
+        self.anchor = {}
+        # Kept so existing code and tests that count consolidations keep working.
         self.past_tasks = []
+
+        # TIMER-BASED CONSOLIDATION — required for the boundary-free (Phase 2b) benchmark.
+        #
+        # EWC accumulates its Fisher in `on_task_switch`. Under smooth Lipschitz drift there ARE no
+        # task switches, so that hook never fires, the Fisher stays empty, the penalty is
+        # identically zero, and this agent becomes BIT-IDENTICAL to vanilla PPO. Running it in that
+        # state is not a weak baseline, it is no baseline: any "PT beats EWC" claim would only be
+        # saying that EWC was switched off.
+        #
+        # `ewc_consolidate_every = n` accumulates the Fisher and re-anchors every n PPO updates
+        # instead. Set it to `pt`'s `k` and the two methods consolidate on exactly the same cadence,
+        # which is the fair comparison: same schedule, different mechanism.
+        #
+        # 0 (the default) keeps the boundary-triggered behaviour of every run made before
+        # 2026-08-21, so no existing result changes.
+        self.ewc_consolidate_every = int(cfg.get("ewc_consolidate_every", 0))
+        self._updates_since_ewc_consolidation = 0
 
     # ------------------------------------------------------------------
     # EWC helpers
     # ------------------------------------------------------------------
     def _ewc_penalty(self):
-        """Compute the EWC quadratic penalty on actor parameters.
+        """The standard EWC penalty: (lambda/2) * sum_i F_i (theta_i - theta*_i)^2.
 
-        Returns a scalar tensor attached to the actor's computation graph.
+        NO division by the parameter count. The previous implementation divided the sum by
+        `n_params` (5,708 on HalfCheetah), which silently redefined `ewc_lambda`: a configured
+        lambda of 50 was really an effective 0.0088, so the value was never tuned in the units the
+        docstring — or any paper — states. `ewc_lambda` now means what the literature means, and
+        `EWC_LAMBDA_LEGACY_SCALE` below records the conversion for reading old runs.
         """
         penalty = torch.tensor(0.0, device=self.device)
-        for task in self.past_tasks:
-            fisher = task["fisher"]
-            anchor = task["anchor"]
-            for n, p in self.actor.named_parameters():
-                if self.ewc_exclude_log_std and n.endswith("log_std"):
-                    continue
-                penalty = penalty + (fisher[n] * (p - anchor[n]) ** 2).sum()
-        
-        # Scale by number of parameters to keep the penalty intensive (mean-like)
-        n_params = sum(p.numel() for p in self.actor.parameters())
-        penalty = penalty / max(n_params, 1)
-
+        for n, p in self.actor.named_parameters():
+            if self.ewc_exclude_log_std and n.endswith("log_std"):
+                continue
+            if n in self.fisher:
+                penalty = penalty + (self.fisher[n] * (p - self.anchor[n]) ** 2).sum()
         return (self.ewc_lambda / 2.0) * penalty
 
     def _extra_loss(self):
         """EWC quadratic penalty for per-step online updates."""
-        if len(self.past_tasks) > 0:
+        if self.fisher:
             return self._ewc_penalty()
         return torch.tensor(0.0, device=self.device)
 
@@ -137,7 +170,7 @@ class PPOEWC(PPOVanilla):
 
                 # --- EWC penalty (active only after the first task switch) ---
                 ewc_pen = torch.tensor(0.0, device=self.device)
-                if len(self.past_tasks) > 0:
+                if self.fisher:
                     ewc_pen = self._ewc_penalty()
 
                 loss = actor_loss + c_loss + self.ent_coef * entropy_loss + ewc_pen
@@ -170,42 +203,60 @@ class PPOEWC(PPOVanilla):
             "entropy": total_entropy / max(n_updates, 1),
             "approx_kl": approx_kl,
             "ewc_penalty": total_ewc_penalty / max(n_updates, 1),
+            # EWC overrides update(), so PPOBase's sigma logging never reached this arm — the same
+            # gap that left `pt` without log_std_min. HALFCHEETAH_RESULTS.md records the original defect
+            # ("sigma logged by pt only") as fixed in PPOBase, but a fix in the base class does not
+            # reach a subclass that returns its own metrics dict. Any arm overriding update() must
+            # report these itself, or the comparison silently loses the one quantity that has
+            # already confounded this project once.
+            "log_std_mean": float(self.actor.log_std.detach().mean()),
+            "log_std_min": float(self.actor.log_std.detach().min()),
         }
 
     # ------------------------------------------------------------------
     # Task-switch hook
     # ------------------------------------------------------------------
+    def post_update(self, update_idx):
+        """Timer-based consolidation, for benchmarks that have no task boundaries.
+
+        Inactive unless `ewc_consolidate_every > 0`, so every boundary-based run behaves exactly as
+        before. When active it reuses `on_task_switch` verbatim — same Fisher estimate, same
+        gamma-decayed accumulation, same re-anchoring — only the trigger differs.
+        """
+        if self.ewc_consolidate_every <= 0:
+            return
+        self._updates_since_ewc_consolidation += 1
+        if self._updates_since_ewc_consolidation >= self.ewc_consolidate_every:
+            self._updates_since_ewc_consolidation = 0
+            self.on_task_switch(int(update_idx))
+
     def on_task_switch(self, step):
-        """Estimate Fisher exactly once at the boundary and snapshot anchor weights."""
+        """Accumulate the Fisher into the running estimate and re-anchor at this boundary."""
         batch = self.buffer.get_tensors()
-        obs = batch["obs"]
-        actions = batch["actions"]
+        obs, actions = batch["obs"], batch["actions"]
         n_samples = obs.shape[0]
 
-        fisher = {n: torch.zeros_like(p, device=self.device) for n, p in self.actor.named_parameters()}
-
-        # Compute empirical Fisher by averaging squared individual gradients
+        current = {n: torch.zeros_like(p, device=self.device)
+                   for n, p in self.actor.named_parameters()}
         for i in range(n_samples):
             self.actor.zero_grad()
-            logprob, _ = self.actor.evaluate_actions(obs[i:i+1], actions[i:i+1])
+            logprob, _ = self.actor.evaluate_actions(obs[i:i + 1], actions[i:i + 1])
             logprob.backward()
             with torch.no_grad():
                 for n, p in self.actor.named_parameters():
                     if self.ewc_exclude_log_std and n.endswith("log_std"):
                         continue
                     if p.grad is not None:
-                        fisher[n] += (p.grad.detach() ** 2) / n_samples
-        
+                        current[n] += (p.grad.detach() ** 2) / n_samples
         self.actor.zero_grad()
 
-        # Snapshot anchor weights
-        anchor = {n: p.clone().detach() for n, p in self.actor.named_parameters()}
+        # F_new = gamma * F_old + F_current, then re-anchor on the weights that produced it.
+        for n, f in current.items():
+            self.fisher[n] = self.ewc_gamma * self.fisher[n] + f if n in self.fisher else f
+        self.anchor = {n: p.clone().detach() for n, p in self.actor.named_parameters()}
+        self.past_tasks.append({"step": step})
 
-        self.past_tasks.append({
-            "fisher": fisher,
-            "anchor": anchor
-        })
-
-        print(f"[EWC] on_task_switch at step {step}: "
-              f"Fisher computed over {n_samples} samples, anchor saved. "
-              f"Total past tasks: {len(self.past_tasks)}.")
+        total = float(sum(f.sum() for f in self.fisher.values()))
+        print(f"[EWC] on_task_switch at step {step}: Fisher over {n_samples} samples, "
+              f"accumulated with gamma={self.ewc_gamma} (running trace {total:.4e}), "
+              f"anchor re-set. Boundaries seen: {len(self.past_tasks)}.")

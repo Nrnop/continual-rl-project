@@ -1,23 +1,66 @@
-# Dual-timescale Permanent-Transient PPO.
-# Inherits everything in default.yaml; only PT-specific knobs live here.
+# THE PT agent: split actor AND split critic, two separate networks each.
+# The permanent and transient mean/value networks are independent; the shared log_std is
+# frozen (Constraint C4) and exempt from the transient decay/reset cycle.
+# Registered as `pt_full` through Phase 1; renamed to `pt` in Phase 2 (T2).
 
 agent: "pt"
 
-# Transient critic (theta_T): aggressive, every update. alpha_T.
+# --- WIDTHS: permanent [51,51] + transient [32,32] = 0.99x the baseline ---
+# PT has FOUR networks where vanilla has two, so widths are a real choice, not a detail.
+#
+#   perm [51,51] + trans [32,32]  ->  0.99x   <-- THIS. Exact parity, transient at half width.
+#   perm [64,64] + trans [32,32]  ->  1.32x
+#   everything   [43,43]          ->  1.02x   (parity, but shrinks the permanent to 43)
+#   everything   [64,64]          ->  2.00x
+#
+# Sec. 6.1 matches TOTAL parameters across baselines, because Appendix C.3's "big world - small
+# agent" boundary condition is about capacity: give PT spare capacity and any advantage it shows
+# is unattributable. This scheme hits parity (11,005 vs vanilla's 11,085) while keeping the
+# structure the method wants — a permanent near baseline width and a transient at half.
+#
+# These are the widths Phase 1's HalfCheetah comparison used, so the hyper-parameters below were
+# tuned against these sizes.
+hidden_sizes: [51, 51]                  # permanent actor
+actor_trans_hidden_sizes: [32, 32]      # transient actor  — half width
+critic_hidden_sizes: [51, 51]           # permanent critic
+critic_trans_hidden_sizes: [32, 32]     # transient critic — half width
+
+# Fast online parameters.
+lr_actor: 0.0003
 lr_trans: 0.0003
 
-# Permanent critic (theta_P): conservative, every k updates. alpha_P << alpha_T (SGD).
-lr_perm: 0.00001
-perm_optimizer: "sgd"           # sgd mirrors the paper's P_Net; "adam" also supported
+# Slow consolidation parameters. Sweep both permanent rates per environment: alpha_P is domain
+# specific (the paper's own ranges span 7 orders of magnitude), and at 1e-5/sgd the permanent is
+# INERT — check actor_absorbed_frac > 0.01 before trusting any run.
+lr_perm: 0.0003
+lr_perm_actor: 0.0003
+perm_optimizer: "adam"
+rm_power: 0.6           # Robbins-Monro alpha_P decay; Theorem 5 needs a DECREASING step size
+rm_power_actor: 0.6
 
-# Consolidation cadence and transient decay (mirrors --update / --decay in PT_DQN_half.py).
-k: 10                           # consolidate permanent critic every k PPO updates
-consolidate_on_switch: true     # also consolidate + decay right at each task boundary
-decay: 0.5                      # theta_T <- decay * theta_T after consolidation (0 ~= reset)
-
-# Consolidation buffer (on-policy analog of exp_replay_PM).
+# The transfer split and the consolidation cadence. rho is ONE knob on purpose: the permanent
+# absorbs rho and the transient retains (1-rho), which is composition-preserving. `decay_rho`
+# decouples the two halves and exists only to reproduce the divergence that follows.
+rho: 0.5
+k: 10
+consolidation_epochs: 3
 consolidation_buffer_size: 20480
-consolidation_epochs: 1         # passes over the consolidation buffer per permanent update
 
-# Match the frozen-normalizer comparison protocol used by vanilla/EWC/PT-full.
-normalizer_freeze_after: 100000
+# Hold 25% of each consolidation buffer OUT of the regression and report absorption on it. Without
+# this, `absorbed_frac` is in-distribution only: a permanent that memorised the buffer reports a
+# healthy number while being wrong on the NEW states the next rollout bootstraps from. Costs the
+# permanent a quarter of its states per cycle, and changes the RNG stream (so holdout runs are not
+# bit-comparable with holdout-free ones).
+# 0 for the headline comparison: the holdout withholds 25% of each consolidation buffer from the
+# regression, which handicaps the permanent. It already did its job — the Phase 2a sweep measured
+# held-out absorption at 0.9438 against a fitted 0.9438, so the permanent demonstrably generalises
+# rather than memorising. Set 0.25 to re-measure it.
+consolidation_holdout_frac: 0.0
+
+# KL-to-permanent policy regularization; replaces entropy for pt.
+kl_prior_coef: 0.01
+ent_coef: 0.0
+
+# Sweep candidates before treating any Phase 2 number as final (every value here was chosen
+# against the Phase 1 reward-switch benchmark, not against a dynamics change):
+#   rho = {0.25, 0.5, 0.75} at fixed k, then k = {10, 30}, then kl_prior_coef = {0.001, 0.01, 0.1}.

@@ -1,0 +1,40 @@
+# `pt` on cartpole-swingup — the SECOND environment (envs/cartpole_swingup.py).
+#
+# Identical to cartpole_van.yaml in every environment and exploration key. What differs is the
+# WIDTHS, and that is the whole reason this file exists separately.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+freeze_log_std: true
+log_std_init: -1.0
+
+max_episode_steps: 1000
+
+# --- WIDTHS: RECOMPUTED FOR obs 5 / act 1. HalfCheetah's DO NOT TRANSFER. ---
+#
+# `ppo_pt.yaml` ships perm [51,51] + trans [32,32], which hits 0.99x parity at HalfCheetah's
+# obs 17 / act 6. At cartpole's obs 5 / act 1 the input and output layers are much smaller, so the
+# same pair lands at **0.931x** — `pt` would silently run the whole study with 7% fewer parameters
+# than the baseline it is being compared against. Measured, not assumed:
+#
+#   vanilla / ewc  [64,64]                  actor 4,610  critic 4,609  total 9,219   1.000x
+#   pt  perm [51,51] + trans [32,32]        actor 4,292  critic 4,291  total 8,583   0.931x  <- no
+#   pt  perm [55,55] + trans [30,30]        actor 4,608  critic 4,607  total 9,215   0.9996x <- this
+#
+# [55,55]/[30,30] keeps the paper's PT-0.5x construction — a permanent near baseline width and a
+# transient at about half (30/55 = 0.55) — while landing within 4 parameters of the baseline.
+#
+# ALSO REPORT THE TRAINABLE SPLIT. PPO's gradient reaches only the transient (`mu_P` is detached in
+# the training forward); the permanent is moved by the consolidation regression instead. On
+# HalfCheetah that asymmetry became a documented finding — parity was matched on TOTALS, which
+# count a network PPO never touches. `scripts/preflight.py --cartpole` prints both numbers, and
+# they belong in the write-up together.
+hidden_sizes: [55, 55]                  # permanent actor
+actor_trans_hidden_sizes: [30, 30]      # transient actor  — about half width
+critic_hidden_sizes: [55, 55]           # permanent critic
+critic_trans_hidden_sizes: [30, 30]     # transient critic — about half width

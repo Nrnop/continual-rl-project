@@ -33,15 +33,21 @@ class PPOBase(ABC):
         self.actor = GaussianActor(
             obs_dim, act_dim, hidden_sizes=hidden,
             # MUST be threaded from cfg. SplitGaussianActor reads `log_std_init` while this one
-            # used to hard-default to 0.0, so a config setting it moved pt_full's sigma and left
-            # vanilla's at 1.0 -- silently handing pt_full a 3x better exploration level. That is
+            # used to hard-default to 0.0, so a config setting it moved pt's sigma and left
+            # vanilla's at 1.0 -- silently handing pt a 3x better exploration level. That is
             # the exact confound §2 identified, and it invalidated a whole 24-run HalfCheetah
             # sweep (§22) before the identical-to-the-decimal vanilla numbers gave it away.
             log_std_init=cfg.get("log_std_init", 0.0),
             # Default False -> bit-identical to before this flag existed. Set only by the
             # sigma-matched control arms, which need vanilla's exploration schedule to match
-            # pt_full's frozen log_std (Constraint C4) so the comparison isolates the mechanism.
+            # pt's frozen log_std (Constraint C4) so the comparison isolates the mechanism.
             freeze_log_std=bool(cfg.get("freeze_log_std", False)),
+            # ONE KEY FOR EVERY ARM, read here and in ppo_pt from the same place. LayerNorm is an
+            # architecture change; giving it to some arms and not others would confound the
+            # mechanism under test with the architecture, which is CLAUDE.md failure mode #3 and
+            # is exactly how `log_std_init` above went wrong. Default False keeps every existing
+            # result bit-identical.
+            layer_norm=bool(cfg.get("layer_norm", False)),
         ).to(device)
         # CleanRL sets Adam eps=1e-5 for MuJoCo PPO; default keeps torch's 1e-8.
         self.actor_optim = torch.optim.Adam(
@@ -61,13 +67,6 @@ class PPOBase(ABC):
         self.ent_coef = cfg.get("ent_coef", 0.0)
         # See the batch loss below. Default 0.0 -> every earlier run is unaffected.
         self.mu_l2_coef = float(cfg.get("mu_l2_coef", 0.0))
-        # See post_update. Default 0 = disabled = every earlier run unaffected.
-        self.policy_shrink_every = int(cfg.get("policy_shrink_every", 0))
-        self.policy_shrink_factor = float(cfg.get("policy_shrink_factor", 1.0))
-        # See post_update. Default False -> policy-only shrink, as before.
-        self.critic_shrink = bool(cfg.get("critic_shrink", False))
-        # See post_update. Default False -> no flush, as in every earlier control.
-        self.shrink_flush_optim = bool(cfg.get("shrink_flush_optim", False))
         self.max_grad_norm = cfg["max_grad_norm"]
         self.target_kl = cfg.get("target_kl", None)
         self.normalize_advantage = cfg.get("normalize_advantage", True)
@@ -132,46 +131,13 @@ class PPOBase(ABC):
     def post_update(self, update_idx):
         """Called after each complete PPO update (all epochs). Used by PT for consolidation.
 
-        `policy_shrink_every` implements, on a PLAIN actor, the only part of pt_full that Stage 9
-        showed to be doing any work: every N updates, scale the policy's output layer by a
-        constant < 1. In pt_full this arrives disguised as the transient decay
-        `mu_T <- (1-rho) mu_T`, but with the permanent zeroed the composed policy IS mu_T, so it
-        is simply periodic multiplicative shrinkage of the policy toward zero. Stage 9 measured a
-        clean monotone dose-response in rho with no permanent, no consolidation buffer and no KL
-        anchor present at all.
-
-        Output layer only, mirroring decay_mode="output" -- scaling every layer of a depth-L net
-        by c shrinks the function by ~c^L (defect #13).
-
-        Default 0 (disabled) leaves every earlier run bit-identical.
+        The base implementation does nothing. Phase 1 added a `policy_shrink_every` control here
+        — periodic multiplicative shrinkage of a plain actor's output layer — and compared PT
+        against it. That comparison was set aside by the supervisors: the control is a heuristic
+        with no theory behind it, so a result measured against it does not establish anything
+        about PT. It was removed in Phase 2 (T3), and Phase 2 compares PT against STANDARD PPO
+        and EWC only. Recoverable from git tag `phase1-archive` if it is ever wanted again.
         """
-        if self.policy_shrink_every > 0 and (update_idx + 1) % self.policy_shrink_every == 0:
-            with torch.no_grad():
-                shrunk = []
-                last = [m for m in self.actor.mean_net.modules()
-                        if isinstance(m, torch.nn.Linear)][-1]
-                last.weight.data.mul_(self.policy_shrink_factor)
-                last.bias.data.mul_(self.policy_shrink_factor)
-                shrunk += [last.weight, last.bias]
-                # pt_full decays BOTH transients -- policy and value. Shrinking only the policy
-                # reproduced it exactly at k=8 but left a 20-point gap at k=16 (FULL_PT §25a.1),
-                # and Stage 19 ruled out the KL anchor as the cause. `critic_shrink` closes the
-                # comparison by giving the control the value-side decay too. Default off.
-                if self.critic_shrink and hasattr(self, "critic") and hasattr(self.critic, "net"):
-                    c_last = [m for m in self.critic.net.modules()
-                              if isinstance(m, torch.nn.Linear)][-1]
-                    c_last.weight.data.mul_(self.policy_shrink_factor)
-                    c_last.bias.data.mul_(self.policy_shrink_factor)
-                    shrunk += [c_last.weight, c_last.bias]
-                # pt_full also purges the transient's Adam moments at every decay (Constraint C2),
-                # so freshly-shrunk weights are not immediately re-inflated by stale momentum.
-                # Stage 9 showed the flush ALONE does nothing (rho=0, p=0.234), but nobody tested
-                # shrink-with-flush against shrink-without-flush. At k=16 the momentum has twice
-                # as long to act, which is the leading candidate for the residual gap (§25a.3).
-                if self.shrink_flush_optim:
-                    for opt in self._all_optimizers():
-                        for prm in shrunk:
-                            opt.state.pop(prm, None)
 
     def on_task_switch(self, step):
         """Called when the training loop detects a task boundary. Override in PT."""
@@ -393,7 +359,7 @@ class PPOBase(ABC):
 
                 loss = actor_loss + c_loss + self.ent_coef * entropy_loss
                 # mu_l2_coef > 0 adds KL(pi || N(0, sigma^2)) -- the single-network analogue of
-                # pt_full's KL-to-permanent, with the permanent replaced by the zero policy.
+                # pt's KL-to-permanent, with the permanent replaced by the zero policy.
                 # Default 0.0 leaves the loss byte-identical to before this existed.
                 if self.mu_l2_coef > 0.0 and hasattr(self.actor, "kl_to_zero_prior"):
                     loss = loss + self.mu_l2_coef * self.actor.kl_to_zero_prior(mb_obs).mean()
@@ -419,11 +385,25 @@ class PPOBase(ABC):
 
         self.post_update(update_idx)
 
+        log_std = self.actor.log_std.detach()
         return {
             "actor_loss": total_actor_loss / max(n_updates, 1),
             "critic_loss": total_critic_loss / max(n_updates, 1),
             "entropy": total_entropy / max(n_updates, 1),
             "approx_kl": approx_kl,
+            # SIGMA, LOGGED FOR EVERY ARM. `pt` reported this from the start; vanilla and ewc did
+            # not, so for 93 runs the exploration width of two of the three arms was never
+            # recorded. It had to be recovered afterwards by inverting `entropy`
+            # (scripts/check_sigma_collapse.py), which works but only yields the MEAN over action
+            # dimensions. That recovery found the arms collapsing to sigma 0.04-0.12 at different
+            # RATES, which is a confound on any comparison between them — so this is a number the
+            # comparison depends on, and CLAUDE.md failure mode #3 says assert those, not assume.
+            #
+            # The MIN is here because the mean hides the case that matters most: one action
+            # dimension collapsing to zero while the other five stay healthy is invisible in an
+            # average, and is not recoverable from entropy at all.
+            "log_std_mean": float(log_std.mean()),
+            "log_std_min": float(log_std.min()),
         }
 
     # ------------------------------------------------------------------

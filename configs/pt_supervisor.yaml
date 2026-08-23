@@ -1,0 +1,58 @@
+# THE SUPERVISOR'S PT CONFIGURATION, EXACTLY AS SHIPPED.
+#
+# Reproduced verbatim from commit 5b2c257 (`configs/ppo_pt_full.yaml`, Shahrad, 7 Aug 2026), with
+# only the drift targets added so it runs on the Phase 2a benchmark. Nothing else is changed, and
+# nothing is "improved" — the point of this arm is to test the agent as its author configured it.
+#
+# WHAT THIS COSTS IN PARAMETERS, stated up front because it is the obvious objection:
+#
+#   vanilla [64,64]                      11,085 params   1.00x
+#   this config, perm[256,256]+trans[64,64]  153,684 params  13.86x
+#
+# Phase 2a's main sweep instead used perm[51,51] + trans[32,32] = 11,005 (0.99x), the
+# parameter-matched widths from Phase 1's own HalfCheetah comparison (FULL_PT.md 20). That choice
+# is why the main sweep's PT result cannot be read as "PT loses" without this arm beside it.
+#
+# The holdout diagnostic is OFF here: the supervisor's agent regresses the permanent over the whole
+# consolidation buffer, and this arm reproduces that.
+consolidation_holdout_frac: 0.0
+
+# SIGMA follows the study-wide setting (learned, as in CleanRL and as instructed), NOT Constraint
+# C4's freeze. Rationale: every arm must share one exploration policy or the comparison is
+# confounded, and holding sigma at 1.0 was measurably depressing all arms. The as-shipped
+# frozen-sigma version of this arm has already been run and is kept at results/sup/ for the
+# record, so both readings exist. Pin `freeze_log_std: true` here to reproduce it.
+
+drift_targets: ["damping", "friction", "mass", "armature"]
+
+hidden_sizes: [256, 256]
+# The supervisor's file has NO `critic_hidden_sizes` key, so its permanent critic falls back to
+# hidden_sizes = [256,256]. But overlays stack on top of ppo_pt.yaml, which DOES set it to
+# [51,51] — leaving it out here would silently give the permanent critic 51 units and reproduce
+# the wrong agent (verified: 8,999 critic parameters instead of 76,034). Set it explicitly.
+critic_hidden_sizes: [256, 256]
+trans_hidden_sizes: [64, 64]
+actor_trans_hidden_sizes: [64, 64]
+critic_trans_hidden_sizes: [64, 64]
+
+lr_actor: 0.0003
+lr_trans: 0.0003
+lr_perm: 0.0003
+lr_perm_actor: 0.0003
+perm_optimizer: "adam"
+rm_power: 0.6
+rm_power_actor: 0.6
+
+rho: 0.5
+k: 10
+consolidation_epochs: 3
+consolidation_buffer_size: 20480
+
+kl_prior_coef: 0.01
+ent_coef: 0.0
+
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 100000
+clip_obs: 10.0
+clip_reward: 10.0

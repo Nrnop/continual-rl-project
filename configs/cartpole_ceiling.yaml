@@ -1,0 +1,37 @@
+# THE GATE (CARTPOLE_TASK.md §3.1): what does vanilla PPO reach on cartpole-swingup when the
+# non-stationarity is switched OFF?
+#
+# This is the cartpole twin of the HalfCheetah stationary-ceiling run, and it exists to answer one
+# question before any sweep is launched: **is there dynamic range?** If all three arms would sit
+# above ~900/1000 the benchmark cannot separate methods and the study must move to
+# `cartpole_task: "swingup_sparse"` (or "two_poles") before going further. That is failure mode #4
+# in CLAUDE.md, which this project has already hit once — every agent at 96-99% of the ceiling, so
+# noise looked significant.
+#
+# Unlike HalfCheetah, the ceiling here is also known a priori: reward in [0,1] over exactly 1000
+# steps with no early termination, so the maximum possible return is 1000. This run measures how
+# much of that THIS codebase's PPO actually reaches, which is the number every result gets read
+# against.
+#
+# Everything except `disable_task_switch` is identical to cartpole_van.yaml. Nothing changes during
+# these runs.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+# The one difference. The physics stay at task 0 (x1.0, the nominal pole) for the whole run.
+disable_task_switch: true
+
+freeze_log_std: true
+log_std_init: -1.0
+hidden_sizes: [64, 64]
+max_episode_steps: 1000
+
+# Nothing switches, so there is no transfer to measure and no boundary for the decay probe to sit
+# at. Off, because the transfer matrix alone costs 250k eval env steps per run.
+transfer_eval_episodes: 0
+decay_gain_probe: false

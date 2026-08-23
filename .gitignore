@@ -109,3 +109,18 @@ MEETING_BRIEF.md
 # PHASE2_INSTRUCTIONS.md is the active plan; export_numeric_logs.py is a local utility.
 PHASE2_INSTRUCTIONS.md
 export_numeric_logs.py
+
+archive/
+# Box-specific run playbooks for the rented compute. Operational instructions to a remote agent —
+# which files to copy, what to verify, how many jobs to run concurrently — not part of the method.
+# Same category as VASTAI_SETUP.md and VASTAI_RERUN.md above. What was actually run is recorded in
+# the committed configs and in each study's "Regenerating" section.
+VASTAI_PROMPT.md
+VASTAI_PROMPT_DRIFT.md
+
+# Task brief for the second environment — a working instruction document, superseded by
+# CARTPOLE_RESULTS.md which reports what was actually built and found.
+CARTPOLE_TASK.md
+
+# The thesis proposal PDF — a document, not code. Belongs with the thesis submission.
+NuraNabipour-Revised Proposal.pdf

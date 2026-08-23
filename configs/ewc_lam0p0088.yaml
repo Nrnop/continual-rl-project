@@ -1,0 +1,10 @@
+# EWC strength sweep. There is no standard lambda for EWC on HalfCheetah — every paper tunes it,
+# because lambda IS the retention/plasticity trade-off. So a small sweep is the standard practice,
+# not a shortcut.
+#
+# These values are in the CORRECTED units: the penalty is now the textbook
+# (lambda/2) * sum_i F_i (theta_i - theta*_i)^2, with no division by parameter count. The old
+# implementation divided by 5,708, so its configured lambda of 50 acted as 0.0088 — the middle
+# value here, included so this sweep brackets the strength the earlier runs actually used.
+drift_targets: ["damping", "friction", "mass", "armature"]
+ewc_lambda: 0.0088

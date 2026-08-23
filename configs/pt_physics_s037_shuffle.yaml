@@ -1,0 +1,37 @@
+# pt on the PHYSICS benchmark at sigma 0.37, WITH the consolidation regression shuffled.
+#
+# One variable against `pt_physics_s037.yaml`: `consolidation_shuffle: true`. Everything else —
+# widths, rho, k, drift targets, sigma — is identical, so a difference is attributable to the
+# minibatch ORDER of the permanent's regression and to nothing else.
+#
+# WHY THIS IS WORTH A RUN. `consolidation_shuffle` defaults to FALSE (ppo_pt.py:127), so the
+# consolidation buffer — which stores states in VISIT ORDER — is walked sequentially. The newest
+# states therefore take the final gradient step of every consolidation epoch, and the permanent
+# ends up fit preferentially to the end of each window. PPO's own epoch loop in `update()`
+# shuffles for exactly this reason; `_iter_indices` does not, and its docstring calls the
+# inconsistency out. EVERY pt RUN ON DISK USED VISIT ORDER.
+#
+# That matters more here than it would in a stationary task. The permanent's whole job is to hold
+# what is true ACROSS tasks; fitting it preferentially to the most recent states biases it toward
+# the CURRENT task, which is the transient's job. If that bias is real it should show up as a
+# larger boundary drop and worse retention — both of which pt exhibits (findings 4 and the -45 to
+# -52% trough).
+#
+# The default stays false so pre-existing results reproduce bit-for-bit; this overlay is how the
+# alternative gets measured rather than assumed.
+#
+# Sigma is frozen at 0.37 deliberately: PHASE2_RESULTS.md shows pt's learned sigma collapsing
+# faster than its baselines', so running this at learned sigma would confound the buffer question
+# with the exploration one.
+
+consolidation_shuffle: true
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

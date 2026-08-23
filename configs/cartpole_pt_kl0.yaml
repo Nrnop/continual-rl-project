@@ -1,0 +1,47 @@
+# `pt` on cartpole with THE KL ANCHOR TURNED OFF (kl_prior_coef = 0).
+#
+# THE HYPOTHESIS THIS TESTS. PT's two extra mechanisms both have a strength that scales with 1/sigma^2:
+#
+#   * the KL anchor -- KL between two Gaussians of equal sigma grows like (delta mu)^2 / (2 sigma^2),
+#     so `kl_prior_coef` and sigma are the SAME KNOB seen from two directions;
+#   * the transient decay -- shrinking mu_T changes actions by some delta mu, which only matters
+#     relative to the exploration noise sigma.
+#
+# That would explain the single most interesting open question in PHASE2_RESULTS: why `pt` has an
+# INTERIOR optimum in sigma while vanilla does not. Vanilla has no term whose strength depends on
+# sigma; `pt` has two.
+#
+# So instead of sweeping sigma (whose values are guesses inherited from another environment), hold
+# sigma fixed at the study's 0.37 and vary the anchor directly. Three points:
+#
+#   kl_prior_coef = 0     <- THIS FILE. No anchor at all.
+#   kl_prior_coef = 0.01  <- cartpole_pt.yaml, already run at 10 seeds
+#   kl_prior_coef = 0.1   <- cartpole_pt_kl0p1.yaml
+#
+# An interior optimum at 0.01 means the anchor has a sweet STRENGTH, and the "sigma band" is that
+# same knob in disguise. A flat result means the anchor is not what makes `pt` work here, and part
+# of what we have been calling "the PT mechanism" is inert.
+#
+# NOTE: with ent_coef = 0 (which `pt` requires) and no KL term, this arm has NO explicit policy
+# regulariser -- PPO's ratio clipping is the only thing constraining the update. That is the point
+# of the control, not an oversight.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+freeze_log_std: true
+log_std_init: -1.0
+
+hidden_sizes: [55, 55]
+actor_trans_hidden_sizes: [30, 30]
+critic_hidden_sizes: [55, 55]
+critic_trans_hidden_sizes: [30, 30]
+
+max_episode_steps: 1000
+
+# --- THE ONE CHANGE vs cartpole_pt.yaml ---
+kl_prior_coef: 0.0

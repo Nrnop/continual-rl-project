@@ -49,7 +49,9 @@ def test_agent_on_task_switch_hooks(mock_cfg):
 
     # Vanilla and PT should run on_task_switch safely without raising errors
     vanilla = PPOVanilla(obs_dim, act_dim, mock_cfg, device)
-    pt = PPOPT(obs_dim, act_dim, mock_cfg, device)
+    # `pt` regularizes with KL-to-permanent, not entropy, and refuses ent_coef != 0.
+    pt_cfg = dict(mock_cfg, ent_coef=0.0, kl_prior_coef=0.01, rho=0.5)
+    pt = PPOPT(obs_dim, act_dim, pt_cfg, device)
     vanilla.on_task_switch(step=614400)
     pt.on_task_switch(step=614400)
 
@@ -62,10 +64,20 @@ def test_agent_on_task_switch_hooks(mock_cfg):
             logprob=0.0, reward=1.0, done=0.0, v_perm=0.5, v_trans=0.0
         )
     assert len(ewc.past_tasks) == 0
+    assert ewc.fisher == {}, "no Fisher information exists before the first boundary"
     ewc.on_task_switch(step=614400)
     assert len(ewc.past_tasks) == 1
-    task_info = ewc.past_tasks[0]
-    fisher = task_info["fisher"]
-    # Check all fisher diagonal entries are non-negative
-    for k, f_vec in fisher.items():
+
+    # Online EWC keeps ONE running Fisher and ONE anchor, not a list of per-task pairs.
+    assert ewc.fisher and ewc.anchor
+    for k, f_vec in ewc.fisher.items():
         assert (f_vec >= 0.0).all(), f"Negative Fisher value found in {k}"
+
+    # A second boundary must ACCUMULATE into the same estimate, decayed by gamma, rather than
+    # appending another anchor — `ewc_gamma` was a dead config key until 2026-08-12, and the
+    # penalty grew without bound as tasks accumulated.
+    before = {k: v.clone() for k, v in ewc.fisher.items()}
+    ewc.on_task_switch(step=1228800)
+    assert len(ewc.fisher) == len(before), "the running Fisher must not grow a second copy"
+    grew = any(float(ewc.fisher[k].sum()) > float(before[k].sum()) for k in before)
+    assert grew, "the second boundary did not accumulate into the running Fisher"

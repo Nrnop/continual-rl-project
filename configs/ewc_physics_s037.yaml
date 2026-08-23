@@ -1,0 +1,16 @@
+# EWC in a setup where it has never been run.
+#
+# PT beats vanilla ONLY where exploration is held fixed at 0.37, and every EWC number we
+# have comes from agent-tuned-exploration runs. So PT's one advantage has never been tested
+# against the strongest baseline. These configs close that gap.
+#
+# The PPO settings are copied from the matching vanilla arm of the setup being matched, so
+# EWC differs from that arm ONLY by being EWC.
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

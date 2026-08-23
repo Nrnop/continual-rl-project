@@ -1,0 +1,15 @@
+# DIAGNOSTIC OVERLAY — why can't `pt` learn on this benchmark?
+#
+# The main sweep found pt flat near -300 for 3.07M steps while vanilla reached +1540, with the
+# mechanism verifiably running (actor_absorbed_frac 0.94, and the holdout says it generalises).
+# An agent that never learns is not a test of the decomposition, so each of these overlays
+# relaxes exactly ONE suspect and changes nothing else:
+#
+#   diag_k60     consolidate every 60 updates instead of 10  -> is the CADENCE crushing learning?
+#   diag_rho025  transient retains 0.75 instead of 0.5       -> is the DECAY too aggressive?
+#   diag_nokl    no KL-to-permanent anchor                   -> is the ANCHOR pinning the policy?
+#
+# Includes the hard drift targets because only one --config overlay is applied, so this file has
+# to carry the benchmark as well as the manipulation.
+drift_targets: ["damping", "friction", "mass", "armature"]
+kl_prior_coef: 0.0

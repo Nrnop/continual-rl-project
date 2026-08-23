@@ -1,0 +1,21 @@
+# CAPACITY SWEEP, small-agent end — EWC at [16,16].
+#
+# See `cap16_van.yaml` for what the sweep tests. This arm differs from that one ONLY by being EWC:
+# same widths, same frozen sigma, same drift targets, same seeds.
+#
+# EWC has to be in the sweep rather than left at [64,64], because it is the arm currently winning
+# and the C.3 claim is about pt's standing RELATIVE to its baselines. A capacity effect measured
+# against vanilla alone would not say whether pt closes on the strongest baseline or only on the
+# weakest.
+
+hidden_sizes: [16, 16]
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

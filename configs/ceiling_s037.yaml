@@ -1,0 +1,21 @@
+# THE CEILING TEST, sigma frozen at 0.37 — the pair of `ceiling_learned.yaml`.
+#
+# Identical to it except that exploration is held at exp(-1) = 0.368 instead of being learned.
+#
+# Two questions in one run. First, the ceiling itself at the sigma our cleanest continual arms
+# use, so those arms can be read against a matched reference rather than a learned-sigma one.
+#
+# Second, and this is the interesting one: PHASE2_RESULTS.md shows every learned-sigma arm
+# collapsing to sigma 0.04-0.12, and shows that freezing sigma lifts every arm on the physics
+# benchmark (vanilla +410, EWC +471, pt +913). That was measured ACROSS task boundaries, so the
+# gain could be about recovering from switches. With switching disabled, this run and its pair
+# isolate whether the collapse costs return in a plain stationary task too. If frozen sigma wins
+# here as well, the collapse is a PPO problem this project inherited, not a continual-learning one
+# — which changes who the finding belongs to.
+
+disable_task_switch: true
+freeze_log_std: true
+log_std_init: -1.0
+
+transfer_eval_episodes: 0
+decay_gain_probe: false

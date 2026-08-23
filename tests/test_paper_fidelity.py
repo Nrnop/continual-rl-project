@@ -1,10 +1,45 @@
-"""The three algorithmic conditions from Anand & Precup (2023) that the port previously violated.
+"""The algorithmic conditions from Anand & Precup (2023) that the port previously violated.
 
 Each test names the result it enforces, so a future refactor that breaks one fails loudly rather
 than silently reintroducing a deviation.
+
+PORTED IN PHASE 2 (T2b). This suite was written against the old critic-only PT agent, which
+Phase 2 removes. The theorems it guards are about the VALUE DECOMPOSITION, which the surviving
+agent also has (`SplitCritic`), so almost everything ports with an agent-class swap plus config-key
+updates. Three deliberate differences from the old file, each of them a real behavioural change in
+the agent rather than a test being weakened:
+
+1. `keep` is now `rho`. The old agent regressed the permanent onto `old_V_perm + keep*V_trans`
+   with keep = 1 (Eq. 4 / Alg. 4 line 15) and decayed the transient by a SEPARATE `decay`. The
+   surviving agent ties the two halves together: the permanent absorbs `rho*V_trans` and the
+   transient retains `(1-rho)`, so the composition is preserved and behaviour does not jump. The
+   paper's keep = 1 is the special case rho = 1, which is what
+   `test_consolidation_target_is_the_full_acting_value` now pins. The old
+   `value_preserving_consolidation` flag has no counterpart; `decay_rho` is its nearest relative
+   and is tested below.
+2. Robbins-Monro alpha_P now defaults ON at 0.6. The old agent defaulted it off for
+   reproducibility of pre-existing runs; there is nothing left to reproduce, and Theorem 5's
+   premise is a DECREASING step size. The test asserts the decay and that it reaches the actor's
+   permanent optimiser too, which is new.
+3. Parameter parity is now a property of the ACTOR as well, because the actor is split too. The
+   old test asserted `n(pt.actor) == n(vanilla.actor)`, which is false by construction for a split
+   actor at equal width — see `test_parameter_parity_is_reachable_for_a_split_actor_and_critic`
+   for the PT-0.5x construction that restores it, and
+   `test_default_widths_double_the_actor_and_critic` for the bound that guards against the 13.9x
+   blowup Phase 1 found in a published config.
+
+EVERYTHING PORTED. `test_absorbed_frac_is_also_measured_off_distribution` briefly could not: the
+old agent's `consolidation_holdout_frac` path — which holds part of the buffer out of the
+regression and measures absorption on it, separating a permanent that GENERALISES from one that
+memorised the buffer — had no counterpart in the surviving agent. That path has since been
+implemented in `_consolidate` for BOTH the critic and the actor, and the test is live again,
+alongside `test_the_holdout_split_actually_withholds_states`, which checks the split really
+withholds rather than just reporting a second number.
 """
 import copy
+
 import numpy as np
+import pytest
 import torch
 
 from src_continuous_control.agents.ppo_pt import PPOPT
@@ -17,10 +52,18 @@ def _cfg(**kw):
     c = dict(hidden_sizes=[32, 32], lr_actor=3e-4, adam_eps=1e-5, num_envs=2, n_steps=8,
              gamma=0.99, gae_lambda=0.95, clip_coef=0.2, epochs=1, minibatch_size=8,
              ent_coef=0.0, max_grad_norm=0.5, target_kl=None, normalize_advantage=True,
-             lr_trans=3e-4, lr_perm=1e-5, perm_optimizer="sgd", decay=0.75, k=2,
-             consolidation_epochs=1, consolidation_buffer_size=64, on_switch="consolidate")
+             lr_trans=3e-4, lr_perm=1e-5, perm_optimizer="sgd", rho=0.5, k=2,
+             kl_prior_coef=0.01, consolidation_epochs=1, consolidation_buffer_size=64)
     c.update(kw)
     return c
+
+
+def _agent(**kw):
+    return PPOPT(17, 6, _cfg(**kw), torch.device("cpu"))
+
+
+def _n_params(module):
+    return sum(p.numel() for p in module.parameters())
 
 
 # --------------------------------------------------------------- Theorem 1: V^(T)_0 = 0
@@ -35,6 +78,26 @@ def test_transient_is_zero_at_initialisation():
     assert v_perm.abs().mean() > 0, "theta_P keeps the ordinary value-head init"
     # ...and therefore the acting value at t=0 is exactly the permanent alone.
     assert torch.allclose(v_perm + v_trans, v_perm)
+
+
+def test_the_split_actor_also_starts_at_the_zero_function():
+    """The same condition on the policy side: mu_T(s) == 0 at init, so pi_PT == pi_P exactly.
+
+    New in Phase 2 — the old critic-only agent had no transient policy to check. Without this the
+    agent starts as the sum of two independent random policies, which is strictly noisier than the
+    vanilla actor it is compared against.
+    """
+    torch.manual_seed(0)
+    agent = _agent()
+    probe = torch.randn(256, 17)
+    with torch.no_grad():
+        mu_trans = agent.actor.trans_mean(probe)
+        mu_perm = agent.actor.perm_mean(probe)
+    assert torch.all(mu_trans == 0), "mu_T must start at the zero function"
+    assert mu_perm.abs().mean() > 0, "mu_P keeps the ordinary policy-head init"
+    assert torch.allclose(agent.actor.act_deterministic(probe), mu_perm)
+    # KL(pi_PT || pi_P) is therefore exactly 0 at init.
+    assert float(agent.actor.kl_to_prior(probe).detach().max()) == 0.0
 
 
 def test_perm_zero_init_makes_the_pt_loss_identical_to_vanilla():
@@ -121,58 +184,152 @@ def test_transient_leaves_zero_after_training():
 
 
 # ------------------------------------------------- Eq. (4) / Alg. 4 line 15: keep = 1
-def test_consolidation_target_is_the_full_acting_value():
-    """Eq. (4) regresses V^(P) onto V^(PT) = old_V_perm + V_trans, i.e. keep = 1."""
-    agent = PPOPT(17, 6, _cfg(), torch.device("cpu"))
-    assert agent.value_preserving_consolidation is False
+def _drive_consolidation(agent, states, trans_scale=2.0):
+    """Give both transients a learned magnitude, then run one consolidation.
 
-    # Give the transient signal and drive the permanent hard enough to see the direction of travel.
+    Returns (old_v_perm, old_v_trans, new_v_perm) over `states`, all detached.
+    """
+    with torch.no_grad():
+        for p in agent.critic.trans[-1].parameters():
+            p.add_(torch.randn_like(p) * trans_scale)
+        for p in agent.actor.trans_mean[-1].parameters():
+            p.add_(torch.randn_like(p) * trans_scale)
+        s_t = torch.as_tensor(states)
+        old_vp, old_vt = agent.critic(s_t)
+    agent.consolidation_buffer.add_batch(states)
+    agent._consolidate()
+    with torch.no_grad():
+        new_vp, _ = agent.critic(s_t)
+    return old_vp, old_vt, new_vp
+
+
+def test_consolidation_target_is_the_full_acting_value():
+    """Eq. (4) regresses V^(P) onto V^(PT) = old_V_perm + V_trans. That is rho = 1 here."""
+    torch.manual_seed(0)
+    agent = _agent(rho=1.0, lr_perm=1e-2, perm_optimizer="adam", rm_power=0.0,
+                   consolidation_epochs=200, consolidation_buffer_size=512)
+    states = np.random.randn(256, 17).astype(np.float32)
+    old_vp, old_vt, new_vp = _drive_consolidation(agent, states)
+
+    moved, wanted = (new_vp - old_vp), old_vt
+    # The permanent should have moved toward the FULL transient, not toward some fraction of it.
+    frac = float((moved * wanted).sum() / (wanted * wanted).sum())
+    assert frac > 0.5, f"permanent absorbed only {frac:.2f} of V_trans; expected -> 1.0 (rho=1)"
+
+
+def test_consolidation_absorbs_exactly_rho_of_the_transient():
+    """rho < 1 must scale the target, not the direction: theta_P regresses onto P + rho*T.
+
+    This is the half of the mechanism that pairs with the (1-rho) decay below. Splitting them —
+    absorbing rho while decaying by something else — duplicates the transient's contribution, which
+    is what `decay_rho` exists to reproduce and why it is not a knob to tune.
+    """
+    torch.manual_seed(0)
+    agent = _agent(rho=0.5, lr_perm=1e-2, perm_optimizer="adam", rm_power=0.0,
+                   consolidation_epochs=200, consolidation_buffer_size=512)
+    states = np.random.randn(256, 17).astype(np.float32)
+    old_vp, old_vt, new_vp = _drive_consolidation(agent, states)
+
+    moved, wanted = (new_vp - old_vp), old_vt
+    frac = float((moved * wanted).sum() / (wanted * wanted).sum())
+    assert 0.3 < frac < 0.7, f"expected the permanent to absorb ~rho=0.5 of V_trans, got {frac:.2f}"
+    # ...and the agent's own diagnostic, which normalises by rho*V_trans, should read ~1.
+    assert agent.last_absorbed_align == pytest.approx(1.0, abs=0.25)
+
+
+def test_the_decay_is_the_other_half_of_the_same_transfer():
+    """Absorb rho, retain (1-rho) — one transfer, so the composed function does not jump.
+
+    Replaces the old `value_preserving_consolidation` flag, which decoupled the two halves for
+    reproducibility. Here `decay_rho` is that flag's nearest relative: it DEFAULTS to rho (the
+    composition-preserving split) and exists only to reproduce the measured divergence when the
+    two are decoupled.
+    """
+    torch.manual_seed(0)
+    agent = _agent(rho=0.25, lr_perm=0.0, rm_power=0.0)
+    assert agent.decay_rho == agent.rho == 0.25
+
+    states = np.random.randn(64, 17).astype(np.float32)
+    s_t = torch.as_tensor(states)
     with torch.no_grad():
         for p in agent.critic.trans[-1].parameters():
             p.add_(torch.randn_like(p) * 2.0)
-    agent.perm_optim = torch.optim.Adam(agent.critic.perm.parameters(), lr=1e-2)
+        for p in agent.actor.trans_mean[-1].parameters():
+            p.add_(torch.randn_like(p) * 2.0)
+        _, vt_before = agent.critic(s_t)
+        mu_t_before = agent.actor.trans_mean(s_t).clone()
 
-    states = np.random.randn(256, 17).astype(np.float32)
-    with torch.no_grad():
-        s_t = torch.as_tensor(states)
-        old_vp, vt = agent.critic(s_t)
-    agent.consolidation_buffer.add_batch(states, old_vp.numpy())
-    agent.consolidation_epochs = 200
+    agent.consolidation_buffer.add_batch(states)
     agent._consolidate()
 
     with torch.no_grad():
-        new_vp, _ = agent.critic(s_t)
-    moved, wanted = (new_vp - old_vp), vt
-    # The permanent should have moved toward the FULL transient, not toward (1-decay)*transient.
-    frac = float((moved * wanted).sum() / (wanted * wanted).sum())
-    assert frac > 0.5, f"permanent absorbed only {frac:.2f} of V_trans; expected -> 1.0 (keep=1)"
+        _, vt_after = agent.critic(s_t)
+        mu_t_after = agent.actor.trans_mean(s_t)
+    # Output-layer scaling, so the retained fraction is EXACT for both components.
+    assert torch.allclose(vt_after, 0.75 * vt_before, atol=1e-5)
+    assert torch.allclose(mu_t_after, 0.75 * mu_t_before, atol=1e-5)
 
-
-def test_value_preserving_flag_restores_the_old_target():
-    """The pre-paper keep=(1-decay) behaviour stays reachable for reproducing earlier runs."""
-    agent = PPOPT(17, 6, _cfg(value_preserving_consolidation=True), torch.device("cpu"))
-    assert agent.value_preserving_consolidation is True
+    # The decoupled setting stays reachable — it is the control that produced the divergence.
+    decoupled = _agent(rho=0.25, decay_rho=0.9)
+    assert decoupled.rho == 0.25 and decoupled.decay_rho == 0.9
+    with pytest.raises(ValueError):
+        _agent(decay_rho=1.5)
 
 
 # ------------------------------------------- Sec. 6.1 / C.3: parameter-matched PT-0.5x
 def test_critic_hidden_sizes_shrinks_the_critic_but_not_the_actor():
     """PT-0.5x needs a narrower critic while the actor stays identical across agents."""
-    cfg = _cfg(hidden_sizes=[64, 64], critic_hidden_sizes=[43, 43])
-    pt = PPOPT(17, 6, cfg, torch.device("cpu"))
-    van = PPOVanilla(17, 6, dict(cfg, critic_hidden_sizes=[64, 64]), torch.device("cpu"))
+    torch.manual_seed(0)
+    wide = _agent(hidden_sizes=[64, 64])
+    narrow = _agent(hidden_sizes=[64, 64], critic_hidden_sizes=[43, 43],
+                    critic_trans_hidden_sizes=[43, 43])
+    assert _n_params(wide.actor) == _n_params(narrow.actor), \
+        "critic_hidden_sizes must not touch the actor"
+    assert _n_params(narrow.critic) < _n_params(wide.critic)
 
-    n = lambda m: sum(p.numel() for p in m.parameters())
-    assert n(pt.actor) == n(van.actor), "the actor must be identical across agents"
-    ratio = n(pt.critic) / n(van.critic)
-    assert 0.9 < ratio < 1.1, f"PT critic is {ratio:.2f}x vanilla's; expected ~1.0 (parameter parity)"
+
+def test_parameter_parity_is_reachable_for_a_split_actor_and_critic():
+    """PT-0.5x extended to the actor: two half-width nets ~= one full-width net.
+
+    "we use half the number of parameters as that of DQN for both permanent and transient value
+    networks to ensure the total number of parameters across all baselines are same" (Sec. 6.1).
+    With a SPLIT ACTOR the same argument applies to the policy, or PT gets 2x the capacity for
+    free and Appendix C.3's "big world - small agent" boundary condition is silently violated.
+    """
+    torch.manual_seed(0)
+    pt = _agent(hidden_sizes=[43, 43], actor_trans_hidden_sizes=[43, 43],
+                critic_hidden_sizes=[43, 43], critic_trans_hidden_sizes=[43, 43])
+    van = PPOVanilla(17, 6, _cfg(hidden_sizes=[64, 64], critic_hidden_sizes=[64, 64]),
+                     torch.device("cpu"))
+
+    actor_ratio = _n_params(pt.actor) / _n_params(van.actor)
+    critic_ratio = _n_params(pt.critic) / _n_params(van.critic)
+    assert 0.9 < actor_ratio < 1.1, f"PT actor is {actor_ratio:.2f}x vanilla's; expected ~1.0"
+    assert 0.9 < critic_ratio < 1.1, f"PT critic is {critic_ratio:.2f}x vanilla's; expected ~1.0"
+
+
+def test_default_widths_double_the_actor_and_critic():
+    """At equal width PT has exactly 2x the parameters — bounded, and never more.
+
+    Phase 1 found a published config that handed PT 13.9x the baseline's parameters. This pins the
+    honest number for the default config so a width change cannot quietly inflate it; T8's
+    pre-flight parameter-count print is the run-time version of the same check.
+    """
+    torch.manual_seed(0)
+    pt = _agent(hidden_sizes=[64, 64], actor_trans_hidden_sizes=[64, 64],
+                critic_trans_hidden_sizes=[64, 64])
+    van = PPOVanilla(17, 6, _cfg(hidden_sizes=[64, 64]), torch.device("cpu"))
+    # log_std (6 params) is shared, not duplicated, so the ratio is just under 2.
+    assert 1.9 < _n_params(pt.actor) / _n_params(van.actor) <= 2.0
+    assert 1.9 < _n_params(pt.critic) / _n_params(van.critic) <= 2.0
 
 
 def test_default_critic_width_follows_hidden_sizes():
     """Without critic_hidden_sizes nothing changes, so existing configs behave as before."""
-    pt = PPOPT(17, 6, _cfg(hidden_sizes=[64, 64]), torch.device("cpu"))
-    ref = SplitCritic(17, hidden_sizes=(64, 64))
-    n = lambda m: sum(p.numel() for p in m.parameters())
-    assert n(pt.critic) == n(ref)
+    torch.manual_seed(0)
+    pt = _agent(hidden_sizes=[64, 64], critic_trans_hidden_sizes=[64, 64])
+    ref = SplitCritic(17, hidden_sizes=(64, 64), trans_hidden_sizes=(64, 64))
+    assert _n_params(pt.critic) == _n_params(ref)
 
 
 # --------------------------------------------------------- Thm 6/7/8 instrumentation
@@ -252,56 +409,67 @@ def test_actor_and_critic_are_clipped_separately():
     breaks "all agents share an identical actor; only the critic differs", which the whole study
     rests on.
     """
-    agent = PPOPT(17, 6, _cfg(), torch.device("cpu"))
+    torch.manual_seed(0)
+    agent = _agent()
 
-    def actor_grad_after_clip(critic_grad_scale):
-        for p in agent.actor.parameters():
+    def actor_grad_after_clip(a, critic_grad_scale):
+        trainable = [p for p in a.actor.parameters() if p.requires_grad]
+        for p in trainable:
             p.grad = torch.ones_like(p) * 0.1
-        for p in agent._critic_parameters():
+        for p in a._critic_parameters():
             p.grad = torch.ones_like(p) * critic_grad_scale
-        agent._clip_grads()
-        return torch.cat([p.grad.flatten() for p in agent.actor.parameters()]).norm().item()
+        a._clip_grads()
+        return torch.cat([p.grad.flatten() for p in trainable]).norm().item()
 
-    small = actor_grad_after_clip(0.01)
-    huge = actor_grad_after_clip(100.0)
+    small = actor_grad_after_clip(agent, 0.01)
+    huge = actor_grad_after_clip(agent, 100.0)
     assert np.isclose(small, huge, rtol=1e-5), (
         f"actor gradient changed with the critic's magnitude ({small:.5f} vs {huge:.5f}) — "
         "the clip is still joint")
 
     # ...and the old behaviour stays reachable for reproducing earlier runs.
-    joint = PPOPT(17, 6, _cfg(joint_grad_clip=True), torch.device("cpu"))
-    def joint_actor_norm(scale):
-        for p in joint.actor.parameters():
-            p.grad = torch.ones_like(p) * 0.1
-        for p in joint._critic_parameters():
-            p.grad = torch.ones_like(p) * scale
-        joint._clip_grads()
-        return torch.cat([p.grad.flatten() for p in joint.actor.parameters()]).norm().item()
-    assert not np.isclose(joint_actor_norm(0.01), joint_actor_norm(100.0), rtol=1e-5)
+    joint = _agent(joint_grad_clip=True)
+    assert not np.isclose(actor_grad_after_clip(joint, 0.01),
+                          actor_grad_after_clip(joint, 100.0), rtol=1e-5)
 
 
-def test_robbins_monro_alpha_p_decays_and_defaults_off():
-    """Theorem 5 requires a DECREASING alpha_P; a constant one makes theta_P track, not average."""
-    off = PPOPT(17, 6, _cfg(), torch.device("cpu"))
-    assert off.rm_power == 0.0
+def test_robbins_monro_alpha_p_decays_and_is_on_by_default():
+    """Theorem 5 requires a DECREASING alpha_P; a constant one makes theta_P track, not average.
+
+    Changed in Phase 2: this now DEFAULTS ON at 0.6 (the old agent defaulted it off so that
+    pre-existing runs reproduced), and it governs the actor's permanent optimiser as well as the
+    critic's — the actor is split now, so it has its own alpha_P.
+    """
+    on = _agent(lr_perm=1e-2, lr_perm_actor=1e-2)
+    assert on.rm_power == 0.6 and on.rm_power_actor == 0.6, "Theorem 5's premise must be the default"
+    base_c = on.perm_optim.param_groups[0]["lr"]
+    base_a = on.perm_actor_optim.param_groups[0]["lr"]
+
+    critic_lrs, actor_lrs = [], []
+    for _ in range(4):
+        on._n_consolidations += 1
+        on._set_next_permanent_lrs()
+        critic_lrs.append(on.perm_optim.param_groups[0]["lr"])
+        actor_lrs.append(on.perm_actor_optim.param_groups[0]["lr"])
+    for seen, base in ((critic_lrs, base_c), (actor_lrs, base_a)):
+        assert all(seen[i] > seen[i + 1] for i in range(len(seen) - 1)), f"alpha_P not decreasing: {seen}"
+        assert np.isclose(seen[0], base / 2 ** 0.6)
+
+    # ...and it stays constant when switched off, so the constant-alpha control is still available.
+    off = _agent(lr_perm=1e-2, rm_power=0.0, rm_power_actor=0.0)
     lr0 = off.perm_optim.param_groups[0]["lr"]
     for _ in range(5):
-        off._apply_robbins_monro_alpha_p()
-    assert off.perm_optim.param_groups[0]["lr"] == lr0, "default must stay constant"
+        off._n_consolidations += 1
+        off._set_next_permanent_lrs()
+    assert off.perm_optim.param_groups[0]["lr"] == lr0
 
-    on = PPOPT(17, 6, _cfg(alpha_p_rm_power=0.6, lr_perm=1e-2), torch.device("cpu"))
-    base = on.perm_optim.param_groups[0]["lr"]
-    seen = []
-    for _ in range(4):
-        on._apply_robbins_monro_alpha_p()
-        seen.append(on.perm_optim.param_groups[0]["lr"])
-    assert all(seen[i] > seen[i + 1] for i in range(len(seen) - 1)), f"alpha_P not decreasing: {seen}"
-    assert np.isclose(seen[0], base / 2 ** 0.6)
-    assert on.last_alpha_p == seen[-1]
+    # The old config key still resolves, so archived overlays keep meaning what they said.
+    alias = _agent(alpha_p_rm_power=0.3)
+    assert alias.rm_power == 0.3
 
 
 def test_absorbed_frac_detects_an_inert_permanent():
-    """The shipped sgd/1e-5 must report absorbed_frac ~ 0; a real transfer must report ~1.
+    """sgd/1e-5 must report absorbed_frac ~ 0; a real transfer must report ~1.
 
     This diagnostic is the one that was missing for the whole project: with an inert permanent,
     returns and critic_loss both look healthy while PT has no slow timescale at all.
@@ -309,21 +477,23 @@ def test_absorbed_frac_detects_an_inert_permanent():
     states = np.random.randn(2048, 17).astype(np.float32)
 
     def absorbed(lr, opt):
-        agent = PPOPT(17, 6, _cfg(lr_perm=lr, perm_optimizer=opt, k=1,
-                                  consolidation_buffer_size=4096), torch.device("cpu"))
-        with torch.no_grad():                       # give theta_T a learned magnitude
-            for p in agent.critic.trans[-1].parameters():
-                p.add_(torch.randn_like(p) * 3.0)
-            old_vp, _ = agent.critic(torch.as_tensor(states))
-        agent.consolidation_buffer.add_batch(states, old_vp.numpy())
-        agent._consolidate()
-        return agent.last_absorbed_frac
+        torch.manual_seed(0)
+        # 3 epochs, because the actor's permanent regresses a 6-dim target against the critic's
+        # scalar one and needs more than a single pass to transfer most of it.
+        agent = _agent(lr_perm=lr, lr_perm_actor=lr, perm_optimizer=opt, k=1, rm_power=0.0,
+                       consolidation_epochs=3, consolidation_buffer_size=4096)
+        _drive_consolidation(agent, states, trans_scale=3.0)
+        return agent.last_absorbed_frac, agent.last_actor_absorbed_frac
 
-    inert = absorbed(1e-5, "sgd")
-    working = absorbed(1e-3, "adam")
-    assert inert is not None and working is not None
-    assert inert < 0.05, f"sgd/1e-5 should be inert, got absorbed_frac={inert:.4f}"
-    assert working > 0.5, f"adam/1e-3 should transfer most of it, got {working:.4f}"
+    inert_c, inert_a = absorbed(1e-5, "sgd")
+    working_c, working_a = absorbed(1e-3, "adam")
+    assert None not in (inert_c, inert_a, working_c, working_a)
+    assert inert_c < 0.05, f"sgd/1e-5 should be inert, got absorbed_frac={inert_c:.4f}"
+    assert working_c > 0.5, f"adam/1e-3 should transfer most of it, got {working_c:.4f}"
+    # The ACTOR's permanent is the one CLAUDE.md flags as must-check before trusting a run:
+    # below 0.01 the permanent policy is inert and the arm says nothing.
+    assert inert_a < 0.05, f"actor permanent should be inert too, got {inert_a:.4f}"
+    assert working_a > 0.5, f"actor permanent should transfer, got {working_a:.4f}"
 
 
 def test_absorbed_frac_is_also_measured_off_distribution():
@@ -335,32 +505,60 @@ def test_absorbed_frac_is_also_measured_off_distribution():
     (FINDINGS 6.3) — this is the in-situ version of that measurement.
     """
     states = np.random.randn(2048, 17).astype(np.float32)
-    agent = PPOPT(17, 6, _cfg(lr_perm=1e-3, perm_optimizer="adam", k=1,
-                              consolidation_buffer_size=4096,
-                              consolidation_holdout_frac=0.25), torch.device("cpu"))
-    with torch.no_grad():
-        for p in agent.critic.trans[-1].parameters():
-            p.add_(torch.randn_like(p) * 3.0)
-        old_vp, _ = agent.critic(torch.as_tensor(states))
-    agent.consolidation_buffer.add_batch(states, old_vp.numpy())
-    agent._consolidate()
+    torch.manual_seed(0)
+    agent = _agent(lr_perm=1e-3, lr_perm_actor=1e-3, perm_optimizer="adam", k=1, rm_power=0.0,
+                   consolidation_epochs=3, consolidation_buffer_size=4096,
+                   consolidation_holdout_frac=0.25)
+    _drive_consolidation(agent, states, trans_scale=3.0)
 
     assert agent.last_absorbed_frac is not None
     assert agent.last_absorbed_frac_holdout is not None, \
         "holdout absorbed_frac must be measured when consolidation_holdout_frac > 0"
     assert agent.last_absorbed_align_holdout is not None
+    # The actor's permanent gets the same treatment — it is the component that acts.
+    assert agent.last_actor_absorbed_frac_holdout is not None
+    assert agent.last_actor_absorbed_align_holdout is not None
+    # Both numbers reach the saved record, or the sweep cannot be audited afterwards.
+    record = agent.consolidation_records[-1]
+    assert record["absorbed_frac_holdout"] == agent.last_absorbed_frac_holdout
+    assert record["actor_absorbed_frac_holdout"] == agent.last_actor_absorbed_frac_holdout
 
-    # ...and it must stay None when no holdout is requested, so the default path is unchanged.
-    plain = PPOPT(17, 6, _cfg(lr_perm=1e-3, perm_optimizer="adam", k=1,
-                              consolidation_buffer_size=4096), torch.device("cpu"))
-    with torch.no_grad():   # theta_T is zero-initialised; with V_trans == 0 there is nothing to
-        for p in plain.critic.trans[-1].parameters():   # absorb and the diagnostic is undefined.
-            p.add_(torch.randn_like(p) * 3.0)
-        plain_vp, _ = plain.critic(torch.as_tensor(states))
-    plain.consolidation_buffer.add_batch(states, plain_vp.numpy())
-    plain._consolidate()
+    # ...and it stays None when no holdout is requested, so the default path is unchanged.
+    torch.manual_seed(0)
+    plain = _agent(lr_perm=1e-3, perm_optimizer="adam", k=1, rm_power=0.0,
+                   consolidation_buffer_size=4096)
+    _drive_consolidation(plain, states, trans_scale=3.0)
     assert plain.last_absorbed_frac is not None
     assert plain.last_absorbed_frac_holdout is None
+
+
+def test_the_holdout_split_actually_withholds_states():
+    """The held-out states must be excluded from the regression, not merely measured separately.
+
+    A "holdout" that the regression still trained on would report a healthy number on memorised
+    states and give exactly the false reassurance it exists to prevent — this project's failure
+    mode #2, a manipulation that never fires.
+    """
+    torch.manual_seed(0)
+    agent = _agent(lr_perm=1e-2, lr_perm_actor=1e-2, perm_optimizer="adam", k=1, rm_power=0.0,
+                   consolidation_epochs=1, consolidation_buffer_size=4096,
+                   consolidation_holdout_frac=0.25)
+    states = np.random.randn(256, 17).astype(np.float32)
+    seen = []
+    real_iter = agent._iter_indices
+
+    def spy(n, subset=None):
+        for batch in real_iter(n, subset=subset):
+            seen.append(np.asarray(batch))
+            yield batch
+
+    agent._iter_indices = spy
+    _drive_consolidation(agent, states)
+
+    trained_on = set(np.concatenate(seen).tolist())
+    assert len(trained_on) < len(states), "every state was trained on — nothing was held out"
+    # One epoch over 75% of 256 states.
+    assert 0.7 * len(states) <= len(trained_on) <= 0.8 * len(states)
 
 
 def test_boundary_tracker_rejects_a_sub_update_window():
@@ -371,7 +569,6 @@ def test_boundary_tracker_rejects_a_sub_update_window():
     on its first post-switch sample.
     """
     from src_continuous_control.utils.metrics import BoundaryReturnTracker
-    import pytest
     batch = 2048
     with pytest.raises(ValueError, match="finalise on its first sample"):
         BoundaryReturnTracker(post_window_steps=1280, min_useful_steps=batch)

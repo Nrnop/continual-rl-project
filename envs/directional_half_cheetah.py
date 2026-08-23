@@ -114,6 +114,8 @@ def make_directional_env(
     gamma=0.99,
     clip_obs=10.0,
     clip_reward=10.0,
+    task_id_obs=False,
+    n_task_ids=2,
 ):
     """DirectionalHalfCheetah optionally wrapped with CleanRL-style normalization.
 
@@ -141,7 +143,83 @@ def make_directional_env(
     if normalize_reward:
         env = gym.wrappers.NormalizeReward(env, gamma=gamma)
         env = gym.wrappers.ClipReward(env, -clip_reward, clip_reward)
+    # Outermost, so the label is never normalized — same reasoning as the vector version.
+    if task_id_obs:
+        env = TaskIDObservationSingle(env, n_task_ids)
     return env
+
+
+class TaskIDObservationSingle(gym.ObservationWrapper):
+    """Single-env twin of `TaskIDObservation`, for the eval and probe envs.
+
+    These envs must produce observations with the SAME layout as the training env or the policy
+    cannot be run on them at all — the shapes simply will not multiply. Keeping them in step is not
+    optional bookkeeping; a probe env one dimension short silently measures a different agent.
+    """
+
+    def __init__(self, env, n_tasks):
+        super().__init__(env)
+        self.n_tasks = int(n_tasks)
+        self._task_id = 0
+        low, high = env.observation_space.low, env.observation_space.high
+        self.observation_space = gym.spaces.Box(
+            np.concatenate([low, np.zeros(self.n_tasks, dtype=low.dtype)]),
+            np.concatenate([high, np.ones(self.n_tasks, dtype=high.dtype)]),
+            dtype=env.observation_space.dtype)
+
+    def set_task_id(self, i):
+        self._task_id = int(i) % self.n_tasks
+        return self._task_id
+
+    def observation(self, obs):
+        onehot = np.zeros(self.n_tasks, dtype=obs.dtype)
+        onehot[self._task_id] = 1.0
+        return np.concatenate([obs, onehot])
+
+
+class TaskIDObservation(gym.vector.VectorObservationWrapper):
+    """Append a one-hot task identifier to every observation.
+
+    WHY THIS EXISTS. On the reward-flip benchmark the two tasks demand OPPOSITE actions from
+    identical observations, so without a task label the policy is being asked to be two different
+    functions of the same input. That is not a memory problem, it is a contradiction, and no
+    continual-learning method can solve it. Anand & Precup's own control experiment gives the agent
+    exactly this signal: their chain states carry a feature encoding "which end of the chain
+    contains the reward", and their transient value function reads it -- that reward-correlated
+    feature is *why* their transient adapts within five episodes of a task change.
+
+    OUTERMOST ON PURPOSE. This wrapper sits OUTSIDE NormalizeObservation. The running normalizer
+    would rescale the one-hot by a mean/std estimated across tasks, shrinking a constant-per-phase
+    signal toward zero and drifting it every time the task changes -- destroying the very thing it
+    is meant to convey. Appending after normalization keeps it exactly 0/1.
+
+    The training loop owns the label: it calls `set_task_id(i)` at each boundary, the same place it
+    calls `set_task` on the inner envs.
+    """
+
+    def __init__(self, env, n_tasks):
+        super().__init__(env)
+        self.n_tasks = int(n_tasks)
+        self._task_id = 0
+        low = self.env.single_observation_space.low
+        high = self.env.single_observation_space.high
+        pad_lo = np.zeros(self.n_tasks, dtype=low.dtype)
+        pad_hi = np.ones(self.n_tasks, dtype=high.dtype)
+        self.single_observation_space = gym.spaces.Box(
+            np.concatenate([low, pad_lo]), np.concatenate([high, pad_hi]),
+            dtype=self.env.single_observation_space.dtype)
+        self.observation_space = gym.vector.utils.batch_space(
+            self.single_observation_space, self.env.num_envs)
+
+    def set_task_id(self, i):
+        """Called by the training loop at a boundary. Wraps like the task list does."""
+        self._task_id = int(i) % self.n_tasks
+        return self._task_id
+
+    def observations(self, obs):
+        onehot = np.zeros((obs.shape[0], self.n_tasks), dtype=obs.dtype)
+        onehot[:, self._task_id] = 1.0
+        return np.concatenate([obs, onehot], axis=1)
 
 
 def _make_single_directional(env_id, direction, max_episode_steps, render_mode=None):
@@ -164,6 +242,8 @@ def make_vector_env(
     clip_obs=10.0,
     clip_reward=10.0,
     asynchronous=True,
+    task_id_obs=False,
+    n_task_ids=2,
 ):
     """Vectorized DirectionalHalfCheetah with CleanRL-style normalization applied at the
     vector level (in the main process). Returns a gymnasium VectorEnv.
@@ -193,4 +273,7 @@ def make_vector_env(
     if normalize_reward:
         envs = gym.wrappers.vector.NormalizeReward(envs, gamma=gamma)
         envs = gym.wrappers.vector.ClipReward(envs, -clip_reward, clip_reward)
+    # LAST, so the one-hot is never touched by NormalizeObservation — see TaskIDObservation.
+    if task_id_obs:
+        envs = TaskIDObservation(envs, n_task_ids)
     return envs

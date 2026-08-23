@@ -1,0 +1,28 @@
+# THE CEILING TEST — how good does OUR PPO get when nothing changes?
+#
+# Every continual number in PHASE2_RESULTS.md is read against an implicit ceiling nobody has
+# measured. The literature numbers people quote for HalfCheetah (4,800 "solved", 10,000+ for
+# SAC/TD3) are the WRONG reference twice over: they are off-policy algorithms, and they are
+# stationary single-task runs. Our arms get 614,400 steps per task across five tasks and are
+# on-policy. So "our vanilla reaches ~1,750" is uninterpretable until we know what our own PPO
+# reaches with the non-stationarity switched off.
+#
+# WHY IT MATTERS, concretely: failure mode #5. If no arm ever becomes competent, then retention,
+# backward transfer and boundary drop are all being measured on an agent that had little to lose,
+# and the whole comparison is soft. This run sets the number those metrics have to be read against.
+#
+# `disable_task_switch` is honoured at train.py:607 (boundaries_enabled), not merely printed, so
+# set_task never fires and the drift wrapper stays at task_multipliers[0] = 1.0 — nominal,
+# unmodified HalfCheetah physics for the whole run.
+#
+# This is the LEARNED-sigma variant: standard PPO, `freeze_log_std: false` inherited from
+# default.yaml. Its pair is `ceiling_s037.yaml`, identical but with sigma pinned at 0.37. Together
+# they answer a second question for free — does the sigma collapse documented in
+# PHASE2_RESULTS.md cost return even with NO task switches, or only across boundaries?
+
+disable_task_switch: true
+
+# Both are boundary-instrumented and meaningless without boundaries; the transfer matrix would
+# also try to size itself from a task sequence that never advances.
+transfer_eval_episodes: 0
+decay_gain_probe: false

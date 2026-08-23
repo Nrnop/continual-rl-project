@@ -1,0 +1,24 @@
+# ABLATION ARM: `pt` with the PERMANENT FROZEN. Bar 2 of figure (c).
+#
+#   python -m src_continuous_control.train --agent pt --config phase2_ablation_frozen --seed 0 \
+#       --results-dir src_continuous_control/results/ablation_frozen
+#
+# The figure decomposes the method into its two halves:
+#   vanilla        -> this arm : what having a SPLIT AT ALL buys (the transient, the decay, the
+#                                KL anchor to a permanent that never moves)
+#   this arm       -> pt       : what the permanent ACTUALLY LEARNING buys
+#
+# WHAT THIS DOES AND DOES NOT TURN OFF. `lr_perm = 0` freezes the permanent's LEARNING. It does
+# NOT turn off the transient decay, the consolidation cadence, or the KL anchor — those still run,
+# which is exactly what makes this the right control for "the permanent learns" rather than for
+# "the split exists". A control that was not actually off is failure mode #1 in CLAUDE.md, so
+# do not read the config key: `make_phase2_figures.py` asserts that this arm's realised
+# actor_absorbed_frac is ~0 and that the live arm's is not, and warns loudly if either fails.
+
+lr_perm: 0.0
+lr_perm_actor: 0.0
+
+# Robbins-Monro annealing of a zero learning rate is a no-op; set it off so the log does not
+# advertise a schedule that is not running.
+rm_power: 0.0
+rm_power_actor: 0.0

@@ -1,0 +1,22 @@
+# The ablation arm FOR THE HARD VARIANT: all four physics parameters change AND the permanent is
+# frozen. Bar 2 of figure (c) when the main experiment is `phase2_hard`.
+#
+#   python -m src_continuous_control.train --agent pt --config phase2_hard_ablation_frozen --seed 0 \
+#       --results-dir src_continuous_control/results/hard/ablation_frozen
+#
+# It exists as its own file because config overlays do not compose: only one --config is applied,
+# so "hard" and "frozen" have to be merged here rather than stacked at the command line. Keep the
+# two halves below in sync with phase2_hard.yaml and phase2_ablation_frozen.yaml.
+
+# --- from phase2_hard.yaml ---
+drift_targets: ["damping", "friction", "mass", "armature"]
+
+# --- from phase2_ablation_frozen.yaml ---
+# Freezes the permanent's LEARNING. It does NOT stop the transient decay, the consolidation
+# cadence or the KL anchor — which is what makes this the control for "the permanent learns".
+# Verified on the realised measurement, not the config key: make_phase2_figures.py checks this
+# arm's actor_absorbed_frac is ~0 and the live arm's is not.
+lr_perm: 0.0
+lr_perm_actor: 0.0
+rm_power: 0.0
+rm_power_actor: 0.0
