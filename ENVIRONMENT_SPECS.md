@@ -14,7 +14,7 @@ Every number here is read from the live models or from the run data, not from me
 *What the agent controls and what it can see. Environments are ordered by observation dimension
 throughout this document and in every figure, so a row means the same thing everywhere.*
 
-| environment | actuators : DoF | observations | control timestep | physics substeps | gravity | ground contact |
+| environment | actuators : DoF | observations | control timestep | physics substeps | gravity acts on the task? | body contacts the ground? |
 |---|---|---:|---|---:|---|---|
 | cartpole-swingup | 1 : 2 | 5 | 0.01 s | 1 | yes | no |
 | reacher-easy | 2 : 2 | 6 | 0.02 s | 1 | **no** | **no** |
@@ -24,8 +24,13 @@ throughout this document and in every figure, so a row means the same thing ever
 | walker-walk | 6 : 9 | 24 | 0.025 s | **10** | yes | yes |
 
 **Underactuated wherever actuators < DoF** — every environment except reacher, which has one motor
-per joint. **reacher is also the only environment with neither gravity nor ground contact**: it is
-a planar, top-down arm, so nothing falls and nothing touches the floor.
+per joint.
+
+**Gravity is −9.81 m/s² in all six models, and all six have a floor geom**; the two right-hand
+columns say whether either acts on the task. All of reacher's joints rotate about **z** while
+gravity points along **−z**, so the arm turns in a plane perpendicular to it and gravity exerts no
+torque on it — a top-down arm, where nothing falls. cartpole and ball_in_cup have gravity acting
+(the pole falls, the ball swings) but never touch their floor.
 
 ### What each environment asks for
 
@@ -68,16 +73,17 @@ reward and fixed for the whole run.
 ## 2. The reward functions, exactly
 
 *What each environment pays for. The last column is the measured evidence behind the dense/binary
-call: how many distinct per-step reward values appeared across 400 random steps.*
+call: the number of distinct per-step reward values over 400 steps driven by uniform-random actions
+from reset, seed 0. Re-running that procedure reproduces these counts exactly.*
 
-| environment | reward | dense or binary | distinct values / 400 steps |
+| environment | reward | dense or binary | distinct reward values in 400 random steps |
 |---|---|---|---:|
-| cartpole-swingup | `upright × centered × small_control × small_velocity`, four smooth factors | **dense, shaped** | 395 |
+| cartpole-swingup | `upright × centered × small_control × small_velocity`, four smooth factors | **dense, shaped** | 400 of 400 |
 | reacher-easy | `tolerance(fingertip_to_target_dist, (0, radii))`, **no margin** | **binary 0/1** | 1 |
 | ball_in_cup-catch | `physics.in_target()` | **binary 0/1** | 2 |
 | cheetah-run | `tolerance(speed, (10, inf), margin=10, linear)` | **dense, shaped** | 90 |
-| walker-stand | `(3·standing + upright) / 4`, height target 1.2 with margin 0.6 | **dense, shaped** | 398 |
-| walker-walk | `stand_reward × (5·move_reward + 1) / 6`, speed target 1 | **dense, shaped** | 395 |
+| walker-stand | `(3·standing + upright) / 4`, height target 1.2 with margin 0.6 | **dense, shaped** | 400 of 400 |
+| walker-walk | `stand_reward × (5·move_reward + 1) / 6`, speed target 1 | **dense, shaped** | 400 of 400 |
 
 All rewards are in [0,1] per step over exactly 1000 steps, so **the ceiling is 1000 everywhere** and
 returns are directly comparable across environments.
@@ -153,6 +159,10 @@ and the variation applied to it looks like this.*
 | ball_in_cup-catch | ball mass (kg) | 0.065, 0.104, 0.039, 0.104, 0.039 | *not run* | *not run* |
 | cheetah-run | joint damping (bthigh) | 6.0, 9.6, 3.6, 9.6, 3.6 | 3.0 – 9.0 | 2.4 – 9.6 |
 | walker-stand / walker-walk | thigh mass (kg) | 4.06, 6.50, 2.44, 6.50, 2.44 | 2.03 – 6.09 | 1.62 – 6.50 |
+
+Where section 3 lists two quantities, both are scaled by the same multiplier; the column above
+names the one whose absolute values are quoted. cheetah's ground friction moves 0.6 – 1.6 alongside
+its damping, and the walkers' 0.42 – 1.12 alongside their limb mass.
 
 **The one case where the span changes what is achievable at all is reacher**: at ×0.6 the arm
 reaches ~0.115 m while targets are drawn out to 0.20 m, so some episodes become impossible
