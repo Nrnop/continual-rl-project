@@ -107,7 +107,7 @@ envs/       LipschitzDriftHalfCheetah and DriftCartpoleSwingup — the two bench
 utils/      seeding, rollout buffers, logging, metrics and probes
 plots/      figure generation, one module per study
 scripts/    preflight.py (the gates), run_phase2_sweep.py (the runner), report_*.py (the numbers)
-tests/      292 tests
+tests/      869 tests
 configs/    layered YAML: default <- per-agent <- overlay <- CLI
 archive/    Phase 1 — see archive/phase1/README.md
 ```

@@ -1,0 +1,47 @@
+# IMPLEMENTATION CHECK -- is our PPO itself sound on HalfCheetah?
+#
+# WHY THIS EXISTS. Every HalfCheetah result in this project says `pt` does badly there, and we have
+# spent a lot of effort trying to explain why. But we never checked the more basic thing: does our
+# VANILLA PPO reach the return that a standard PPO implementation reaches on stationary HalfCheetah?
+# If it does not, the thing we have been explaining may be a defect in the training loop rather than
+# a property of the method or the environment.
+#
+# We did exactly this check for cartpole -- an independent paper (DART, RLJ 2026) reports CleanRL PPO
+# at ~620 on cartpole-swingup and ours reached 562, which is what made the port believable. The same
+# check on HalfCheetah was never run.
+#
+# THIS CONFIG MATCHES CleanRL's ppo_continuous_action AS CLOSELY AS THE CODEBASE ALLOWS, because a
+# mismatch caused by our own deliberate deviations would tell us nothing:
+#
+#   anneal_lr: true            we default it OFF for continual learning (it overwrites pt's
+#                              Robbins-Monro schedule); CleanRL has it ON, so it goes back on here
+#   num_envs: 1                CleanRL uses one env x 2048 steps; we default to 8 x 256. Same batch
+#   n_steps: 2048              size either way, but the data distribution differs
+#   normalizer_freeze_after    OUR addition, not CleanRL's. -1 disables it so the running mean/std
+#     : -1                     keep updating for the whole run, as CleanRL does
+#   disable_task_switch: true  STATIONARY. Nothing changes during the run -- this measures the
+#                              training loop, not continual learning
+#
+# Everything else already matches CleanRL: lr 3e-4, gamma 0.99, gae_lambda 0.95, 10 epochs,
+# minibatch 64, clip 0.2, ent_coef 0, vf_coef 0.5, max_grad_norm 0.5, obs+reward normalisation
+# clipped at 10, learned log_std starting at 0.
+#
+# NOTE ON THE ENVIRONMENT VERSION. CleanRL's published numbers are for HalfCheetah-v4; this repo
+# uses v5. The differences are small but they are not nothing, so treat a close match as
+# reassurance and an exact match as luck.
+
+env_mode: "drift"
+disable_task_switch: true      # stationary: multiplier stays at task_multipliers[0] = 1.0
+drift_targets: ["damping", "friction"]
+
+total_steps: 1000000           # CleanRL's benchmark length
+num_envs: 1
+n_steps: 2048
+anneal_lr: true
+normalizer_freeze_after: -1    # negative disables the freeze entirely
+
+freeze_log_std: false
+log_std_init: 0.0
+hidden_sizes: [64, 64]
+
+transfer_eval_episodes: 0      # nothing switches, so there is no transfer to measure

@@ -65,10 +65,60 @@ BENCHMARK_OVERLAYS = {
     },
 }
 
+# --- the multi-environment family ---------------------------------------------------------------
+# One benchmark per dm_control environment, named for it. Registered from the env specs so a
+# seventh environment cannot be added without its overlays, and so no invented short names can
+# creep in — results/ already holds sixty-odd directories called things like `s14reset` and `sup`,
+# and MANIFEST.md exists only because nobody could tell them apart.
+from ..envs.dm_control_drift import SPECS as _DMC_SPECS      # noqa: E402
+
+MULTIENV_BENCHMARKS = tuple(_DMC_SPECS)
+for _env in MULTIENV_BENCHMARKS:
+    BENCHMARK_OVERLAYS[_env] = {
+        arm: "multienv_%s_%s" % (_env.replace("-", "_"), arm) for arm in ARM_SPEC
+    }
+
+# The two boundary-free drift settings, registered as "<setting>:<environment>" so one sweep call
+# still means one environment in one setting. ball_in_cup-catch is deliberately absent -- it
+# saturated in the boundary study (all three arms within 13 points of each other at 84% of the
+# ceiling) and would measure nothing here either. See scripts/make_multienv_configs.py.
+from .make_multienv_configs import DRIFT_ENVIRONMENTS as _DRIFT_ENVS   # noqa: E402
+from .make_multienv_configs import SETTINGS as _SETTINGS               # noqa: E402
+
+DRIFT_BENCHMARKS = tuple("%s:%s" % (s, e) for s in _SETTINGS for e in _DRIFT_ENVS)
+for _key in DRIFT_BENCHMARKS:
+    _setting, _env = _key.split(":", 1)
+    BENCHMARK_OVERLAYS[_key] = {
+        arm: "%s_%s_%s" % (_SETTINGS[_setting]["stem"], _env.replace("-", "_"), arm)
+        for arm in ARM_SPEC
+    }
+
+# Benchmarks whose arms each get their OWN results directory, named for the arm.
+#
+# The rest of this project writes every arm of a sweep into one directory and tells them apart by
+# the `<arm>_ppo_seed_<n>_` filename prefix. The family study does not, because it has 6 x 3 x 10
+# runs and a flat tree of 720 files is unreadable and untraceable. The layout is
+# results/multienv/<environment>/<arm>/, one sweep call per environment, so the folder alone says
+# what it holds.
+ARM_SUBDIR_BENCHMARKS = set(MULTIENV_BENCHMARKS) | set(DRIFT_BENCHMARKS)
+
+
+def _results_dir(arm, args):
+    """Where this arm's pickles go.
+
+    For the family, `--results-dir` is the ENVIRONMENT's directory and each arm gets a folder
+    inside it. Elsewhere the historical behaviour is unchanged: arms share a directory except
+    `pt_frozen`, which has always had its own.
+    """
+    if args.benchmark in ARM_SUBDIR_BENCHMARKS:
+        return os.path.join(args.results_dir, arm)
+    subdir = ARM_SPEC[arm][1]
+    return os.path.join(args.results_dir, subdir) if subdir else args.results_dir
+
 
 def _job_command(arm, seed, args):
-    agent, subdir = ARM_SPEC[arm]
-    results_dir = os.path.join(args.results_dir, subdir) if subdir else args.results_dir
+    agent, _subdir = ARM_SPEC[arm]
+    results_dir = _results_dir(arm, args)
     # -u: unbuffered stdout. Redirected to a file, Python block-buffers in ~8KB chunks,
     # which at ~110 bytes per progress line means a healthy run writes nothing for half an
     # hour — making a long sweep impossible to monitor and a wedged run indistinguishable
@@ -147,13 +197,35 @@ def main():
         return 0
 
     if not args.skip_preflight:
-        from .preflight import (BENCHMARKS, check_parameter_parity, check_physics_change,
-                                check_sigma_parity)
-        spec = BENCHMARKS[args.benchmark]
-        obs_dim, act_dim, overlays = spec["obs_dim"], spec["act_dim"], spec["overlays"]
-        gates = {"parameter parity": check_parameter_parity(obs_dim, act_dim, overlays=overlays),
+        from .preflight import (BENCHMARKS, MULTIENV_PARITY_TOLERANCE, check_non_inert,
+                                check_parameter_parity, check_physics_change, check_sigma_parity)
+        # preflight registers the family as "multienv:<env>"; the sweep takes the bare environment
+        # name because that is also the results directory's name.
+        is_drift = args.benchmark in DRIFT_BENCHMARKS
+        is_family = args.benchmark in MULTIENV_BENCHMARKS or is_drift
+        # preflight registers environments as "multienv:<env>"; a drift benchmark is
+        # "<setting>:<env>", and its GATES are the environment's -- parity, sigma and
+        # non-inertness are properties of the body, not of the schedule.
+        env_name = args.benchmark.split(":", 1)[1] if is_drift else args.benchmark
+        bench_key = ("multienv:" + env_name) if is_family else args.benchmark
+        spec = BENCHMARKS[bench_key]
+        obs_dim, act_dim = spec["obs_dim"], spec["act_dim"]
+        # Gate the overlays this sweep will ACTUALLY use, not the boundary ones that share
+        # the environment: a drift config with the wrong widths would otherwise pass.
+        overlays = ({a: BENCHMARK_OVERLAYS[args.benchmark][a] for a in ("vanilla", "ewc", "pt")}
+                    if is_drift else spec["overlays"])
+        # The family's widths were re-derived per environment to within 0.5%, and the failure this
+        # gate exists to catch is a quiet 7% capacity handicap — which the loose default waves
+        # through. Tighten it for the family and leave the older benchmarks as they were.
+        tolerance = MULTIENV_PARITY_TOLERANCE if is_family else 1.40
+        gates = {"parameter parity": check_parameter_parity(obs_dim, act_dim, tolerance=tolerance,
+                                                            overlays=overlays),
                  "sigma parity": check_sigma_parity(obs_dim, act_dim, overlays=overlays),
-                 "physics change": check_physics_change(args.benchmark, overlays=overlays)}
+                 "physics change": check_physics_change(bench_key, overlays=overlays)}
+        if is_family:
+            # An inert parameter passes "physics change" — the model numbers differ — while
+            # changing nothing about the simulation. That distinction cost Phase 1 a week.
+            gates["non-inert"] = check_non_inert(bench_key, overlays=overlays)
         failed = [name for name, ok in gates.items() if not ok]
         if failed:
             print(f"\nABORTING before the sweep: {', '.join(failed)} failed the pre-flight.")

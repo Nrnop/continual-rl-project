@@ -5,7 +5,15 @@
 gymnasium>=0.29.0
 mujoco>=3.1.0
 torch>=2.0.0
-numpy>=1.24.0
+# PINNED, and the upper bound is load-bearing. numpy 2.5 deprecates setting `.shape` on an
+# array, which dm_control 1.0.43 does at mujoco/index.py:375 inside its NAMED INDEXING path.
+# `DmControlDrift.step` reads named fields every step via current_params(), so on numpy 2.5 the
+# warning fires once per env step: measured on a rented box, 3.2 MILLION repeats and a 923 MB
+# stdout log per run, which would have been ~270 GB across 300 runs on a 54 GB disk. The
+# numerics were fine; the log volume alone made the sweep impossible. 2.2.6 is the version
+# every existing run in this project was produced with. Do not relax without re-verifying,
+# and dm_control is pinned so the underlying call cannot change.
+numpy>=1.24.0,<2.5
 pyyaml>=6.0
 tensorboard>=2.13.0
 wandb>=0.15.0
@@ -20,3 +28,11 @@ matplotlib>=3.7.0
 # release that runs on mujoco 3.10. Do not unpin without re-running a HalfCheetah reference arm.
 dm_control==1.0.43
 shimmy>=2.0.0
+
+# Pulled in eagerly by gymnasium's MuJoCo rendering module, which `import shimmy` imports as a
+# side effect (shimmy -> dm_control_compatibility -> gymnasium.envs.mujoco ->
+# mujoco_rendering -> imageio). Absent, `import shimmy` raises ModuleNotFoundError, which
+# makes four whole test modules importorskip themselves away -- 435 tests vanish and the
+# suite still prints green. Found on a fresh box, 2026-08-26; it had never surfaced locally
+# because some other package had already installed it.
+imageio>=2.30.0

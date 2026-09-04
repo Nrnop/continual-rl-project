@@ -31,6 +31,7 @@ import numpy as np
 import torch
 
 from ..agents import AGENTS
+from ..envs.dm_control_drift import SPECS as DMC_SPECS
 from ..envs.drift_half_cheetah import LipschitzDriftHalfCheetah
 from ..train import build_config
 
@@ -58,6 +59,27 @@ BENCHMARKS = {
                                        "ewc": "cartpole_ewc_learned",
                                        "pt": "cartpole_pt_learned"}),
 }
+
+# --- the multi-environment family --------------------------------------------------------------
+# Six environments, registered as "multienv:<dm_control name>". Built from the env specs rather
+# than typed out, so adding a seventh environment cannot silently skip its own gates — and so the
+# dimensions here can never drift from the dimensions the env actually produces.
+#
+# THE PARITY TOLERANCE IS DELIBERATELY TIGHT FOR THIS FAMILY. Every environment has different
+# dimensions, `pt`'s widths were re-derived per environment to within 0.5%, and the failure this
+# gate exists to catch is precisely the quiet 7% handicap that reusing HalfCheetah's widths would
+# have produced. The loose 1.40x default would wave that through.
+MULTIENV_PARITY_TOLERANCE = 1.02
+
+for _name, _spec in DMC_SPECS.items():
+    BENCHMARKS["multienv:" + _name] = dict(
+        obs_dim=_spec.obs_dim, act_dim=_spec.act_dim,
+        overlays={arm: "multienv_%s_%s" % (_name.replace("-", "_"), arm)
+                  for arm in AGENT_NAMES},
+        dmc_env=_name,
+    )
+
+MULTIENV_BENCHMARKS = tuple("multienv:" + n for n in DMC_SPECS)
 
 
 def _cfg_for(agent, overlay=None, **overrides):
@@ -177,19 +199,92 @@ def check_sigma_parity(obs_dim=17, act_dim=6, overlays=None):
 # ---------------------------------------------------------------------------
 # 1c. The physics really do change between tasks
 # ---------------------------------------------------------------------------
+def check_physics_change_over_time(benchmark, cfg):
+    """The drift counterpart of 1c: the physics must change with the CLOCK, not with a task index.
+
+    WHY THIS EXISTS. The boundary version of this gate calls `set_task(0..4)` and asserts the
+    physics differ. Under a continuous schedule `set_task` is a deliberate no-op — the multiplier is
+    a function of elapsed steps — so that gate reports every task as identical and fails a perfectly
+    correct benchmark. It is asking the wrong question, not finding a real fault.
+
+    So for `sin`/`linear` the same underlying question ("do the physics actually move, in the model,
+    the way the config says") is asked of TIME instead: realise the physics at four phases of the
+    slow cycle and require the witness to vary. And assert the mirror-image property that matters
+    just as much here — that `set_task` does NOT move the physics, because a drift run that still
+    responded to task boundaries would not be the boundary-free benchmark it claims to be.
+    """
+    from ..envs.dm_control_drift import SPECS, DmControlDrift
+    print("\n=== 1c. PHYSICS CHANGE OVER TIME (continuous schedule, no boundaries) ===")
+    env_name = benchmark.split(":", 1)[1]
+    period = int(cfg["drift_period"])
+    env = DmControlDrift(
+        env_name=env_name, drift_targets=tuple(cfg["drift_targets"]),
+        schedule=cfg["drift_schedule"],
+        amplitude=cfg["drift_amplitude"], period=period,
+        amplitude2=cfg.get("drift_amplitude2", 0.0),
+        period2=cfg.get("drift_period2", 30720), phase=cfg.get("drift_phase", 0.0),
+        reload_tol=cfg.get("dmc_reload_tol", 0.005), max_episode_steps=50)
+    witness = SPECS[env_name].probes[cfg["drift_targets"][0]][0]
+
+    seen = []
+    for frac in (0.0, 0.25, 0.5, 0.75):
+        # Drive the VIRTUAL CLOCK rather than stepping a million times, then realise the physics
+        # through the same code path a real run uses.
+        env.t = int(frac * period)
+        env._apply(env.multiplier())
+        seen.append((frac, env.current_params()))
+    for frac, params in seen:
+        print(f"  t = {frac:.2f} of the slow period: "
+              + "  ".join(f"{k}={v:.4f}" for k, v in params.items()))
+    values = [p.get(witness) for _, p in seen]
+    moves = len(set(np.round(values, 9))) > 1
+    print(f"  {_ok(moves)}: the physics move with the clock (witness: {witness})")
+
+    # And there must be NO boundary behaviour left.
+    env.t = 0
+    env._apply(env.multiplier())
+    before = env.current_params()
+    env.set_task(3)
+    after = env.current_params()
+    no_boundary = before == after
+    print(f"  {_ok(no_boundary)}: set_task does NOT change the physics — this benchmark has no "
+          f"boundaries")
+    if not no_boundary:
+        print("           A drift run that still responds to task boundaries is the boundary "
+              "benchmark\n           wearing a drift filename.")
+
+    lip = env.lipschitz_constant()
+    print(f"  Lipschitz bound on the multiplier: {lip:.3e} per env step")
+    env.close()
+    return moves and no_boundary and lip > 0
+
+
 def check_physics_change(benchmark="halfcheetah", overlays=None):
     """The physics the sequence REALISES, read back out of the live model.
 
     Never from the config: a key one env reads and another ignores is failure mode #3, and a
     multiplicatively-inert parameter looks exactly like a working experiment.
     """
-    print("\n=== 1c. PHYSICS DIFFER BETWEEN TASKS ===")
     overlays = overlays or {n: None for n in AGENT_NAMES}
     cfg = _cfg_for("vanilla", overlays.get("vanilla"))
+    # A continuous schedule has no task sequence to check; ask the equivalent question of time.
+    if str(cfg.get("drift_schedule", "step")) != "step" and benchmark.startswith("multienv:"):
+        return check_physics_change_over_time(benchmark, cfg)
+    print("\n=== 1c. PHYSICS DIFFER BETWEEN TASKS ===")
     mults = list(cfg["task_multipliers"])
     # Match on the FAMILY, not the exact name: "cartpole_learned" is the same environment with a
     # different exploration setting, and an equality test sent it down the HalfCheetah branch.
-    if benchmark.startswith("cartpole"):
+    if benchmark.startswith("multienv:"):
+        from ..envs.dm_control_drift import SPECS, DmControlDrift
+        env_name = benchmark.split(":", 1)[1]
+        env = DmControlDrift(
+            env_name=env_name, drift_targets=tuple(cfg["drift_targets"]),
+            schedule=cfg["drift_schedule"], task_multipliers=mults, max_episode_steps=50)
+        # The witness is whatever this environment's FIRST target reports, read back out of the
+        # live model. It differs per environment (pole length, ball mass, joint damping), so a
+        # hard-coded key would silently check nothing on five of the six.
+        witness = SPECS[env_name].probes[cfg["drift_targets"][0]][0]
+    elif benchmark.startswith("cartpole"):
         from ..envs.cartpole_swingup import DriftCartpoleSwingup
         env = DriftCartpoleSwingup(
             task_name=cfg.get("cartpole_task", "swingup"),
@@ -213,6 +308,113 @@ def check_physics_change(benchmark="halfcheetah", overlays=None):
     print(f"  {_ok(passed)}: the physics are not constant across the task sequence "
           f"(witness: {witness})")
     env.close()
+    return passed
+
+
+# ---------------------------------------------------------------------------
+# 1d. The physics change actually MOVES THE TRAJECTORY
+# ---------------------------------------------------------------------------
+def check_non_inert(benchmark, overlays=None, n_steps=200, threshold=1e-3):
+    """Same seed, same actions, scaled physics -> the trajectories must genuinely diverge.
+
+    Check 1c above only proves the NUMBERS in the model differ. That is not the same thing, and
+    the difference is the failure that cost Phase 1 a week: `dof_armature` is exactly 0.0 on three
+    of these bodies and `dof_damping` is 0.0005 on cartpole, so a multiplier can be faithfully
+    applied, faithfully logged, and change nothing whatsoever about the simulation.
+
+    The actions do not depend on the physics, so any divergence is caused by the physics and
+    nothing else.
+    """
+    print("\n=== 1d. THE PHYSICS ARE NON-INERT (trajectories diverge) ===")
+    if not benchmark.startswith("multienv:"):
+        print("  only defined for the multienv family; skipping")
+        return True
+    from ..envs.dm_control_drift import DmControlDrift
+    overlays = overlays or {n: None for n in AGENT_NAMES}
+    cfg = _cfg_for("vanilla", overlays.get("vanilla"))
+    env_name = benchmark.split(":", 1)[1]
+    targets = tuple(cfg["drift_targets"])
+
+    if str(cfg.get("drift_schedule", "step")) != "step":
+        # The drift form of the same question. `set_task` is a no-op here, so the boundary version
+        # below would compare an env against itself and pass vacuously — which is worse than
+        # failing. Instead run the real schedule against a ZERO-AMPLITUDE copy of itself: same
+        # env, same seed, same actions, the only difference being whether the physics move at all.
+        def drift_trace(amp, amp2, steps):
+            env = DmControlDrift(
+                env_name=env_name, drift_targets=targets, schedule=cfg["drift_schedule"],
+                amplitude=amp, period=int(cfg["drift_period"]), amplitude2=amp2,
+                period2=cfg.get("drift_period2", 30720),
+                reload_tol=cfg.get("dmc_reload_tol", 0.005), max_episode_steps=steps + 10)
+            env.reset(seed=7)
+            rng = np.random.RandomState(11)
+            out = []
+            for _ in range(steps):
+                env.step(rng.uniform(-1.0, 1.0, env.action_space.shape))
+                out.append(np.array(env._dm_env.physics.data.qpos, copy=True))
+            env.close()
+            return np.asarray(out)
+
+        # HOW LONG THE WINDOW HAS TO BE IS DERIVED, NOT GUESSED.
+        #
+        # Rebuild-based environments only re-apply the physics once the multiplier has moved past
+        # `reload_tol`, so a window shorter than that sees a motionless world and the gate fails a
+        # perfectly correct config. Lipschitz1's slow component moves the multiplier by 2.6e-6 per
+        # step, so 60 steps move it 0.00015 — thirty times under the 0.005 threshold. A fixed
+        # default would pass on Lipschitz2 and fail on Lipschitz1 for reasons having nothing to do
+        # with the physics, which is the same shape of mistake this whole gate exists to catch.
+        #
+        # So require the window to be long enough for the multiplier to cross the threshold
+        # several times over, computed from the schedule's own Lipschitz bound.
+        amp, amp2 = cfg["drift_amplitude"], cfg.get("drift_amplitude2", 0.0)
+        probe = DmControlDrift(
+            env_name=env_name, drift_targets=targets, schedule=cfg["drift_schedule"],
+            amplitude=amp, period=int(cfg["drift_period"]), amplitude2=amp2,
+            period2=cfg.get("drift_period2", 30720), max_episode_steps=50)
+        lip = probe.lipschitz_constant()
+        probe.close()
+        tol = float(cfg.get("dmc_reload_tol", 0.005))
+        needed = int(np.ceil(5.0 * tol / lip)) if lip > 0 else n_steps
+        window = max(n_steps, needed)
+        print(f"  schedule moves the multiplier {lip:.3e}/step; {window:,} steps needed to clear "
+              f"the {tol} rebuild threshold five times over")
+
+        still = drift_trace(0.0, 0.0, window)
+        moving = drift_trace(amp, amp2, window)
+        divergence = float(np.abs(moving - still).max())
+        # This gate asks "does the drift do ANYTHING at all"; the SIZE of the effect is the
+        # dynamic-range gate's job, so the threshold here is deliberately near zero.
+        ok = divergence > 1e-6
+        print(f"  amplitude {amp} + {amp2} vs a motionless copy: max|dqpos| = {divergence:.6f}"
+              f"   {_ok(ok)}")
+        if not ok:
+            print("           The drift schedule is not moving this environment's physics at all.")
+        return ok
+
+    def trace(mult):
+        env = DmControlDrift(env_name=env_name, drift_targets=targets,
+                             task_multipliers=[mult, 999.0], max_episode_steps=n_steps + 10)
+        env.set_task(0)
+        env.reset(seed=7)
+        rng = np.random.RandomState(11)
+        out = []
+        for _ in range(n_steps):
+            env.step(rng.uniform(-1.0, 1.0, env.action_space.shape))
+            out.append(np.array(env._dm_env.physics.data.qpos, copy=True))
+        env.close()
+        return np.asarray(out)
+
+    base = trace(1.0)
+    passed = True
+    for mult in sorted({m for m in cfg["task_multipliers"] if m != 1.0}):
+        divergence = float(np.abs(trace(mult) - base).max())
+        ok = divergence > threshold
+        passed &= ok
+        print(f"  x{mult:<4} max|dqpos| vs nominal = {divergence:8.4f}   {_ok(ok)}")
+    if not passed:
+        print("           An INERT parameter looks exactly like a working experiment: it runs, it "
+              "logs a\n           multiplier, and it measures nothing. Choose a different physics "
+              "parameter for this\n           environment — do not shrug and run the sweep.")
     return passed
 
 
@@ -296,7 +498,12 @@ def check_smoke(steps, results_dir, seed=0, overlays=None):
     overlays = overlays or {n: None for n in AGENT_NAMES}
     passed = True
     for name in AGENT_NAMES:
+        # NO TRANSFER MATRIX. It costs a flat ~250k evaluation steps regardless of run length, so
+        # on a 60k-step smoke run it is four times the whole check and buys nothing: smoke asks
+        # whether each agent trains and whether its mechanism actually fires, and neither question
+        # is answered by a transfer matrix. The matrix has its own gate in check_dynamic_range.
         proc = _run_training(name, steps, seed, f"{results_dir}/{name}",
+                             extra=["--transfer-eval-episodes", "0"],
                              overlay=overlays.get(name))
         trained = proc.returncode == 0 and "[train] Done." in proc.stdout
         print(f"  {name:<8} {_ok(trained)}: ran to completion")
@@ -462,6 +669,66 @@ def report_dynamic_range(results_dir, switch, threshold=0.20):
     return passed
 
 
+def _main_multienv(args):
+    """Every gate, against every environment in the family.
+
+    Reported as one table at the end rather than six separate summaries: the study needs ALL six
+    environments, so a single environment failing a gate is a decision to make about the study, not
+    a footnote to scroll back for. An environment that fails gate 1d needs a different physics
+    parameter; one that fails the dynamic-range gate gets dropped.
+    """
+    names = args.multienv or list(MULTIENV_BENCHMARKS)
+    names = [n if n.startswith("multienv:") else "multienv:" + n for n in names]
+    unknown = [n for n in names if n not in BENCHMARKS]
+    if unknown:
+        print("unknown environment(s): %s\nvalid: %s"
+              % (unknown, [n.split(":", 1)[1] for n in MULTIENV_BENCHMARKS]))
+        return 1
+
+    results = {}
+    for bench in names:
+        spec = BENCHMARKS[bench]
+        obs_dim, act_dim, overlays = spec["obs_dim"], spec["act_dim"], spec["overlays"]
+        env_name = bench.split(":", 1)[1]
+        print(f"\n{'=' * 94}\n=== ENVIRONMENT: {env_name}  (obs {obs_dim}, act {act_dim}) ===")
+        for name in AGENT_NAMES:
+            print(f"  {name:<8} config = default.yaml <- ppo_{name}.yaml <- {overlays[name]}.yaml")
+        per_env = {
+            "parameter parity": check_parameter_parity(
+                obs_dim, act_dim, tolerance=MULTIENV_PARITY_TOLERANCE, overlays=overlays),
+            "sigma parity": check_sigma_parity(obs_dim, act_dim, overlays=overlays),
+            "physics change": check_physics_change(bench, overlays=overlays),
+            "non-inert": check_non_inert(bench, overlays=overlays),
+        }
+        if not args.skip_smoke:
+            per_env["smoke"] = check_smoke(
+                args.smoke_steps, f"{args.results_dir}/multienv/{env_name}/smoke",
+                args.seed, overlays=overlays)
+        if args.dynamic_range:
+            total = args.total_steps or int(
+                _cfg_for("vanilla", overlays["vanilla"])["total_steps"])
+            per_env["dynamic range"] = check_dynamic_range(
+                total, f"{args.results_dir}/multienv/{env_name}/range", args.seed,
+                overlay=overlays["vanilla"])
+        results[env_name] = per_env
+
+    print(f"\n{'=' * 94}\n=== FAMILY SUMMARY ===")
+    gates = sorted({g for per_env in results.values() for g in per_env})
+    print("  %-22s %s" % ("environment", "  ".join(f"{g:>16s}" for g in gates)))
+    for env_name, per_env in results.items():
+        cells = "  ".join(f"{('PASS' if per_env[g] else 'FAIL') if g in per_env else '-':>16s}"
+                          for g in gates)
+        print(f"  {env_name:<22s} {cells}")
+    failed = [(e, g) for e, per_env in results.items() for g, ok in per_env.items() if not ok]
+    if failed:
+        print("\nDO NOT START THE SWEEP:")
+        for env_name, gate in failed:
+            print(f"  {env_name}: {gate}")
+        return 1
+    print("\nAll gates passed on %d environment(s)." % len(results))
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(description="Phase 2 pre-flight checks")
     p.add_argument("--smoke-steps", type=int, default=60000)
@@ -475,7 +742,15 @@ def main():
     p.add_argument("--cartpole", action="store_true",
                    help="run every check against the cartpole-swingup benchmark (obs 5 / act 1, "
                         "the cartpole_* overlays) instead of HalfCheetah")
+    p.add_argument("--multienv", nargs="*", default=None, metavar="ENV",
+                   help="run every check against the dm_control FAMILY. With no arguments, all "
+                        "six environments; otherwise the named ones (e.g. --multienv walker-walk "
+                        "cheetah-run). A family study with one environment ungated answers "
+                        "nothing, so the default is all of them.")
     args = p.parse_args()
+
+    if args.multienv is not None:
+        return _main_multienv(args)
 
     bench = "cartpole" if args.cartpole else "halfcheetah"
     spec = BENCHMARKS[bench]

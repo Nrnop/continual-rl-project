@@ -32,6 +32,7 @@ from .envs.directional_half_cheetah import (
 )
 from .envs.drift_half_cheetah import make_drift_env, make_drift_vector_env
 from .envs.cartpole_swingup import make_cartpole_env, make_cartpole_vector_env
+from .envs.dm_control_drift import SPECS as DMC_SPECS, make_dmc_env, make_dmc_vector_env
 from .utils.logger import Logger
 from .utils.metrics import (ValueDriftProbe, BoundaryReturnTracker,
                             JumpstartTracker, RetentionProbe, TransferMatrix,
@@ -544,21 +545,44 @@ def main():
     #                        1000 by construction. It exists to separate "a property of the PT
     #                        method" from "a property of HalfCheetah", which no HalfCheetah run
     #                        can do. See envs/cartpole_swingup.py.
+    #   "dmc"             -- the FAMILY of dm_control benchmarks, selected by `dmc_env`. Same
+    #                        structure again (a physics multiplier per task, cycled), across six
+    #                        environments instead of one. Two environments can only ever give two
+    #                        points, and cartpole and HalfCheetah differ in size AND task type at
+    #                        once, so neither can say whether a finding belongs to the method or
+    #                        to the environment. See envs/dm_control_drift.py.
     env_mode = str(cfg.get("env_mode", "drift")).lower()
-    if env_mode not in ("directional", "drift", "cartpole"):
+    if env_mode not in ("directional", "drift", "cartpole", "dmc"):
         raise ValueError(
-            f"unknown env_mode {env_mode!r}; valid: 'directional', 'drift', 'cartpole'")
+            f"unknown env_mode {env_mode!r}; valid: 'directional', 'drift', 'cartpole', 'dmc'")
     cartpole_mode = env_mode == "cartpole"
+    dmc_mode = env_mode == "dmc"
+    # Named, not defaulted silently: `dmc` without a `dmc_env` would quietly run cartpole and the
+    # results directory would be the only record of which environment was actually swept.
+    dmc_env_name = str(cfg.get("dmc_env", "")) if dmc_mode else ""
+    if dmc_mode:
+        if dmc_env_name not in DMC_SPECS:
+            raise ValueError(
+                f"env_mode 'dmc' needs `dmc_env` set to one of {tuple(DMC_SPECS)}; "
+                f"got {dmc_env_name!r}")
     # `drift_mode` means "the non-stationarity is a physics multiplier indexed by task", which is
     # true of both physics benchmarks. Everything downstream — task labels, boundary bookkeeping,
     # the transfer matrix, the decay-gain probe — is shared, so the two envs differ only where
     # they are actually constructed.
-    drift_mode = env_mode in ("drift", "cartpole")
+    drift_mode = env_mode in ("drift", "cartpole", "dmc")
+
+    # Each benchmark's own documented defaults. For `dmc` they come from the environment's spec
+    # rather than from a literal here, because the parameter that is non-inert differs per body —
+    # pole length on cartpole, ball mass on ball_in_cup, joint damping on cheetah.
+    if dmc_mode:
+        _default_targets = list(DMC_SPECS[dmc_env_name].default_targets)
+    elif cartpole_mode:
+        _default_targets = ["pole_length", "pole_mass"]
+    else:
+        _default_targets = ["damping", "friction"]
 
     drift_kwargs = dict(
-        drift_targets=tuple(cfg.get(
-            "drift_targets",
-            ["pole_length", "pole_mass"] if cartpole_mode else ["damping", "friction"])),
+        drift_targets=tuple(cfg.get("drift_targets", _default_targets)),
         amplitude=cfg.get("drift_amplitude", 0.5),
         period=cfg.get("drift_period", 1228800),
         schedule=cfg.get("drift_schedule", "sin"),
@@ -569,7 +593,23 @@ def main():
         # schedule="step" only: one multiplier per task, cycled (see LipschitzDriftHalfCheetah).
         task_multipliers=tuple(cfg.get("task_multipliers", [1.0, 1.6, 0.6, 1.6, 0.6])),
     )
-    if cartpole_mode:
+    if dmc_mode:
+        env = make_dmc_vector_env(
+            env_name=dmc_env_name,
+            num_envs=num_envs,
+            max_episode_steps=cfg.get("max_episode_steps", 1000),
+            gamma=cfg["gamma"],
+            normalize_obs=normalize_obs,
+            normalize_reward=normalize_reward,
+            clip_obs=cfg.get("clip_obs", 10.0),
+            clip_reward=cfg.get("clip_reward", 10.0),
+            asynchronous=async_envs,
+            reload_tol=cfg.get("dmc_reload_tol", 0.005),
+            task_id_obs=bool(cfg.get("task_id_obs", False)),
+            n_task_ids=len(drift_kwargs["task_multipliers"]),
+            **drift_kwargs,
+        )
+    elif cartpole_mode:
         env = make_cartpole_vector_env(
             task_name=cfg.get("cartpole_task", "swingup"),
             num_envs=num_envs,
@@ -728,7 +768,21 @@ def main():
 
     eval_env = None
     if not cfg.get("no_eval", False):
-        if cartpole_mode:
+        if dmc_mode:
+            eval_env = make_dmc_env(
+                env_name=dmc_env_name,
+                max_episode_steps=cfg.get("max_episode_steps", 1000),
+                render_mode=render_mode,
+                normalize_obs=normalize_obs,
+                normalize_reward=False,       # eval reports the true (un-normalized) return
+                clip_obs=cfg.get("clip_obs", 10.0),
+                reload_tol=cfg.get("dmc_reload_tol", 0.005),
+                # Must match the training env's observation layout exactly.
+                task_id_obs=bool(cfg.get("task_id_obs", False)),
+                n_task_ids=len(drift_kwargs["task_multipliers"]),
+                **drift_kwargs,
+            )
+        elif cartpole_mode:
             eval_env = make_cartpole_env(
             task_name=cfg.get("cartpole_task", "swingup"),
             max_episode_steps=cfg.get("max_episode_steps", 1000),
@@ -781,7 +835,17 @@ def main():
     probe_env = None
     if (drift_mode and cfg.get("decay_gain_probe", True)
             and hasattr(agent, "decay_rho") and not cfg.get("no_eval", False)):
-        if cartpole_mode:
+        if dmc_mode:
+            probe_env = make_dmc_env(
+                env_name=dmc_env_name,
+                max_episode_steps=cfg.get("max_episode_steps", 1000),
+                normalize_obs=normalize_obs, normalize_reward=False,
+                clip_obs=cfg.get("clip_obs", 10.0),
+                reload_tol=cfg.get("dmc_reload_tol", 0.005),
+                task_id_obs=bool(cfg.get("task_id_obs", False)),
+                n_task_ids=len(drift_kwargs["task_multipliers"]),
+                **drift_kwargs)
+        elif cartpole_mode:
             probe_env = make_cartpole_env(
                 task_name=cfg.get("cartpole_task", "swingup"),
                 max_episode_steps=cfg.get("max_episode_steps", 1000),
@@ -875,6 +939,14 @@ def main():
             # than guessed. Print it, so every log says what "good" would be.
             print(f"[train] cartpole task={cfg.get('cartpole_task', 'swingup')}  "
                   f"return ceiling = {cfg.get('max_episode_steps', 1000)} "
+                  f"(reward in [0,1], no early termination)")
+        if dmc_mode:
+            # Same guarantee across the whole family, which is what lets returns be averaged over
+            # it without a fudge factor. Naming the environment in the log matters as much as the
+            # ceiling: six environments share one code path and one results tree.
+            _spec = DMC_SPECS[dmc_env_name]
+            print(f"[train] dm_control env={dmc_env_name}  obs={_spec.obs_dim} act={_spec.act_dim}"
+                  f"  return ceiling = {cfg.get('max_episode_steps', 1000)} "
                   f"(reward in [0,1], no early termination)")
         if _sched == "step":
             # Piecewise-constant physics: the multiplier is a function of the task index, so the

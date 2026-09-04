@@ -1,0 +1,17 @@
+setup,environment,pt_minus_vanilla,ci_lo,ci_hi,p_exact_ranksum,verdict
+piecewise,cartpole_swingup,66.5,15.3,137.8,0.0052,p<0.05
+piecewise,reacher_easy,-108.9,-270.0,14.7,0.0433,p<0.05
+piecewise,ball_in_cup_catch,13.2,-61.7,61.7,0.6842,ns
+piecewise,cheetah_run,69.1,1.8,173.1,0.0115,p<0.05
+piecewise,walker_stand,242.6,-180.4,559.0,0.063,ns
+piecewise,walker_walk,-3.0,-88.2,86.4,0.6305,ns
+lipschitz1,cartpole_swingup,50.9,-18.7,102.3,0.1655,ns
+lipschitz1,reacher_easy,17.3,-56.7,76.5,0.5787,ns
+lipschitz1,cheetah_run,96.5,31.3,170.0,0.0011,p<0.05
+lipschitz1,walker_stand,147.7,-26.5,322.6,0.1431,ns
+lipschitz1,walker_walk,121.2,-27.5,163.3,0.0433,p<0.05
+lipschitz2,cartpole_swingup,63.2,-2.1,149.3,0.0232,p<0.05
+lipschitz2,reacher_easy,-33.5,-83.1,27.2,0.1903,ns
+lipschitz2,cheetah_run,97.0,-26.1,172.3,0.0753,ns
+lipschitz2,walker_stand,92.3,-1.8,325.8,0.063,ns
+lipschitz2,walker_walk,77.5,-51.8,142.4,0.2176,ns

@@ -124,3 +124,17 @@ CARTPOLE_TASK.md
 
 # The thesis proposal PDF — a document, not code. Belongs with the thesis submission.
 NuraNabipour-Revised Proposal.pdf
+
+# Task brief for the multi-environment family study -- a working instruction document, in the same
+# category as CARTPOLE_TASK.md above. It will be superseded by MULTIENV_RESULTS.md, which reports
+# what was actually built and found. Only reports go into git; briefs stay on disk.
+MULTIENV_TASK.md
+
+# Working results document, not yet a report. Two reasons it stays out of git for now:
+#   1. It is a CONCLUSIONS document, and the supervisor asked that the team derive the
+#      interpretation themselves before it is written down. ENVIRONMENT_SPECS.md is the
+#      committed companion: specs, schedules, numbers and figures, deliberately no reading.
+#   2. It is stale -- section 6 still says the sparse test is "running" and it predates the
+#      240 drift runs entirely.
+# Un-ignore it once it is finished and the team has agreed what it says.
+MULTIENV_RESULTS.md
