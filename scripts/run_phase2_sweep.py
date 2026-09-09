@@ -111,12 +111,28 @@ for _key in DRIFT_BENCHMARKS:
 # variant of a consolidation interval -- so its pre-flight borrows the Lipschitz2 trio for the same
 # environment, which is correct because the widths are byte-identical and that is what parity and
 # sigma gate on.
+#
+# THE SWEEP CARRIES ITS OWN BASELINES, AND THAT IS NOT OPTIONAL. The shipped Lipschitz2 cells were
+# run on two different machines -- cartpole on the Ryzen box, cheetah-run on an EPYC box -- and
+# CLAUDE.md's rule is never to split one comparison across two machines: a 3.07M-step PPO run is
+# chaotic, so a bit-level difference changes the draw and single runs on two CPUs landed anywhere
+# in 890-2078 against a local range of 1021-1876. Comparing new k arms on a THIRD box against
+# those stored numbers would be exactly that mistake. So `pt_k10_rho050` (the shipped overlay,
+# k = 10, rho = 0.5) and `ewc` are part of this benchmark and are re-run alongside the new arms.
+KSWEEP_BASELINE_ARM = "pt_k10_rho050"
+ARM_SPEC[KSWEEP_BASELINE_ARM] = ("pt", None)
+
 KSWEEP_BENCHMARKS = tuple("ksweep:%s" % e for e in _SWEEP_ENVS)
 for _key in KSWEEP_BENCHMARKS:
     _env = _key.split(":", 1)[1]
+    _l2 = "%s_%s" % (_SETTINGS["lipschitz2"]["stem"], _env.replace("-", "_"))
     BENCHMARK_OVERLAYS[_key] = {
         arm: k_sweep_stem_for(_env, v) for arm, v in zip(K_SWEEP_ARMS, _K_RHO)
     }
+    # The baseline arms reuse the SHIPPED Lipschitz2 overlays byte-for-byte. Nothing about them is
+    # regenerated, so this is a same-box replication of an existing cell and not a new condition.
+    BENCHMARK_OVERLAYS[_key][KSWEEP_BASELINE_ARM] = _l2 + "_pt"
+    BENCHMARK_OVERLAYS[_key]["ewc"] = _l2 + "_ewc"
 
 STATIONARY_BENCHMARKS = tuple("stationary:%s" % e for e in _SWEEP_ENVS)
 for _key in STATIONARY_BENCHMARKS:
@@ -149,7 +165,9 @@ def _check_k_rho(args):
     ok = True
     print()
     print("[preflight] k / rho, read back off the merged config:")
-    for arm, variant in zip(K_SWEEP_ARMS, _K_RHO):
+    expected = list(zip(K_SWEEP_ARMS, _K_RHO))
+    expected.append((KSWEEP_BASELINE_ARM, dict(k=10, rho=0.50)))
+    for arm, variant in expected:
         if arm not in args.arms:
             continue
         overlay = BENCHMARK_OVERLAYS[args.benchmark][arm]
@@ -253,7 +271,8 @@ def main():
     # ablation, since that arm exists to decompose the mechanism against a moving world.
     if args.arms is None:
         if args.benchmark in KSWEEP_BENCHMARKS:
-            args.arms = list(K_SWEEP_ARMS)
+            # Baselines included by default: see the same-machine rule above.
+            args.arms = list(K_SWEEP_ARMS) + [KSWEEP_BASELINE_ARM, "ewc"]
         elif args.benchmark in STATIONARY_BENCHMARKS:
             args.arms = ["vanilla", "ewc", "pt"]
         else:
