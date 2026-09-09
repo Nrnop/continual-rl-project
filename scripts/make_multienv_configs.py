@@ -471,11 +471,204 @@ def render_drift(env, arm, setting):
     return text
 
 
+# --- Round 2, agreed with the supervisor 2026-09-09 -----------------------------------------------
+# The family study is finished and reported in ENVIRONMENT_SPECS.md. Two follow-ups were agreed,
+# and BOTH ARE NARROWED TO cartpole-swingup AND cheetah-run: those are the two environments the
+# supervisor kept. reacher is out because its arm can be too short to reach the target, so its
+# achievable ceiling moves with the task; the walkers and ball_in_cup are out because the
+# conclusion is not going to rest on them.
+#
+# EWC IS THE BASELINE FROM HERE ON, not vanilla. Beating vanilla turned out to be the weak claim:
+# across the 16 cells `pt` separated from vanilla six times but from EWC only twice, and only
+# cheetah-run Lipschitz1 was in both sets.
+SWEEP_ENVIRONMENTS = ("cartpole-swingup", "cheetah-run")
+
+# --- Follow-up 1: is the permanent actually SLOW? -------------------------------------------------
+# THE OBSERVATION THAT PROMPTED THIS. One PPO update is n_steps 256 x 8 envs = 2048 env steps, so
+# Lipschitz2's fast ripple (period 30,720 steps) lasts 15 updates while `pt` consolidates every
+# k = 10. The permanent is therefore rewritten about 1.5 times per fast cycle -- the two timescales
+# are essentially the same one, and a slow/fast decomposition has nothing to decompose. That is a
+# candidate explanation for why the pre-registered Lipschitz1 -> Lipschitz2 prediction came out
+# flat in all five environments.
+#
+# THE CONFOUND, AND WHY THE COMPENSATED ARM SITS WHERE IT DOES. Raising k does two things at once:
+# it slows the permanent down (what we want to test) and it cuts the number of consolidations per
+# run from 150 to 1500/k (what we do not). To hold the transfer RATE constant you need
+#
+#       rho_k = 0.5 * (k / 10)
+#
+# which is 1.0 at k = 20 and impossible above it: rho is a fraction of the transient and
+# ppo_pt.py raises ValueError outside [0, 1]. So exact compensation exists at EXACTLY ONE point.
+# The design below uses it rather than pretending the whole sweep can be compensated:
+#
+#   k = 20, rho = 0.50   and   k = 20, rho = 1.00     the SAME k, two rho -- isolates rho alone
+#   k = 30, rho = 0.50   and   k = 60, rho = 0.50     the sweep proper, rho fixed
+#
+# and k = 10, rho = 0.50 is the EXISTING multienv_lipschitz2_<env>_pt, which is not re-run.
+#
+# READ `actor_absorbed_frac` ON EVERY ARM. Where compensation is impossible the shortfall is a
+# measured quantity, not a guess, and this project has been burned by a permanent that quietly
+# stopped learning (failure mode #5: every retention metric improves when an arm learns less).
+K_RHO_SWEEP = (
+    dict(k=20, rho=0.50, why="half the compensated pair: same k, the standard rho"),
+    dict(k=20, rho=1.00, why="the ONLY exactly-compensated point -- rho*(1500/k) matches the "
+                             "k=10 baseline's total transfer. Note rho=1.0 zeroes the transient "
+                             "at every consolidation, so it is also the no-accumulation edge case"),
+    dict(k=30, rho=0.50, why="2 fast ripples per consolidation instead of 0.67"),
+    dict(k=60, rho=0.50, why="4 fast ripples per consolidation; the slowest permanent tested"),
+)
+
+# --- Follow-up 2: is the early deficit about non-stationarity at all? -----------------------------
+# `pt` is behind vanilla in the FIRST fifth of the run in 14 of the 16 cells and ahead in the last
+# fifth in 13 of 16 (ENVIRONMENT_SPECS.md section 6). The reading on the table is that `pt` wins by
+# accumulating slowly. But `pt`'s transient starts at the ZERO FUNCTION by Theorem 1, so at step 0
+# the policy is the permanent alone and the permanent only moves at consolidation -- the early
+# deficit may simply be the startup cost of that initialisation, with nothing to do with the world
+# changing.
+#
+# This control separates the two. The physics are pinned at x1.0 for the whole run: `drift_schedule`
+# is "step" and `disable_task_switch` stops set_task ever being called, so the multiplier never
+# leaves task_multipliers[0]. If `pt` is still behind early and still catches up late HERE, the
+# accumulation story is about optimisation rather than continual learning, and the framing changes.
+#
+# Everything else is deliberately identical to the family's boundary configs, so the stationary
+# cell can be read directly against the piecewise one.
+STATIONARY_ARMS = ("vanilla", "ewc", "pt")
+
+STATIONARY_KEYS = """
+# --- THE PHYSICS NEVER MOVE ---
+# `disable_task_switch` stops set_task() ever being called, so the multiplier stays at
+# task_multipliers[0] = 1.0 for all 3.07M steps. The sequence below is kept identical to the rest
+# of the family rather than trimmed to [1.0], so that this file differs from the boundary config in
+# exactly ONE key and a diff says so.
+disable_task_switch: true
+
+# No boundaries, so no transfer matrix: FWT and BWT are indexed by task number and there are no
+# tasks. Same reasoning as the drift settings.
+transfer_eval_episodes: 0
+
+# The decay-gain probe fires AT a boundary. There are none, so it would never run; off explicitly
+# rather than silently.
+decay_gain_probe: false
+
+# ONLINE EWC CANNOT RUN WITHOUT THIS. EWC accumulates its Fisher at a task boundary; with none, the
+# penalty stays identically zero and the EWC arm is vanilla PPO under another name. The timer is
+# what the two drift settings use, for the same reason.
+ewc_consolidate_every: 10
+"""
+
+
+def k_sweep_stem_for(env, variant):
+    """multienv_lipschitz2_<environment>_pt_k<k>_rho<rho*100>.
+
+    The k AND the rho are both in the name because the pair at k = 20 differs only in rho, and a
+    results directory called `..._pt_k20` twice would be exactly the kind of collision MANIFEST.md
+    had to be written to untangle.
+    """
+    return "%s_%s_pt_k%d_rho%03d" % (SETTINGS["lipschitz2"]["stem"], env.replace("-", "_"),
+                                     variant["k"], round(variant["rho"] * 100))
+
+
+def stationary_stem_for(env, arm):
+    return "multienv_stationary_%s_%s" % (env.replace("-", "_"), arm)
+
+
+K_SWEEP_HEADER = """\
+# `pt` on {env} -- Lipschitz2 with k = {k}, rho = {rho:g}.
+#
+# GENERATED by scripts/make_multienv_configs.py. Edit that script and regenerate.
+#
+#   cd "e:/update-single task + videos"
+#   python -m src_continuous_control.train --agent pt --config {stem} --seed 0
+#
+# WHY THIS ARM EXISTS: {why}
+#
+# THE TIMESCALES, IN ONE UNIT. One PPO update = 2048 env steps, so the run is 1500 updates and
+# Lipschitz2's fast ripple is 15 updates long. This arm consolidates every {k} updates, i.e.
+# {ripples:.2f} fast ripples per consolidation and {consolidations:.0f} consolidations across the run
+# (the shipped k = 10 gives 0.67 and 150).
+#
+# COMPARE AGAINST EWC, not vanilla, and report `actor_absorbed_frac` beside the return. Raising k
+# lowers the number of consolidations, so this arm transfers less into the permanent in total
+# unless rho compensates; at rho = {rho:g} the per-update transfer rate is {rate:.4f} against the
+# baseline's 0.0500. Where that is below the baseline the shortfall is REAL and must be reported,
+# not explained away -- it is the confound this design exists to expose.
+#
+# Everything except k and rho is byte-identical to multienv_lipschitz2_{env_stem}_pt.
+"""
+
+STATIONARY_HEADER = """\
+# {arm_title} on {env} -- STATIONARY CONTROL, the physics never change.
+#
+# GENERATED by scripts/make_multienv_configs.py. Edit that script and regenerate.
+#
+#   cd "e:/update-single task + videos"
+#   python -m src_continuous_control.train --agent {agent} --config {stem} --seed 0
+#
+# ENVIRONMENT: {env}, {act} motor(s), {obs} observations.
+#
+# WHAT THIS CONTROLS FOR. Across the 16 cells of the family study `pt` is behind vanilla in the
+# first fifth of the run in 14 of them and ahead in the last fifth in 13. That looks like slow
+# accumulation beating fast adaptation. But `pt`'s transient starts at the ZERO FUNCTION by
+# Theorem 1, so early on the policy is the permanent alone -- the deficit may be the startup cost
+# of the initialisation and have nothing to do with the world changing.
+#
+# Here the world does not change at all. If the same early-behind, late-ahead shape appears, the
+# pattern is a property of how `pt` starts, not of non-stationarity, and the interpretation of the
+# whole study changes.
+#
+# CEILING IS 1000 BY CONSTRUCTION -- reward in [0,1] over exactly 1000 steps, no early termination.
+"""
+
+
+def render_k_sweep(env, variant):
+    from ..envs.dm_control_drift import SPECS
+    spec = SPECS[env]
+    k, rho = variant["k"], variant["rho"]
+    text = K_SWEEP_HEADER.format(
+        env=env, k=k, rho=rho, stem=k_sweep_stem_for(env, variant),
+        why=_wrap(variant["why"]), env_stem=env.replace("-", "_"),
+        ripples=k / 15.0, consolidations=1500.0 / k, rate=rho / k)
+    text += _drift_env_block(env, spec, "lipschitz2")
+    text += SIGMA_BLOCK
+    text += _widths_block(env, "pt")
+    text += (
+        "\n# --- THE TWO KNOBS UNDER TEST ---\n"
+        "# k: PPO updates between consolidations. rho: the fraction of the transient the permanent\n"
+        "# absorbs at each one, and (as 1-rho) the factor the transient's output layer is scaled by.\n"
+        "# They are ONE transfer, not two knobs -- see the warning in ppo_pt.py about decay_rho.\n"
+        "k: %d\n"
+        "rho: %g\n" % (k, rho)
+    )
+    return text
+
+
+def render_stationary(env, arm):
+    from ..envs.dm_control_drift import SPECS
+    spec = SPECS[env]
+    meta = ENVIRONMENTS[env]
+    cfg = dict(targets=spec.default_targets, multipliers=MULTIPLIERS[env])
+    text = STATIONARY_HEADER.format(
+        arm_title=ARM_TITLE[arm], env=env, agent=ARM_AGENT[arm],
+        stem=stationary_stem_for(env, arm), obs=meta["obs"], act=meta["act"])
+    text += _env_block(env, cfg)
+    text += STATIONARY_KEYS
+    text += SIGMA_BLOCK
+    text += _widths_block(env, arm)
+    return text
+
+
 def all_cases():
     """(path stem, rendered text) for every config this generator owns."""
     out = [(stem_for(e, a), render(e, a)) for e in ENVIRONMENTS for a in ARMS]
     out += [(drift_stem_for(e, a, s), render_drift(e, a, s))
             for s in SETTINGS for e in DRIFT_ENVIRONMENTS for a in ARMS]
+    # Round 2: the k/rho sweep and the stationary control, both narrowed to the two environments
+    # the supervisor kept.
+    out += [(k_sweep_stem_for(e, v), render_k_sweep(e, v))
+            for e in SWEEP_ENVIRONMENTS for v in K_RHO_SWEEP]
+    out += [(stationary_stem_for(e, a), render_stationary(e, a))
+            for e in SWEEP_ENVIRONMENTS for a in STATIONARY_ARMS]
     return out
 
 

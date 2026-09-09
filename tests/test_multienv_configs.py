@@ -372,3 +372,161 @@ def test_lipschitz2_adds_a_fast_component_and_lipschitz1_does_not():
     # DRIFT_RESULTS.md used and they are kept for comparability, but the confound is real and
     # belongs in the write-up beside any A-vs-B contrast.
     assert span_two / span_one == pytest.approx(1.2)
+
+
+# =================================================================================================
+# Round 2: the k/rho sweep and the stationary control
+# =================================================================================================
+from src_continuous_control.scripts.make_multienv_configs import (      # noqa: E402
+    K_RHO_SWEEP,
+    SWEEP_ENVIRONMENTS,
+    k_sweep_stem_for,
+    stationary_stem_for,
+)
+
+KSWEEP_CASES = [(e, v) for e in SWEEP_ENVIRONMENTS for v in K_RHO_SWEEP]
+KSWEEP_IDS = ["%s-k%d-rho%03d" % (e, v["k"], round(v["rho"] * 100)) for e, v in KSWEEP_CASES]
+STATIONARY_CASES = [(e, a) for e in SWEEP_ENVIRONMENTS for a in ("vanilla", "ewc", "pt")]
+STATIONARY_IDS = ["%s-%s" % (e, a) for e, a in STATIONARY_CASES]
+
+
+def merged_ksweep(env, variant):
+    return build_config(argparse.Namespace(agent="pt", config=k_sweep_stem_for(env, variant)))
+
+
+def merged_stationary(env, arm):
+    return build_config(argparse.Namespace(agent=ARM_AGENT[arm],
+                                           config=stationary_stem_for(env, arm)))
+
+
+@pytest.mark.parametrize("env,variant", KSWEEP_CASES, ids=KSWEEP_IDS)
+def test_k_sweep_realises_its_two_knobs(env, variant):
+    """The filename is a label; this asserts what a run would ACTUALLY get.
+
+    Failure mode #3 in CLAUDE.md is a config key one arm reads and another ignores. This sweep's
+    entire content is two knobs, so they are read back off the merged config rather than trusted.
+    """
+    cfg = merged_ksweep(env, variant)
+    assert int(cfg["k"]) == variant["k"]
+    assert float(cfg["rho"]) == pytest.approx(variant["rho"])
+
+
+@pytest.mark.parametrize("env,variant", KSWEEP_CASES, ids=KSWEEP_IDS)
+def test_k_sweep_keeps_the_transfer_composition_preserving(env, variant):
+    """`decay_rho` must track `rho`.
+
+    The permanent absorbs rho and the transient retains (1-rho): one transfer, so the composed
+    policy does not jump at a consolidation. Setting them apart makes the value jump by
+    (rho - decay_rho)*V_T every time, which compounds -- see the warning in ppo_pt.py.
+    """
+    cfg = merged_ksweep(env, variant)
+    assert float(cfg.get("decay_rho", cfg["rho"])) == pytest.approx(float(cfg["rho"]))
+
+
+@pytest.mark.parametrize("env,variant", KSWEEP_CASES, ids=KSWEEP_IDS)
+def test_k_sweep_differs_from_its_lipschitz2_baseline_in_k_and_rho_ONLY(env, variant):
+    """The sweep is only interpretable if nothing else moved.
+
+    Its baseline is the shipped multienv_lipschitz2_<env>_pt at k=10, rho=0.5, which is NOT re-run.
+    So every other key -- widths, drift amplitudes and periods, exploration, episode length -- has
+    to be identical, or the comparison measures two things at once.
+    """
+    base = merged_drift("lipschitz2", env, "pt")
+    got = merged_ksweep(env, variant)
+    assert set(base) == set(got), "the sweep config added or dropped a key"
+    differing = {key for key in base if base[key] != got[key]}
+    assert differing <= {"k", "rho", "config"}, "changed more than the two knobs: %s" % differing
+    assert "k" in differing or variant["k"] == int(base["k"])
+
+
+@pytest.mark.parametrize("env,variant", KSWEEP_CASES, ids=KSWEEP_IDS)
+def test_k_sweep_rho_stays_inside_the_agent_s_bounds(env, variant):
+    """rho is a FRACTION of the transient and ppo_pt.py raises outside [0, 1].
+
+    This is why exact compensation exists at only one point: holding the per-update transfer rate
+    rho/k constant against the k=10, rho=0.5 baseline needs rho = 0.5*(k/10), which is 1.0 at
+    k = 20 and impossible above it. The sweep is designed around that ceiling, so the ceiling is
+    pinned here.
+    """
+    rho = float(merged_ksweep(env, variant)["rho"])
+    assert 0.0 <= rho <= 1.0
+    exact = 0.5 * (variant["k"] / 10.0)
+    if exact <= 1.0:
+        assert variant["rho"] in (0.5, exact), "at k<=20 the sweep should carry both rho points"
+
+
+def test_k_sweep_contains_the_compensated_pair():
+    """k = 20 at two rho values is the control that isolates rho from k.
+
+    Without it, every arm changes the consolidation interval AND the total transfer at once, and a
+    difference cannot be attributed. Losing this pair silently would gut the design.
+    """
+    at_20 = sorted(v["rho"] for v in K_RHO_SWEEP if v["k"] == 20)
+    assert at_20 == [0.5, 1.0]
+    assert sorted({v["k"] for v in K_RHO_SWEEP}) == [20, 30, 60]
+
+
+@pytest.mark.parametrize("env,arm", STATIONARY_CASES, ids=STATIONARY_IDS)
+def test_stationary_config_disables_boundaries(env, arm):
+    cfg = merged_stationary(env, arm)
+    assert cfg.get("disable_task_switch") is True
+    assert cfg["drift_schedule"] == "step"
+    # No boundaries means no task index, so the transfer matrix is undefined rather than empty.
+    assert int(cfg["transfer_eval_episodes"]) == 0
+
+
+@pytest.mark.parametrize("env,arm", STATIONARY_CASES, ids=STATIONARY_IDS)
+def test_stationary_config_enables_the_ewc_timer(env, arm):
+    """Online EWC accumulates its Fisher at a boundary; there are none here.
+
+    Without the timer the penalty is identically zero and the EWC arm is vanilla PPO under another
+    name -- which would make the control's own baseline fake.
+    """
+    assert int(merged_stationary(env, arm)["ewc_consolidate_every"]) > 0
+
+
+@pytest.mark.parametrize("env", list(SWEEP_ENVIRONMENTS))
+def test_stationary_arms_agree_on_every_environment_key(env):
+    """The three arms must differ only in the agent, exactly as in the rest of the family."""
+    keys = ("dmc_env", "drift_targets", "task_multipliers", "drift_schedule",
+            "disable_task_switch", "max_episode_steps", "total_steps", "transfer_eval_episodes")
+    seen = {}
+    for arm in ("vanilla", "ewc", "pt"):
+        cfg = merged_stationary(env, arm)
+        for key in keys:
+            seen.setdefault(key, set()).add(repr(cfg.get(key)))
+    differing = {k for k, v in seen.items() if len(v) > 1}
+    assert not differing, "%s: arms disagree on %s" % (env, differing)
+
+
+@pytest.mark.parametrize("env", list(SWEEP_ENVIRONMENTS))
+def test_stationary_physics_really_do_not_move(env):
+    """REALISED behaviour, not the config key.
+
+    Failure mode #1 in CLAUDE.md is a control that was not actually off: `lr_perm = 0` disables the
+    permanent's learning but not its decay, and nobody noticed for a week. Here the claim is that
+    the physics never change, so this drives the env the way a stationary run does -- construct it,
+    never call set_task, step it -- and asserts the scaled parameter is BIT-IDENTICAL throughout.
+    """
+    from src_continuous_control.envs.dm_control_drift import DmControlDrift
+
+    cfg = merged_stationary(env, "pt")
+    kw = dict(env_name=env, drift_targets=list(cfg["drift_targets"]),
+              task_multipliers=list(cfg["task_multipliers"]),
+              schedule=cfg["drift_schedule"], max_episode_steps=200)
+    drift_env = DmControlDrift(**kw)
+    try:
+        drift_env.reset(seed=3)
+        start = drift_env.multiplier()
+        # The first multiplier IS the unperturbed one; a stationary run must sit at x1.0.
+        assert start == pytest.approx(1.0)
+        rng = np.random.RandomState(5)
+        low, high = drift_env.action_space.low, drift_env.action_space.high
+        for _ in range(400):
+            obs, rew, term, trunc, info = drift_env.step(rng.uniform(low, high))
+            if term or trunc:
+                drift_env.reset(seed=3)
+            # Bit-identical, not approximately: nothing should be touching this at all.
+            assert drift_env.multiplier() == start
+    finally:
+        drift_env.close()

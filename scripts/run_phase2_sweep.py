@@ -40,6 +40,18 @@ ARM_SPEC = {
     "pt_frozen": ("pt", "ablation_frozen"),
 }
 
+# The k/rho sweep's arms are all the `pt` AGENT; only the consolidation interval and the transfer
+# fraction differ. They are separate ARMS rather than separate benchmarks so that one sweep call
+# still means one environment, and so each lands in its own results folder named for its knobs.
+from .make_multienv_configs import K_RHO_SWEEP as _K_RHO          # noqa: E402
+from .make_multienv_configs import SWEEP_ENVIRONMENTS as _SWEEP_ENVS   # noqa: E402
+from .make_multienv_configs import (k_sweep_stem_for,             # noqa: E402
+                                    stationary_stem_for)
+
+K_SWEEP_ARMS = tuple("pt_k%d_rho%03d" % (v["k"], round(v["rho"] * 100)) for v in _K_RHO)
+for _arm in K_SWEEP_ARMS:
+    ARM_SPEC[_arm] = ("pt", None)
+
 # --- per-arm overlays, for benchmarks where the arms cannot share one -----------------------
 # HalfCheetah's arms share a single --overlay because they differ only in `--agent`. Cartpole's
 # cannot: at obs 5 / act 1 the shipped `pt` widths land at 0.931x the baseline's parameters, so
@@ -93,6 +105,26 @@ for _key in DRIFT_BENCHMARKS:
         for arm in ARM_SPEC
     }
 
+# --- Round 2: the k/rho sweep and the stationary control ----------------------------------------
+# Both are "<setting>:<environment>", like the drift benchmarks, and both are narrowed to the two
+# environments the supervisor kept. `ksweep` carries only `pt` arms -- there is no vanilla or EWC
+# variant of a consolidation interval -- so its pre-flight borrows the Lipschitz2 trio for the same
+# environment, which is correct because the widths are byte-identical and that is what parity and
+# sigma gate on.
+KSWEEP_BENCHMARKS = tuple("ksweep:%s" % e for e in _SWEEP_ENVS)
+for _key in KSWEEP_BENCHMARKS:
+    _env = _key.split(":", 1)[1]
+    BENCHMARK_OVERLAYS[_key] = {
+        arm: k_sweep_stem_for(_env, v) for arm, v in zip(K_SWEEP_ARMS, _K_RHO)
+    }
+
+STATIONARY_BENCHMARKS = tuple("stationary:%s" % e for e in _SWEEP_ENVS)
+for _key in STATIONARY_BENCHMARKS:
+    _env = _key.split(":", 1)[1]
+    BENCHMARK_OVERLAYS[_key] = {
+        arm: stationary_stem_for(_env, arm) for arm in ("vanilla", "ewc", "pt")
+    }
+
 # Benchmarks whose arms each get their OWN results directory, named for the arm.
 #
 # The rest of this project writes every arm of a sweep into one directory and tells them apart by
@@ -100,7 +132,38 @@ for _key in DRIFT_BENCHMARKS:
 # runs and a flat tree of 720 files is unreadable and untraceable. The layout is
 # results/multienv/<environment>/<arm>/, one sweep call per environment, so the folder alone says
 # what it holds.
-ARM_SUBDIR_BENCHMARKS = set(MULTIENV_BENCHMARKS) | set(DRIFT_BENCHMARKS)
+ARM_SUBDIR_BENCHMARKS = (set(MULTIENV_BENCHMARKS) | set(DRIFT_BENCHMARKS)
+                        | set(KSWEEP_BENCHMARKS) | set(STATIONARY_BENCHMARKS))
+
+
+def _check_k_rho(args):
+    """Assert the k and rho a ksweep run would ACTUALLY get, not what the filename says.
+
+    The sweep exists to vary two knobs. Failure mode #3 in CLAUDE.md is a config key one arm reads
+    and another ignores -- it once handed one arm 3x the exploration and produced a fake result --
+    so the realised values are read back off the merged config before any compute is spent.
+    """
+    import argparse as _argparse
+
+    from ..train import build_config
+    ok = True
+    print()
+    print("[preflight] k / rho, read back off the merged config:")
+    for arm, variant in zip(K_SWEEP_ARMS, _K_RHO):
+        if arm not in args.arms:
+            continue
+        overlay = BENCHMARK_OVERLAYS[args.benchmark][arm]
+        cfg = build_config(_argparse.Namespace(agent="pt", config=overlay))
+        got_k, got_rho = int(cfg["k"]), float(cfg["rho"])
+        # decay_rho defaults to rho; if an overlay ever set it apart, the transfer stops being
+        # composition-preserving and the composed policy jumps at every consolidation.
+        got_decay = float(cfg.get("decay_rho", got_rho))
+        good = (got_k == variant["k"] and abs(got_rho - variant["rho"]) < 1e-9
+                and abs(got_decay - got_rho) < 1e-9)
+        ok = ok and good
+        print("  %-16s k=%-3d rho=%.2f decay_rho=%.2f   %s"
+              % (arm, got_k, got_rho, got_decay, "ok" if good else "MISMATCH"))
+    return ok
 
 
 def _results_dir(arm, args):
@@ -157,7 +220,10 @@ def _run_one(arm, seed, args, log_dir):
 def main():
     p = argparse.ArgumentParser(description="Phase 2 sweep")
     p.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4])
-    p.add_argument("--arms", nargs="+", default=list(DEFAULT_ARMS), choices=list(ARM_SPEC))
+    # DEFAULT DEPENDS ON THE BENCHMARK. `ksweep` has no vanilla/ewc/pt_frozen arm, and
+    # `stationary` has no frozen ablation; defaulting to the four standard arms would fail with a
+    # KeyError deep in _job_command instead of here.
+    p.add_argument("--arms", nargs="+", default=None, choices=list(ARM_SPEC))
     p.add_argument("--jobs", type=int, default=7, help="concurrent runs")
     p.add_argument("--overlay", type=str, default=None,
                    help="config overlay for the vanilla/ewc/pt arms, e.g. phase2_hard")
@@ -182,6 +248,22 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="print the job list and stop")
     args = p.parse_args()
 
+    # Resolve the arms AFTER parsing, because the sensible default depends on the benchmark:
+    # ksweep's arms are the four (k, rho) variants and nothing else; stationary has no frozen
+    # ablation, since that arm exists to decompose the mechanism against a moving world.
+    if args.arms is None:
+        if args.benchmark in KSWEEP_BENCHMARKS:
+            args.arms = list(K_SWEEP_ARMS)
+        elif args.benchmark in STATIONARY_BENCHMARKS:
+            args.arms = ["vanilla", "ewc", "pt"]
+        else:
+            args.arms = list(DEFAULT_ARMS)
+    unknown = [a for a in args.arms if a not in BENCHMARK_OVERLAYS.get(args.benchmark, {a: None})]
+    if unknown:
+        p.error("benchmark %s has no overlay for arm(s): %s. Available: %s"
+                % (args.benchmark, ", ".join(unknown),
+                   ", ".join(sorted(BENCHMARK_OVERLAYS[args.benchmark]))))
+
     # SEED-MAJOR, not arm-major. The queue is drained in order, so an arm-major list
     # ([vanilla x 10, ewc x 10, pt x 10]) finishes every vanilla seed before starting a single pt
     # one — and a sweep stopped, crashed or interrupted halfway then yields a complete baseline and
@@ -202,18 +284,32 @@ def main():
         # preflight registers the family as "multienv:<env>"; the sweep takes the bare environment
         # name because that is also the results directory's name.
         is_drift = args.benchmark in DRIFT_BENCHMARKS
-        is_family = args.benchmark in MULTIENV_BENCHMARKS or is_drift
+        is_ksweep = args.benchmark in KSWEEP_BENCHMARKS
+        is_stationary = args.benchmark in STATIONARY_BENCHMARKS
+        # Every "<setting>:<environment>" benchmark gates on the ENVIRONMENT: parameter parity,
+        # sigma parity and non-inertness are properties of the body, not of the schedule.
+        is_qualified = is_drift or is_ksweep or is_stationary
+        is_family = args.benchmark in MULTIENV_BENCHMARKS or is_qualified
         # preflight registers environments as "multienv:<env>"; a drift benchmark is
         # "<setting>:<env>", and its GATES are the environment's -- parity, sigma and
         # non-inertness are properties of the body, not of the schedule.
-        env_name = args.benchmark.split(":", 1)[1] if is_drift else args.benchmark
+        env_name = args.benchmark.split(":", 1)[1] if is_qualified else args.benchmark
         bench_key = ("multienv:" + env_name) if is_family else args.benchmark
         spec = BENCHMARKS[bench_key]
         obs_dim, act_dim = spec["obs_dim"], spec["act_dim"]
         # Gate the overlays this sweep will ACTUALLY use, not the boundary ones that share
         # the environment: a drift config with the wrong widths would otherwise pass.
-        overlays = ({a: BENCHMARK_OVERLAYS[args.benchmark][a] for a in ("vanilla", "ewc", "pt")}
-                    if is_drift else spec["overlays"])
+        #
+        # `ksweep` has no vanilla or EWC arm -- a consolidation interval has no baseline variant --
+        # so it borrows the Lipschitz2 trio for the same environment. That is the right trio and not
+        # a shortcut: render_k_sweep emits the same width block and the same drift keys, so gating
+        # those overlays certifies exactly the widths and schedule these runs will use.
+        if is_ksweep:
+            gate_key = "lipschitz2:" + env_name
+        else:
+            gate_key = args.benchmark
+        overlays = ({a: BENCHMARK_OVERLAYS[gate_key][a] for a in ("vanilla", "ewc", "pt")}
+                    if is_qualified else spec["overlays"])
         # The family's widths were re-derived per environment to within 0.5%, and the failure this
         # gate exists to catch is a quiet 7% capacity handicap — which the loose default waves
         # through. Tighten it for the family and leave the older benchmarks as they were.
@@ -226,6 +322,8 @@ def main():
             # An inert parameter passes "physics change" — the model numbers differ — while
             # changing nothing about the simulation. That distinction cost Phase 1 a week.
             gates["non-inert"] = check_non_inert(bench_key, overlays=overlays)
+        if is_ksweep:
+            gates["k/rho realised"] = _check_k_rho(args)
         failed = [name for name, ok in gates.items() if not ok]
         if failed:
             print(f"\nABORTING before the sweep: {', '.join(failed)} failed the pre-flight.")
