@@ -3,7 +3,17 @@
 # The baseline pins gymnasium==0.28.1; HalfCheetah-v5 needs a newer gymnasium.
 
 gymnasium>=0.29.0
-mujoco>=3.1.0
+# PINNED EXACTLY, and the pin is the physics engine itself. dm_control==1.0.43 below is
+# incompatible with mujoco >= 3.11: MjData lost the `qM` attribute dm_control's named
+# indexing reaches for, so every dm_control test raises AttributeError. This line used to
+# read `mujoco>=3.1.0`, which was unbounded -- the constraint was written in the comment on
+# dm_control below but never encoded, so a fresh box in September 2026 resolved mujoco 3.13
+# and took 105 test failures before a single run started. Exactly the shape of the numpy
+# incident recorded underneath: a documented constraint that pip could not see.
+#
+# 3.10.0 is the version EVERY existing run in this project was produced with, HalfCheetah
+# and the dm_control family alike. Changing it changes the simulation, not just the API.
+mujoco==3.10.0
 torch>=2.0.0
 # PINNED, and the upper bound is load-bearing. numpy 2.5 deprecates setting `.shape` on an
 # array, which dm_control 1.0.43 does at mujoco/index.py:375 inside its NAMED INDEXING path.
