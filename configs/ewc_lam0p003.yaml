@@ -1,0 +1,6 @@
+# EWC lambda sweep (0.003, 0.0088, 0.03) on the four-parameter HalfCheetah physics benchmark
+# (damping, friction, mass, armature). Penalty is the textbook (lambda/2) * sum_i F_i (theta_i -
+# theta*_i)^2; 0.0088 is the ppo_ewc.yaml default.
+
+drift_targets: ["damping", "friction", "mass", "armature"]
+ewc_lambda: 0.003

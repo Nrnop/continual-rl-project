@@ -1,0 +1,66 @@
+# Shared PPO and environment defaults for every agent. ppo_<agent>.yaml, a --config overlay and CLI
+# flags override these, in that order. With no overlay this is the main HalfCheetah benchmark: at
+# each observable task boundary the physics (damping, friction) change while the reward stays fixed
+# (run forward).
+
+env_id: "HalfCheetah-v5"  # falls back to v4 if v5 is unavailable
+env_mode: "drift"  # "drift" = physics change; "directional" = reward flip
+
+# Physics multiplier per task, cycled. The sequence revisits (tasks 1/3 and 2/4 share physics), so
+# backward transfer is defined. The +/-60% amplitude sets the benchmark's dynamic range.
+drift_schedule: "step"  # "sin"/"linear" = continuous drift without boundaries
+drift_targets: ["damping", "friction"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+switch: 614400  # env steps per task
+total_steps: 3072000  # 5 tasks of 614400
+max_episode_steps: 1000
+step_by_step: false  # batch PPO, not per-step online updates
+
+# Reward-direction sequence, used only by env_mode "directional".
+tasks: [1, -1]
+
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+n_steps: 256  # rollout length per env (batch = n_steps * num_envs)
+num_envs: 8
+async_envs: true
+epochs: 10  # PPO epochs per update
+minibatch_size: 64
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null  # a float (e.g. 0.03) enables early stop; null disables
+normalize_advantage: true
+
+# Off. CleanRL's linear decay to zero would overwrite pt's Robbins-Monro permanent learning rates
+# every update, and over five tasks it leaves the later tasks with almost no learning rate.
+anneal_lr: false
+adam_eps: 0.00001
+
+lr_actor: 0.0003
+lr_critic: 0.0003
+hidden_sizes: [64, 64]
+
+# Sigma is a learned parameter on every arm (standard PPO), so exploration is matched across arms.
+# Overlays that freeze it mostly use log_std_init -1.0 (sigma 0.37).
+freeze_log_std: false
+log_std_init: 0.0
+
+# Normalization is identical across arms and frozen after warmup.
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 100000
+clip_obs: 10.0
+clip_reward: 10.0
+
+log_interval_updates: 1  # how often (in updates) to flush scalar logs
+probe_states: 256  # states sampled to measure value drift at boundaries
+eval_ema: 0.99  # smoothing for the running episodic-return curve
+transfer_eval_episodes: 10  # episodes per transfer-matrix cell; 0 disables it
+results_dir: "src_continuous_control/results"
+runs_dir: "src_continuous_control/runs"
+wandb_project: "pt-continuous-control"
+
+# Seeds for the sweep scripts; train.py takes one --seed.
+seeds: [0, 1, 2, 3, 4]

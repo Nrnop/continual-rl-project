@@ -1,0 +1,45 @@
+# The pt agent: split actor and split critic, each a separate permanent and transient network
+# (Anand & Precup 2023). log_std is shared, not split, and is not decayed. Loaded by agent name on
+# top of default.yaml.
+
+agent: "pt"
+
+# Widths are parameter-matched to vanilla/ewc, which have one [64,64] net per role. pt has four
+# nets: permanent [51,51] + transient [32,32] gives 11,005 parameters against vanilla's 11,085
+# (0.99x), with the transient at about half width (the paper's PT-0.5x construction). Matching
+# totals follows Appendix C.3: spare capacity would make any pt advantage unattributable.
+hidden_sizes: [51, 51]  # permanent actor
+actor_trans_hidden_sizes: [32, 32]  # transient actor
+critic_hidden_sizes: [51, 51]  # permanent critic
+critic_trans_hidden_sizes: [32, 32]  # transient critic
+
+# Fast online parameters.
+lr_actor: 0.0003
+lr_trans: 0.0003
+
+# Slow permanent parameters, trained only at consolidation. alpha_P is domain-specific; check
+# actor_absorbed_frac > 0.01 before trusting a run (at 1e-5 with SGD the permanent is inert).
+lr_perm: 0.0003
+lr_perm_actor: 0.0003
+perm_optimizer: "adam"
+rm_power: 0.6  # Robbins-Monro decay of alpha_P (Theorem 5 needs it decreasing)
+rm_power_actor: 0.6
+
+# Every k updates the permanent absorbs rho of the transient and the transient's output layer is
+# scaled by (1 - rho), which preserves the composed policy. rho is one knob for both halves;
+# decay_rho decouples them and exists only as a control.
+rho: 0.5
+k: 10
+consolidation_epochs: 3
+consolidation_buffer_size: 20480
+
+# Fraction of each consolidation buffer held out of the regression to measure absorption on unseen
+# states. 0 for the main comparison (the holdout costs the permanent data); 0.25 re-measures it.
+# Nonzero values change the RNG stream.
+consolidation_holdout_frac: 0.0
+
+# KL-to-permanent policy regularisation replaces the entropy bonus.
+kl_prior_coef: 0.01
+ent_coef: 0.0
+
+# Sweep candidates: rho in {0.25, 0.5, 0.75}, k in {10, 30}, kl_prior_coef in {0.001, 0.01, 0.1}.

@@ -1,0 +1,7 @@
+# Diagnostic: pt on the four-parameter HalfCheetah physics benchmark (damping, friction, mass,
+# armature) with rho = 0: the permanent absorbs nothing and the transient is not decayed. What
+# remains is the architecture alone, mu = mu_P + mu_T with mu_P a fixed random function, which
+# separates architecture from transfer. Read with diag_bigtrans.
+
+drift_targets: ["damping", "friction", "mass", "armature"]
+rho: 0.0

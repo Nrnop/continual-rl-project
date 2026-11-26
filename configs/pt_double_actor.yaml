@@ -1,0 +1,39 @@
+# Double-actor pt arm with large networks: permanent [256,256] and transient [64,64] for actor and
+# critic, on the four-parameter HalfCheetah physics benchmark (damping, friction, mass, armature).
+# About 153,684 parameters, 13.9x vanilla's 11,085, so it is not parameter-matched. Sigma follows
+# default.yaml (learned).
+
+# Regress the permanent on the whole consolidation buffer.
+consolidation_holdout_frac: 0.0
+
+drift_targets: ["damping", "friction", "mass", "armature"]
+
+hidden_sizes: [256, 256]
+
+# Set explicitly: ppo_pt.yaml sets the permanent critic to [51,51], which would otherwise apply.
+critic_hidden_sizes: [256, 256]
+trans_hidden_sizes: [64, 64]
+actor_trans_hidden_sizes: [64, 64]
+critic_trans_hidden_sizes: [64, 64]
+
+lr_actor: 0.0003
+lr_trans: 0.0003
+lr_perm: 0.0003
+lr_perm_actor: 0.0003
+perm_optimizer: "adam"
+rm_power: 0.6
+rm_power_actor: 0.6
+
+rho: 0.5
+k: 10
+consolidation_epochs: 3
+consolidation_buffer_size: 20480
+
+kl_prior_coef: 0.01
+ent_coef: 0.0
+
+normalize_obs: true
+normalize_reward: true
+normalizer_freeze_after: 100000
+clip_obs: 10.0
+clip_reward: 10.0

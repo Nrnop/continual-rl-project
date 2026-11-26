@@ -1,0 +1,16 @@
+# Capacity sweep, small end: vanilla at [16,16] on the four-parameter HalfCheetah physics benchmark
+# (damping, friction, mass, armature), sigma frozen at 0.37. The large end is the [64,64]
+# *_physics_s037 runs. Tests Appendix C.3's claim that PT helps more when the agent is small
+# relative to the environment.
+
+hidden_sizes: [16, 16]
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

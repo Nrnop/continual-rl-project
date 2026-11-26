@@ -1,0 +1,19 @@
+# Online EWC PPO baseline: a diagonal-Fisher penalty on the actor. Loaded by agent name on top of
+# default.yaml.
+
+agent: "ewc"
+
+# Single critic V(s), as in vanilla.
+lr_critic: 0.0003
+
+# Textbook lambda (the penalty is not divided by parameter count). A sweep over 0.003 / 0.0088 /
+# 0.03 moved whole-run return by less than seed noise.
+ewc_lambda: 0.0088  # penalty strength
+ewc_gamma: 0.95  # Fisher decay factor
+
+# Same frozen-normalizer protocol as the other arms.
+normalizer_freeze_after: 100000
+
+# Leave log_std out of the Fisher and the penalty so EWC protects weights only. Otherwise it
+# anchors sigma and keeps about twice the exploration of the other arms.
+ewc_exclude_log_std: true

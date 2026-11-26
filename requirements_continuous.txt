@@ -1,0 +1,26 @@
+# Requirements for the continuous-control PT code. Install into a separate venv.
+# HalfCheetah-v5 needs gymnasium >= 0.29.
+
+gymnasium>=0.29.0
+# Exact pin: dm_control 1.0.43 fails on mujoco >= 3.11 (MjData no longer has `qM`), and changing
+# the mujoco version changes the simulation. All reported runs used 3.10.0.
+mujoco==3.10.0
+torch>=2.0.0
+# numpy 2.5 makes dm_control 1.0.43 emit a deprecation warning on every env step (it sets
+# `.shape` on an array in its named indexing), which floods the logs. Runs used numpy 2.2.6.
+numpy>=1.24.0,<2.5
+pyyaml>=6.0
+tensorboard>=2.13.0
+wandb>=0.15.0
+matplotlib>=3.7.0
+
+# dm_control environments (envs/dm_control_drift.py, envs/cartpole_swingup.py).
+# shimmy converts the dm_env API to gymnasium.
+# dm_control is pinned: 1.0.44 requires mujoco >= 3.11, which would change the physics under the
+# HalfCheetah runs. 1.0.43 is the newest release that runs on mujoco 3.10.
+dm_control==1.0.43
+shimmy>=2.0.0
+
+# Imported indirectly by `import shimmy` (through gymnasium's MuJoCo rendering module). Without it
+# the shimmy import fails and the dm_control test modules are skipped.
+imageio>=2.30.0

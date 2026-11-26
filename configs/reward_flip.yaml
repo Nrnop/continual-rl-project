@@ -1,0 +1,17 @@
+# HalfCheetah reward-flip benchmark with a reset at every boundary: physics fixed, reward sign
+# alternates +1, -1, +1, -1, +1 over five tasks. Everything else comes from default.yaml and
+# ppo_<agent>.yaml.
+#
+#  python -m src_continuous_control.train --agent vanilla --config reward_flip --seed 0
+#  python -m src_continuous_control.train --agent ewc     --config reward_flip --seed 0
+#  python -m src_continuous_control.train --agent pt      --config reward_flip --seed 0
+
+# Start each task from a fresh reset instead of carrying the pose and velocities across the switch.
+reset_on_task_switch: true
+
+env_mode: "directional"
+tasks: [1, -1]
+
+# Off: TransferMatrix is sized from len(tasks) = 2 but the run has 5 phases, so it would fail at
+# the third boundary.
+transfer_eval_episodes: 0

@@ -1,0 +1,11 @@
+environment,window,vanilla,pt,pt_minus_vanilla
+cartpole_swingup,1,310.2,308.3,-1.9
+cartpole_swingup,2,618.2,653.6,35.4
+cartpole_swingup,3,627.0,692.4,65.4
+cartpole_swingup,4,644.4,713.0,68.7
+cartpole_swingup,5,635.9,702.5,66.6
+cheetah_run,1,203.0,195.3,-7.7
+cheetah_run,2,396.4,386.2,-10.2
+cheetah_run,3,454.0,441.4,-12.6
+cheetah_run,4,426.5,470.1,43.5
+cheetah_run,5,418.4,480.9,62.5

@@ -1,0 +1,7 @@
+# Diagnostic: pt on the four-parameter HalfCheetah physics benchmark (damping, friction, mass,
+# armature) with rho = 0.25, so the transient retains 0.75 instead of 0.5. One of three
+# single-change overlays (diag_k60, diag_rho025, diag_nokl) probing why pt learns slowly here.
+# Carries drift_targets because only one --config overlay is applied.
+
+drift_targets: ["damping", "friction", "mass", "armature"]
+rho: 0.25

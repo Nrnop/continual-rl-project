@@ -1,0 +1,7 @@
+# Diagnostic: pt on the four-parameter HalfCheetah physics benchmark (damping, friction, mass,
+# armature) with the transient actor widened to [64,64], the baseline's actor width. mu_P is
+# detached, so PPO trains only the transient: ~1,830 actor parameters against vanilla's 5,708.
+# Breaks total-parameter parity (~1.5x), so diagnostic only.
+
+drift_targets: ["damping", "friction", "mass", "armature"]
+actor_trans_hidden_sizes: [64, 64]

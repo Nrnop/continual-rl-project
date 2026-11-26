@@ -1,0 +1,9 @@
+# Vanilla single-critic PPO baseline. Loaded by agent name on top of default.yaml.
+
+agent: "vanilla"
+
+# Single critic V(s).
+lr_critic: 0.0003
+
+# Same frozen-normalizer protocol as the other arms.
+normalizer_freeze_after: 100000

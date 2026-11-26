@@ -1,0 +1,19 @@
+# Capacity sweep, small end: pt on the four-parameter HalfCheetah physics benchmark (damping,
+# friction, mass, armature), sigma frozen at 0.37. Permanent [11,11] + transient [8,8] gives 1,239
+# parameters, the same as vanilla [16,16] at obs 17 / act 6. All four width keys are set because
+# ppo_pt.yaml sets them. rho, k and learning rates are not re-tuned for this width.
+
+hidden_sizes: [11, 11]  # permanent actor
+actor_trans_hidden_sizes: [8, 8]  # transient actor
+critic_hidden_sizes: [11, 11]  # permanent critic
+critic_trans_hidden_sizes: [8, 8]  # transient critic
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

@@ -1,0 +1,19 @@
+# Implementation check: vanilla PPO on stationary HalfCheetah, matched to CleanRL's
+# ppo_continuous_action as closely as the codebase allows. The other PPO settings in default.yaml
+# already match CleanRL. CleanRL's published numbers are for HalfCheetah-v4; this uses v5.
+
+env_mode: "drift"
+disable_task_switch: true  # stationary: multiplier stays at task_multipliers[0] = 1.0
+drift_targets: ["damping", "friction"]
+
+total_steps: 1000000  # CleanRL's benchmark length
+num_envs: 1  # CleanRL: 1 env x 2048 steps (default here is 8 x 256)
+n_steps: 2048
+anneal_lr: true  # on in CleanRL; off by default here
+normalizer_freeze_after: -1  # negative: obs/reward statistics update all run
+
+freeze_log_std: false
+log_std_init: 0.0
+hidden_sizes: [64, 64]
+
+transfer_eval_episodes: 0  # nothing switches, so no transfer to measure

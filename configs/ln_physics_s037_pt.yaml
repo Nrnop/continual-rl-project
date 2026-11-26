@@ -1,0 +1,15 @@
+# LayerNorm on every hidden layer: pt on the four-parameter HalfCheetah physics benchmark (damping,
+# friction, mass, armature), sigma 0.37. Identical to pt_physics_s037.yaml except layer_norm: true,
+# applied to all three arms as a standard plasticity-loss mitigation. LayerNorm adds 2h parameters
+# per hidden layer; parity stays within 1%.
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+layer_norm: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

@@ -1,0 +1,30 @@
+# Control: cartpole_pt_frozen.yaml with decay_rho: 0.0, so the split stays but the transient's
+# output is not scaled at consolidation. With lr_perm = 0 nothing is absorbed either. Compared with
+# cartpole_pt_frozen, it isolates what the decay costs.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+freeze_log_std: true
+log_std_init: -1.0
+max_episode_steps: 1000
+
+# pt widths for obs 5 / act 1: [55,55] permanent + [30,30] transient, 0.9996x parity.
+hidden_sizes: [55, 55]
+actor_trans_hidden_sizes: [30, 30]
+critic_hidden_sizes: [55, 55]
+critic_trans_hidden_sizes: [30, 30]
+
+# lr_perm = 0 disables the permanent's learning, not the decay: the transient decay, the
+# consolidation cadence and the KL anchor still run.
+lr_perm: 0.0
+lr_perm_actor: 0.0
+
+# Annealing a zero learning rate is a no-op; rm_power is 0 so the log does not show a schedule.
+rm_power: 0.0
+rm_power_actor: 0.0
+
+# Transient output scaled by (1 - 0) = 1 at each consolidation.
+decay_rho: 0.0

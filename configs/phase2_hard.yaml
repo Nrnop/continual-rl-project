@@ -1,0 +1,11 @@
+# Harder HalfCheetah variant: all four physics parameters change at each boundary. Everything else
+# comes from default.yaml and ppo_<agent>.yaml. Tests Appendix C.3's prediction that PT helps more
+# when the environment is complex relative to the agent.
+#
+#  python -m src_continuous_control.train --agent vanilla --config phase2_hard --seed 0
+#  python -m src_continuous_control.train --agent ewc     --config phase2_hard --seed 0
+#  python -m src_continuous_control.train --agent pt      --config phase2_hard --seed 0
+
+# mass triggers an mj_setConst inertia refresh in the drift wrapper. dof_frictionloss is all zeros
+# in this model, so it is not scaled.
+drift_targets: ["damping", "friction", "mass", "armature"]

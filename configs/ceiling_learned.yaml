@@ -1,0 +1,10 @@
+# Stationary ceiling on HalfCheetah: vanilla with task switching disabled, so the physics stay at
+# task_multipliers[0] = 1.0 (nominal). Learned sigma from default.yaml; ceiling_s037.yaml is the
+# same with sigma frozen at 0.37. Gives the reference return the continual results are read
+# against.
+
+disable_task_switch: true
+
+# Both are boundary instruments and there are no boundaries.
+transfer_eval_episodes: 0
+decay_gain_probe: false

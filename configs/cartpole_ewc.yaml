@@ -1,0 +1,17 @@
+# Online EWC on cartpole-swingup. Same environment and exploration keys as cartpole_van.yaml; EWC's
+# own settings come from ppo_ewc.yaml.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+freeze_log_std: true
+log_std_init: -1.0
+
+# Same width as vanilla: EWC adds a penalty, not a different architecture.
+hidden_sizes: [64, 64]
+
+max_episode_steps: 1000

@@ -1,0 +1,38 @@
+# Boundary-free smooth drift on cartpole-swingup, online EWC at frequency-corrected lambda. Dual
+# condition: a slow trend (the permanent's job) plus a fast fluctuation (the transient's job). Pole
+# length and mass change every step; there are no task boundaries, so set_task is never called.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "sin"  # cyclic, so dynamics revisit and retention is measurable
+drift_targets: ["pole_length", "pole_mass"]
+drift_amplitude: 0.4  # slow component
+drift_period: 1228800  # slow period in global env steps (~2.5 cycles per run)
+drift_amplitude2: 0.2  # fast fluctuation
+drift_period2: 30720  # ~15 PPO updates per fast cycle
+drift_phase: 0.0
+
+# Standard PPO exploration: learned sigma.
+freeze_log_std: false
+log_std_init: 0.0
+
+# Off: anneal_lr would overwrite pt's Robbins-Monro schedule and decay every learning rate toward
+# zero.
+anneal_lr: false
+
+# With no boundaries EWC consolidates on a timer, the same cadence as pt's k.
+ewc_consolidate_every: 10
+
+# No boundaries means no task index, so no transfer matrix.
+transfer_eval_episodes: 0
+
+hidden_sizes: [64, 64]
+
+max_episode_steps: 1000
+
+# ewc_lambda scaled for consolidation frequency. The online Fisher F <- gamma*F + F_current settles
+# at F_current * (1 - gamma^n) / (1 - gamma): 3.71 for n = 4 task boundaries and 19.99 for n = 150
+# timed consolidations (gamma = 0.95). Dividing 0.0088 by ~5.4 keeps the effective penalty the
+# same. Both lambda values are run.
+ewc_lambda: 0.0018

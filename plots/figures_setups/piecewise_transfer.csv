@@ -1,0 +1,541 @@
+setup,environment,arm,metric,value
+piecewise,cartpole_swingup,vanilla,forward transfer (FWT),396.29
+piecewise,cartpole_swingup,vanilla,forward transfer (FWT),463.69
+piecewise,cartpole_swingup,vanilla,forward transfer (FWT),479.72
+piecewise,cartpole_swingup,vanilla,forward transfer (FWT),371.91
+piecewise,cartpole_swingup,vanilla,forward transfer (FWT),636.67
+piecewise,cartpole_swingup,vanilla,forward transfer (FWT),379.9
+piecewise,cartpole_swingup,vanilla,forward transfer (FWT),444.84
+piecewise,cartpole_swingup,vanilla,forward transfer (FWT),433.74
+piecewise,cartpole_swingup,vanilla,forward transfer (FWT),430.98
+piecewise,cartpole_swingup,vanilla,forward transfer (FWT),282.0
+piecewise,reacher_easy,vanilla,forward transfer (FWT),381.52
+piecewise,reacher_easy,vanilla,forward transfer (FWT),192.52
+piecewise,reacher_easy,vanilla,forward transfer (FWT),339.85
+piecewise,reacher_easy,vanilla,forward transfer (FWT),307.35
+piecewise,reacher_easy,vanilla,forward transfer (FWT),270.5
+piecewise,reacher_easy,vanilla,forward transfer (FWT),410.38
+piecewise,reacher_easy,vanilla,forward transfer (FWT),401.53
+piecewise,reacher_easy,vanilla,forward transfer (FWT),356.4
+piecewise,reacher_easy,vanilla,forward transfer (FWT),357.1
+piecewise,reacher_easy,vanilla,forward transfer (FWT),289.45
+piecewise,ball_in_cup_catch,vanilla,forward transfer (FWT),355.45
+piecewise,ball_in_cup_catch,vanilla,forward transfer (FWT),301.07
+piecewise,ball_in_cup_catch,vanilla,forward transfer (FWT),226.88
+piecewise,ball_in_cup_catch,vanilla,forward transfer (FWT),660.58
+piecewise,ball_in_cup_catch,vanilla,forward transfer (FWT),201.58
+piecewise,ball_in_cup_catch,vanilla,forward transfer (FWT),382.02
+piecewise,ball_in_cup_catch,vanilla,forward transfer (FWT),427.8
+piecewise,ball_in_cup_catch,vanilla,forward transfer (FWT),388.42
+piecewise,ball_in_cup_catch,vanilla,forward transfer (FWT),283.02
+piecewise,ball_in_cup_catch,vanilla,forward transfer (FWT),392.45
+piecewise,cheetah_run,vanilla,forward transfer (FWT),187.39
+piecewise,cheetah_run,vanilla,forward transfer (FWT),271.85
+piecewise,cheetah_run,vanilla,forward transfer (FWT),308.78
+piecewise,cheetah_run,vanilla,forward transfer (FWT),308.38
+piecewise,cheetah_run,vanilla,forward transfer (FWT),205.99
+piecewise,cheetah_run,vanilla,forward transfer (FWT),338.03
+piecewise,cheetah_run,vanilla,forward transfer (FWT),251.72
+piecewise,cheetah_run,vanilla,forward transfer (FWT),339.91
+piecewise,cheetah_run,vanilla,forward transfer (FWT),271.45
+piecewise,cheetah_run,vanilla,forward transfer (FWT),276.6
+piecewise,walker_stand,vanilla,forward transfer (FWT),468.42
+piecewise,walker_stand,vanilla,forward transfer (FWT),284.01
+piecewise,walker_stand,vanilla,forward transfer (FWT),351.96
+piecewise,walker_stand,vanilla,forward transfer (FWT),338.35
+piecewise,walker_stand,vanilla,forward transfer (FWT),161.7
+piecewise,walker_stand,vanilla,forward transfer (FWT),119.2
+piecewise,walker_stand,vanilla,forward transfer (FWT),104.09
+piecewise,walker_stand,vanilla,forward transfer (FWT),388.81
+piecewise,walker_stand,vanilla,forward transfer (FWT),76.28
+piecewise,walker_stand,vanilla,forward transfer (FWT),53.55
+piecewise,walker_walk,vanilla,forward transfer (FWT),187.36
+piecewise,walker_walk,vanilla,forward transfer (FWT),160.84
+piecewise,walker_walk,vanilla,forward transfer (FWT),159.95
+piecewise,walker_walk,vanilla,forward transfer (FWT),220.05
+piecewise,walker_walk,vanilla,forward transfer (FWT),154.2
+piecewise,walker_walk,vanilla,forward transfer (FWT),250.29
+piecewise,walker_walk,vanilla,forward transfer (FWT),125.8
+piecewise,walker_walk,vanilla,forward transfer (FWT),180.67
+piecewise,walker_walk,vanilla,forward transfer (FWT),158.42
+piecewise,walker_walk,vanilla,forward transfer (FWT),114.6
+piecewise,cartpole_swingup,ewc,forward transfer (FWT),425.51
+piecewise,cartpole_swingup,ewc,forward transfer (FWT),402.05
+piecewise,cartpole_swingup,ewc,forward transfer (FWT),409.33
+piecewise,cartpole_swingup,ewc,forward transfer (FWT),360.77
+piecewise,cartpole_swingup,ewc,forward transfer (FWT),483.21
+piecewise,cartpole_swingup,ewc,forward transfer (FWT),525.87
+piecewise,cartpole_swingup,ewc,forward transfer (FWT),583.37
+piecewise,cartpole_swingup,ewc,forward transfer (FWT),535.69
+piecewise,cartpole_swingup,ewc,forward transfer (FWT),591.73
+piecewise,cartpole_swingup,ewc,forward transfer (FWT),426.93
+piecewise,reacher_easy,ewc,forward transfer (FWT),357.7
+piecewise,reacher_easy,ewc,forward transfer (FWT),246.72
+piecewise,reacher_easy,ewc,forward transfer (FWT),403.83
+piecewise,reacher_easy,ewc,forward transfer (FWT),330.43
+piecewise,reacher_easy,ewc,forward transfer (FWT),254.05
+piecewise,reacher_easy,ewc,forward transfer (FWT),423.53
+piecewise,reacher_easy,ewc,forward transfer (FWT),413.18
+piecewise,reacher_easy,ewc,forward transfer (FWT),442.85
+piecewise,reacher_easy,ewc,forward transfer (FWT),264.68
+piecewise,reacher_easy,ewc,forward transfer (FWT),378.12
+piecewise,ball_in_cup_catch,ewc,forward transfer (FWT),114.95
+piecewise,ball_in_cup_catch,ewc,forward transfer (FWT),455.75
+piecewise,ball_in_cup_catch,ewc,forward transfer (FWT),167.03
+piecewise,ball_in_cup_catch,ewc,forward transfer (FWT),484.57
+piecewise,ball_in_cup_catch,ewc,forward transfer (FWT),237.33
+piecewise,ball_in_cup_catch,ewc,forward transfer (FWT),266.62
+piecewise,ball_in_cup_catch,ewc,forward transfer (FWT),749.5
+piecewise,ball_in_cup_catch,ewc,forward transfer (FWT),125.7
+piecewise,ball_in_cup_catch,ewc,forward transfer (FWT),365.23
+piecewise,ball_in_cup_catch,ewc,forward transfer (FWT),733.02
+piecewise,cheetah_run,ewc,forward transfer (FWT),208.55
+piecewise,cheetah_run,ewc,forward transfer (FWT),295.17
+piecewise,cheetah_run,ewc,forward transfer (FWT),330.16
+piecewise,cheetah_run,ewc,forward transfer (FWT),339.48
+piecewise,cheetah_run,ewc,forward transfer (FWT),258.41
+piecewise,cheetah_run,ewc,forward transfer (FWT),320.47
+piecewise,cheetah_run,ewc,forward transfer (FWT),259.64
+piecewise,cheetah_run,ewc,forward transfer (FWT),367.91
+piecewise,cheetah_run,ewc,forward transfer (FWT),310.14
+piecewise,cheetah_run,ewc,forward transfer (FWT),314.77
+piecewise,walker_stand,ewc,forward transfer (FWT),578.73
+piecewise,walker_stand,ewc,forward transfer (FWT),376.48
+piecewise,walker_stand,ewc,forward transfer (FWT),476.33
+piecewise,walker_stand,ewc,forward transfer (FWT),250.86
+piecewise,walker_stand,ewc,forward transfer (FWT),191.47
+piecewise,walker_stand,ewc,forward transfer (FWT),143.24
+piecewise,walker_stand,ewc,forward transfer (FWT),118.21
+piecewise,walker_stand,ewc,forward transfer (FWT),467.73
+piecewise,walker_stand,ewc,forward transfer (FWT),97.82
+piecewise,walker_stand,ewc,forward transfer (FWT),63.23
+piecewise,walker_walk,ewc,forward transfer (FWT),180.95
+piecewise,walker_walk,ewc,forward transfer (FWT),198.29
+piecewise,walker_walk,ewc,forward transfer (FWT),167.19
+piecewise,walker_walk,ewc,forward transfer (FWT),292.87
+piecewise,walker_walk,ewc,forward transfer (FWT),144.43
+piecewise,walker_walk,ewc,forward transfer (FWT),314.8
+piecewise,walker_walk,ewc,forward transfer (FWT),139.66
+piecewise,walker_walk,ewc,forward transfer (FWT),199.51
+piecewise,walker_walk,ewc,forward transfer (FWT),219.8
+piecewise,walker_walk,ewc,forward transfer (FWT),116.02
+piecewise,cartpole_swingup,pt,forward transfer (FWT),535.03
+piecewise,cartpole_swingup,pt,forward transfer (FWT),565.8
+piecewise,cartpole_swingup,pt,forward transfer (FWT),530.45
+piecewise,cartpole_swingup,pt,forward transfer (FWT),540.02
+piecewise,cartpole_swingup,pt,forward transfer (FWT),208.94
+piecewise,cartpole_swingup,pt,forward transfer (FWT),598.99
+piecewise,cartpole_swingup,pt,forward transfer (FWT),570.22
+piecewise,cartpole_swingup,pt,forward transfer (FWT),424.1
+piecewise,cartpole_swingup,pt,forward transfer (FWT),540.77
+piecewise,cartpole_swingup,pt,forward transfer (FWT),575.45
+piecewise,reacher_easy,pt,forward transfer (FWT),113.73
+piecewise,reacher_easy,pt,forward transfer (FWT),243.05
+piecewise,reacher_easy,pt,forward transfer (FWT),300.02
+piecewise,reacher_easy,pt,forward transfer (FWT),129.82
+piecewise,reacher_easy,pt,forward transfer (FWT),449.12
+piecewise,reacher_easy,pt,forward transfer (FWT),311.55
+piecewise,reacher_easy,pt,forward transfer (FWT),210.08
+piecewise,reacher_easy,pt,forward transfer (FWT),269.93
+piecewise,reacher_easy,pt,forward transfer (FWT),190.82
+piecewise,reacher_easy,pt,forward transfer (FWT),228.6
+piecewise,ball_in_cup_catch,pt,forward transfer (FWT),309.07
+piecewise,ball_in_cup_catch,pt,forward transfer (FWT),586.98
+piecewise,ball_in_cup_catch,pt,forward transfer (FWT),422.4
+piecewise,ball_in_cup_catch,pt,forward transfer (FWT),160.5
+piecewise,ball_in_cup_catch,pt,forward transfer (FWT),373.05
+piecewise,ball_in_cup_catch,pt,forward transfer (FWT),198.33
+piecewise,ball_in_cup_catch,pt,forward transfer (FWT),672.28
+piecewise,ball_in_cup_catch,pt,forward transfer (FWT),636.5
+piecewise,ball_in_cup_catch,pt,forward transfer (FWT),529.6
+piecewise,ball_in_cup_catch,pt,forward transfer (FWT),208.68
+piecewise,cheetah_run,pt,forward transfer (FWT),316.88
+piecewise,cheetah_run,pt,forward transfer (FWT),263.91
+piecewise,cheetah_run,pt,forward transfer (FWT),291.62
+piecewise,cheetah_run,pt,forward transfer (FWT),235.62
+piecewise,cheetah_run,pt,forward transfer (FWT),212.51
+piecewise,cheetah_run,pt,forward transfer (FWT),290.49
+piecewise,cheetah_run,pt,forward transfer (FWT),331.32
+piecewise,cheetah_run,pt,forward transfer (FWT),317.96
+piecewise,cheetah_run,pt,forward transfer (FWT),352.8
+piecewise,cheetah_run,pt,forward transfer (FWT),264.47
+piecewise,walker_stand,pt,forward transfer (FWT),192.54
+piecewise,walker_stand,pt,forward transfer (FWT),142.09
+piecewise,walker_stand,pt,forward transfer (FWT),342.94
+piecewise,walker_stand,pt,forward transfer (FWT),156.19
+piecewise,walker_stand,pt,forward transfer (FWT),430.98
+piecewise,walker_stand,pt,forward transfer (FWT),328.12
+piecewise,walker_stand,pt,forward transfer (FWT),110.27
+piecewise,walker_stand,pt,forward transfer (FWT),609.72
+piecewise,walker_stand,pt,forward transfer (FWT),103.1
+piecewise,walker_stand,pt,forward transfer (FWT),362.78
+piecewise,walker_walk,pt,forward transfer (FWT),130.18
+piecewise,walker_walk,pt,forward transfer (FWT),120.23
+piecewise,walker_walk,pt,forward transfer (FWT),147.88
+piecewise,walker_walk,pt,forward transfer (FWT),158.28
+piecewise,walker_walk,pt,forward transfer (FWT),321.14
+piecewise,walker_walk,pt,forward transfer (FWT),114.31
+piecewise,walker_walk,pt,forward transfer (FWT),127.71
+piecewise,walker_walk,pt,forward transfer (FWT),226.03
+piecewise,walker_walk,pt,forward transfer (FWT),206.82
+piecewise,walker_walk,pt,forward transfer (FWT),148.48
+piecewise,cartpole_swingup,vanilla,backward transfer (BWT),3.94
+piecewise,cartpole_swingup,vanilla,backward transfer (BWT),-34.48
+piecewise,cartpole_swingup,vanilla,backward transfer (BWT),-71.64
+piecewise,cartpole_swingup,vanilla,backward transfer (BWT),62.4
+piecewise,cartpole_swingup,vanilla,backward transfer (BWT),-18.2
+piecewise,cartpole_swingup,vanilla,backward transfer (BWT),-48.6
+piecewise,cartpole_swingup,vanilla,backward transfer (BWT),-137.28
+piecewise,cartpole_swingup,vanilla,backward transfer (BWT),-46.79
+piecewise,cartpole_swingup,vanilla,backward transfer (BWT),-316.95
+piecewise,cartpole_swingup,vanilla,backward transfer (BWT),5.24
+piecewise,reacher_easy,vanilla,backward transfer (BWT),-274.68
+piecewise,reacher_easy,vanilla,backward transfer (BWT),182.32
+piecewise,reacher_easy,vanilla,backward transfer (BWT),-119.1
+piecewise,reacher_easy,vanilla,backward transfer (BWT),221.9
+piecewise,reacher_easy,vanilla,backward transfer (BWT),14.7
+piecewise,reacher_easy,vanilla,backward transfer (BWT),51.97
+piecewise,reacher_easy,vanilla,backward transfer (BWT),-242.65
+piecewise,reacher_easy,vanilla,backward transfer (BWT),-195.1
+piecewise,reacher_easy,vanilla,backward transfer (BWT),-15.25
+piecewise,reacher_easy,vanilla,backward transfer (BWT),146.33
+piecewise,ball_in_cup_catch,vanilla,backward transfer (BWT),-394.23
+piecewise,ball_in_cup_catch,vanilla,backward transfer (BWT),28.93
+piecewise,ball_in_cup_catch,vanilla,backward transfer (BWT),-70.13
+piecewise,ball_in_cup_catch,vanilla,backward transfer (BWT),-500.47
+piecewise,ball_in_cup_catch,vanilla,backward transfer (BWT),-47.6
+piecewise,ball_in_cup_catch,vanilla,backward transfer (BWT),152.87
+piecewise,ball_in_cup_catch,vanilla,backward transfer (BWT),-147.57
+piecewise,ball_in_cup_catch,vanilla,backward transfer (BWT),-271.73
+piecewise,ball_in_cup_catch,vanilla,backward transfer (BWT),-411.95
+piecewise,ball_in_cup_catch,vanilla,backward transfer (BWT),-7.53
+piecewise,cheetah_run,vanilla,backward transfer (BWT),-99.07
+piecewise,cheetah_run,vanilla,backward transfer (BWT),-115.47
+piecewise,cheetah_run,vanilla,backward transfer (BWT),-44.58
+piecewise,cheetah_run,vanilla,backward transfer (BWT),-43.06
+piecewise,cheetah_run,vanilla,backward transfer (BWT),-135.81
+piecewise,cheetah_run,vanilla,backward transfer (BWT),-117.6
+piecewise,cheetah_run,vanilla,backward transfer (BWT),-8.34
+piecewise,cheetah_run,vanilla,backward transfer (BWT),-173.99
+piecewise,cheetah_run,vanilla,backward transfer (BWT),-81.7
+piecewise,cheetah_run,vanilla,backward transfer (BWT),-144.93
+piecewise,walker_stand,vanilla,backward transfer (BWT),-151.83
+piecewise,walker_stand,vanilla,backward transfer (BWT),-167.68
+piecewise,walker_stand,vanilla,backward transfer (BWT),-171.59
+piecewise,walker_stand,vanilla,backward transfer (BWT),-231.33
+piecewise,walker_stand,vanilla,backward transfer (BWT),-115.75
+piecewise,walker_stand,vanilla,backward transfer (BWT),-50.44
+piecewise,walker_stand,vanilla,backward transfer (BWT),22.9
+piecewise,walker_stand,vanilla,backward transfer (BWT),-408.3
+piecewise,walker_stand,vanilla,backward transfer (BWT),-42.48
+piecewise,walker_stand,vanilla,backward transfer (BWT),-69.17
+piecewise,walker_walk,vanilla,backward transfer (BWT),-36.64
+piecewise,walker_walk,vanilla,backward transfer (BWT),-56.54
+piecewise,walker_walk,vanilla,backward transfer (BWT),-197.12
+piecewise,walker_walk,vanilla,backward transfer (BWT),-145.42
+piecewise,walker_walk,vanilla,backward transfer (BWT),-68.03
+piecewise,walker_walk,vanilla,backward transfer (BWT),-263.99
+piecewise,walker_walk,vanilla,backward transfer (BWT),-137.71
+piecewise,walker_walk,vanilla,backward transfer (BWT),-138.39
+piecewise,walker_walk,vanilla,backward transfer (BWT),-205.78
+piecewise,walker_walk,vanilla,backward transfer (BWT),-193.14
+piecewise,cartpole_swingup,ewc,backward transfer (BWT),-190.04
+piecewise,cartpole_swingup,ewc,backward transfer (BWT),-69.1
+piecewise,cartpole_swingup,ewc,backward transfer (BWT),-144.07
+piecewise,cartpole_swingup,ewc,backward transfer (BWT),72.47
+piecewise,cartpole_swingup,ewc,backward transfer (BWT),-35.83
+piecewise,cartpole_swingup,ewc,backward transfer (BWT),45.49
+piecewise,cartpole_swingup,ewc,backward transfer (BWT),-206.91
+piecewise,cartpole_swingup,ewc,backward transfer (BWT),-145.3
+piecewise,cartpole_swingup,ewc,backward transfer (BWT),-107.54
+piecewise,cartpole_swingup,ewc,backward transfer (BWT),189.39
+piecewise,reacher_easy,ewc,backward transfer (BWT),-73.42
+piecewise,reacher_easy,ewc,backward transfer (BWT),-0.25
+piecewise,reacher_easy,ewc,backward transfer (BWT),134.32
+piecewise,reacher_easy,ewc,backward transfer (BWT),-66.15
+piecewise,reacher_easy,ewc,backward transfer (BWT),22.15
+piecewise,reacher_easy,ewc,backward transfer (BWT),-125.55
+piecewise,reacher_easy,ewc,backward transfer (BWT),-48.42
+piecewise,reacher_easy,ewc,backward transfer (BWT),-9.9
+piecewise,reacher_easy,ewc,backward transfer (BWT),-57.87
+piecewise,reacher_easy,ewc,backward transfer (BWT),97.2
+piecewise,ball_in_cup_catch,ewc,backward transfer (BWT),-346.1
+piecewise,ball_in_cup_catch,ewc,backward transfer (BWT),-124.88
+piecewise,ball_in_cup_catch,ewc,backward transfer (BWT),-339.48
+piecewise,ball_in_cup_catch,ewc,backward transfer (BWT),-247.75
+piecewise,ball_in_cup_catch,ewc,backward transfer (BWT),-313.4
+piecewise,ball_in_cup_catch,ewc,backward transfer (BWT),-247.58
+piecewise,ball_in_cup_catch,ewc,backward transfer (BWT),52.43
+piecewise,ball_in_cup_catch,ewc,backward transfer (BWT),-377.38
+piecewise,ball_in_cup_catch,ewc,backward transfer (BWT),-68.7
+piecewise,ball_in_cup_catch,ewc,backward transfer (BWT),11.55
+piecewise,cheetah_run,ewc,backward transfer (BWT),22.97
+piecewise,cheetah_run,ewc,backward transfer (BWT),-35.75
+piecewise,cheetah_run,ewc,backward transfer (BWT),-111.77
+piecewise,cheetah_run,ewc,backward transfer (BWT),-7.52
+piecewise,cheetah_run,ewc,backward transfer (BWT),-98.63
+piecewise,cheetah_run,ewc,backward transfer (BWT),-17.42
+piecewise,cheetah_run,ewc,backward transfer (BWT),-6.98
+piecewise,cheetah_run,ewc,backward transfer (BWT),5.99
+piecewise,cheetah_run,ewc,backward transfer (BWT),-64.38
+piecewise,cheetah_run,ewc,backward transfer (BWT),-78.15
+piecewise,walker_stand,ewc,backward transfer (BWT),-131.55
+piecewise,walker_stand,ewc,backward transfer (BWT),-79.34
+piecewise,walker_stand,ewc,backward transfer (BWT),-30.22
+piecewise,walker_stand,ewc,backward transfer (BWT),-214.72
+piecewise,walker_stand,ewc,backward transfer (BWT),-79.08
+piecewise,walker_stand,ewc,backward transfer (BWT),23.55
+piecewise,walker_stand,ewc,backward transfer (BWT),-12.31
+piecewise,walker_stand,ewc,backward transfer (BWT),-140.0
+piecewise,walker_stand,ewc,backward transfer (BWT),13.43
+piecewise,walker_stand,ewc,backward transfer (BWT),-10.12
+piecewise,walker_walk,ewc,backward transfer (BWT),-47.99
+piecewise,walker_walk,ewc,backward transfer (BWT),-5.71
+piecewise,walker_walk,ewc,backward transfer (BWT),-142.72
+piecewise,walker_walk,ewc,backward transfer (BWT),-37.91
+piecewise,walker_walk,ewc,backward transfer (BWT),-22.95
+piecewise,walker_walk,ewc,backward transfer (BWT),-95.01
+piecewise,walker_walk,ewc,backward transfer (BWT),-206.73
+piecewise,walker_walk,ewc,backward transfer (BWT),-80.62
+piecewise,walker_walk,ewc,backward transfer (BWT),-203.12
+piecewise,walker_walk,ewc,backward transfer (BWT),-35.83
+piecewise,cartpole_swingup,pt,backward transfer (BWT),-63.1
+piecewise,cartpole_swingup,pt,backward transfer (BWT),19.34
+piecewise,cartpole_swingup,pt,backward transfer (BWT),-39.37
+piecewise,cartpole_swingup,pt,backward transfer (BWT),54.33
+piecewise,cartpole_swingup,pt,backward transfer (BWT),-145.25
+piecewise,cartpole_swingup,pt,backward transfer (BWT),6.36
+piecewise,cartpole_swingup,pt,backward transfer (BWT),-94.95
+piecewise,cartpole_swingup,pt,backward transfer (BWT),-39.72
+piecewise,cartpole_swingup,pt,backward transfer (BWT),-283.88
+piecewise,cartpole_swingup,pt,backward transfer (BWT),-51.28
+piecewise,reacher_easy,pt,backward transfer (BWT),55.7
+piecewise,reacher_easy,pt,backward transfer (BWT),77.45
+piecewise,reacher_easy,pt,backward transfer (BWT),-135.45
+piecewise,reacher_easy,pt,backward transfer (BWT),6.02
+piecewise,reacher_easy,pt,backward transfer (BWT),-31.1
+piecewise,reacher_easy,pt,backward transfer (BWT),-230.72
+piecewise,reacher_easy,pt,backward transfer (BWT),-322.45
+piecewise,reacher_easy,pt,backward transfer (BWT),-45.0
+piecewise,reacher_easy,pt,backward transfer (BWT),-34.67
+piecewise,reacher_easy,pt,backward transfer (BWT),-238.5
+piecewise,ball_in_cup_catch,pt,backward transfer (BWT),-222.38
+piecewise,ball_in_cup_catch,pt,backward transfer (BWT),-72.5
+piecewise,ball_in_cup_catch,pt,backward transfer (BWT),-257.73
+piecewise,ball_in_cup_catch,pt,backward transfer (BWT),-12.88
+piecewise,ball_in_cup_catch,pt,backward transfer (BWT),-345.42
+piecewise,ball_in_cup_catch,pt,backward transfer (BWT),-509.02
+piecewise,ball_in_cup_catch,pt,backward transfer (BWT),-217.85
+piecewise,ball_in_cup_catch,pt,backward transfer (BWT),-42.6
+piecewise,ball_in_cup_catch,pt,backward transfer (BWT),62.03
+piecewise,ball_in_cup_catch,pt,backward transfer (BWT),-267.05
+piecewise,cheetah_run,pt,backward transfer (BWT),-151.68
+piecewise,cheetah_run,pt,backward transfer (BWT),-2.13
+piecewise,cheetah_run,pt,backward transfer (BWT),6.05
+piecewise,cheetah_run,pt,backward transfer (BWT),0.39
+piecewise,cheetah_run,pt,backward transfer (BWT),12.03
+piecewise,cheetah_run,pt,backward transfer (BWT),41.91
+piecewise,cheetah_run,pt,backward transfer (BWT),-58.03
+piecewise,cheetah_run,pt,backward transfer (BWT),20.29
+piecewise,cheetah_run,pt,backward transfer (BWT),-19.22
+piecewise,cheetah_run,pt,backward transfer (BWT),-18.41
+piecewise,walker_stand,pt,backward transfer (BWT),106.1
+piecewise,walker_stand,pt,backward transfer (BWT),-107.36
+piecewise,walker_stand,pt,backward transfer (BWT),36.23
+piecewise,walker_stand,pt,backward transfer (BWT),-5.42
+piecewise,walker_stand,pt,backward transfer (BWT),-46.93
+piecewise,walker_stand,pt,backward transfer (BWT),-57.55
+piecewise,walker_stand,pt,backward transfer (BWT),27.21
+piecewise,walker_stand,pt,backward transfer (BWT),-34.75
+piecewise,walker_stand,pt,backward transfer (BWT),14.62
+piecewise,walker_stand,pt,backward transfer (BWT),31.08
+piecewise,walker_walk,pt,backward transfer (BWT),-28.24
+piecewise,walker_walk,pt,backward transfer (BWT),-31.18
+piecewise,walker_walk,pt,backward transfer (BWT),-38.67
+piecewise,walker_walk,pt,backward transfer (BWT),-4.39
+piecewise,walker_walk,pt,backward transfer (BWT),-64.65
+piecewise,walker_walk,pt,backward transfer (BWT),-15.96
+piecewise,walker_walk,pt,backward transfer (BWT),-42.41
+piecewise,walker_walk,pt,backward transfer (BWT),-2.61
+piecewise,walker_walk,pt,backward transfer (BWT),-53.88
+piecewise,walker_walk,pt,backward transfer (BWT),11.4
+piecewise,cartpole_swingup,vanilla,peak return - how much the arm learned,687.01
+piecewise,cartpole_swingup,vanilla,peak return - how much the arm learned,731.25
+piecewise,cartpole_swingup,vanilla,peak return - how much the arm learned,764.39
+piecewise,cartpole_swingup,vanilla,peak return - how much the arm learned,751.76
+piecewise,cartpole_swingup,vanilla,peak return - how much the arm learned,812.62
+piecewise,cartpole_swingup,vanilla,peak return - how much the arm learned,752.92
+piecewise,cartpole_swingup,vanilla,peak return - how much the arm learned,714.69
+piecewise,cartpole_swingup,vanilla,peak return - how much the arm learned,821.15
+piecewise,cartpole_swingup,vanilla,peak return - how much the arm learned,771.51
+piecewise,cartpole_swingup,vanilla,peak return - how much the arm learned,694.62
+piecewise,reacher_easy,vanilla,peak return - how much the arm learned,704.79
+piecewise,reacher_easy,vanilla,peak return - how much the arm learned,654.21
+piecewise,reacher_easy,vanilla,peak return - how much the arm learned,771.69
+piecewise,reacher_easy,vanilla,peak return - how much the arm learned,731.99
+piecewise,reacher_easy,vanilla,peak return - how much the arm learned,623.75
+piecewise,reacher_easy,vanilla,peak return - how much the arm learned,778.33
+piecewise,reacher_easy,vanilla,peak return - how much the arm learned,757.73
+piecewise,reacher_easy,vanilla,peak return - how much the arm learned,750.93
+piecewise,reacher_easy,vanilla,peak return - how much the arm learned,736.97
+piecewise,reacher_easy,vanilla,peak return - how much the arm learned,678.46
+piecewise,ball_in_cup_catch,vanilla,peak return - how much the arm learned,909.7
+piecewise,ball_in_cup_catch,vanilla,peak return - how much the arm learned,892.74
+piecewise,ball_in_cup_catch,vanilla,peak return - how much the arm learned,880.44
+piecewise,ball_in_cup_catch,vanilla,peak return - how much the arm learned,893.14
+piecewise,ball_in_cup_catch,vanilla,peak return - how much the arm learned,889.96
+piecewise,ball_in_cup_catch,vanilla,peak return - how much the arm learned,895.63
+piecewise,ball_in_cup_catch,vanilla,peak return - how much the arm learned,912.36
+piecewise,ball_in_cup_catch,vanilla,peak return - how much the arm learned,901.56
+piecewise,ball_in_cup_catch,vanilla,peak return - how much the arm learned,886.05
+piecewise,ball_in_cup_catch,vanilla,peak return - how much the arm learned,907.7
+piecewise,cheetah_run,vanilla,peak return - how much the arm learned,330.43
+piecewise,cheetah_run,vanilla,peak return - how much the arm learned,448.17
+piecewise,cheetah_run,vanilla,peak return - how much the arm learned,413.69
+piecewise,cheetah_run,vanilla,peak return - how much the arm learned,374.02
+piecewise,cheetah_run,vanilla,peak return - how much the arm learned,403.47
+piecewise,cheetah_run,vanilla,peak return - how much the arm learned,462.71
+piecewise,cheetah_run,vanilla,peak return - how much the arm learned,359.45
+piecewise,cheetah_run,vanilla,peak return - how much the arm learned,437.14
+piecewise,cheetah_run,vanilla,peak return - how much the arm learned,485.07
+piecewise,cheetah_run,vanilla,peak return - how much the arm learned,405.47
+piecewise,walker_stand,vanilla,peak return - how much the arm learned,874.73
+piecewise,walker_stand,vanilla,peak return - how much the arm learned,652.19
+piecewise,walker_stand,vanilla,peak return - how much the arm learned,851.56
+piecewise,walker_stand,vanilla,peak return - how much the arm learned,778.02
+piecewise,walker_stand,vanilla,peak return - how much the arm learned,346.83
+piecewise,walker_stand,vanilla,peak return - how much the arm learned,348.75
+piecewise,walker_stand,vanilla,peak return - how much the arm learned,303.2
+piecewise,walker_stand,vanilla,peak return - how much the arm learned,863.66
+piecewise,walker_stand,vanilla,peak return - how much the arm learned,290.89
+piecewise,walker_stand,vanilla,peak return - how much the arm learned,308.26
+piecewise,walker_walk,vanilla,peak return - how much the arm learned,371.55
+piecewise,walker_walk,vanilla,peak return - how much the arm learned,281.41
+piecewise,walker_walk,vanilla,peak return - how much the arm learned,360.51
+piecewise,walker_walk,vanilla,peak return - how much the arm learned,441.69
+piecewise,walker_walk,vanilla,peak return - how much the arm learned,405.87
+piecewise,walker_walk,vanilla,peak return - how much the arm learned,709.96
+piecewise,walker_walk,vanilla,peak return - how much the arm learned,560.94
+piecewise,walker_walk,vanilla,peak return - how much the arm learned,394.54
+piecewise,walker_walk,vanilla,peak return - how much the arm learned,481.89
+piecewise,walker_walk,vanilla,peak return - how much the arm learned,335.82
+piecewise,cartpole_swingup,ewc,peak return - how much the arm learned,841.03
+piecewise,cartpole_swingup,ewc,peak return - how much the arm learned,723.0
+piecewise,cartpole_swingup,ewc,peak return - how much the arm learned,823.68
+piecewise,cartpole_swingup,ewc,peak return - how much the arm learned,710.5
+piecewise,cartpole_swingup,ewc,peak return - how much the arm learned,819.57
+piecewise,cartpole_swingup,ewc,peak return - how much the arm learned,759.1
+piecewise,cartpole_swingup,ewc,peak return - how much the arm learned,835.41
+piecewise,cartpole_swingup,ewc,peak return - how much the arm learned,835.25
+piecewise,cartpole_swingup,ewc,peak return - how much the arm learned,834.85
+piecewise,cartpole_swingup,ewc,peak return - how much the arm learned,745.39
+piecewise,reacher_easy,ewc,peak return - how much the arm learned,628.02
+piecewise,reacher_easy,ewc,peak return - how much the arm learned,654.21
+piecewise,reacher_easy,ewc,peak return - how much the arm learned,756.71
+piecewise,reacher_easy,ewc,peak return - how much the arm learned,732.37
+piecewise,reacher_easy,ewc,peak return - how much the arm learned,596.94
+piecewise,reacher_easy,ewc,peak return - how much the arm learned,804.36
+piecewise,reacher_easy,ewc,peak return - how much the arm learned,755.64
+piecewise,reacher_easy,ewc,peak return - how much the arm learned,804.7
+piecewise,reacher_easy,ewc,peak return - how much the arm learned,736.97
+piecewise,reacher_easy,ewc,peak return - how much the arm learned,661.25
+piecewise,ball_in_cup_catch,ewc,peak return - how much the arm learned,879.72
+piecewise,ball_in_cup_catch,ewc,peak return - how much the arm learned,876.67
+piecewise,ball_in_cup_catch,ewc,peak return - how much the arm learned,916.94
+piecewise,ball_in_cup_catch,ewc,peak return - how much the arm learned,887.52
+piecewise,ball_in_cup_catch,ewc,peak return - how much the arm learned,900.31
+piecewise,ball_in_cup_catch,ewc,peak return - how much the arm learned,867.54
+piecewise,ball_in_cup_catch,ewc,peak return - how much the arm learned,924.97
+piecewise,ball_in_cup_catch,ewc,peak return - how much the arm learned,825.87
+piecewise,ball_in_cup_catch,ewc,peak return - how much the arm learned,903.97
+piecewise,ball_in_cup_catch,ewc,peak return - how much the arm learned,921.83
+piecewise,cheetah_run,ewc,peak return - how much the arm learned,289.96
+piecewise,cheetah_run,ewc,peak return - how much the arm learned,398.56
+piecewise,cheetah_run,ewc,peak return - how much the arm learned,396.24
+piecewise,cheetah_run,ewc,peak return - how much the arm learned,425.97
+piecewise,cheetah_run,ewc,peak return - how much the arm learned,433.13
+piecewise,cheetah_run,ewc,peak return - how much the arm learned,441.4
+piecewise,cheetah_run,ewc,peak return - how much the arm learned,332.72
+piecewise,cheetah_run,ewc,peak return - how much the arm learned,438.33
+piecewise,cheetah_run,ewc,peak return - how much the arm learned,441.92
+piecewise,cheetah_run,ewc,peak return - how much the arm learned,384.69
+piecewise,walker_stand,ewc,peak return - how much the arm learned,884.95
+piecewise,walker_stand,ewc,peak return - how much the arm learned,657.59
+piecewise,walker_stand,ewc,peak return - how much the arm learned,863.59
+piecewise,walker_stand,ewc,peak return - how much the arm learned,755.65
+piecewise,walker_stand,ewc,peak return - how much the arm learned,370.11
+piecewise,walker_stand,ewc,peak return - how much the arm learned,351.52
+piecewise,walker_stand,ewc,peak return - how much the arm learned,329.94
+piecewise,walker_stand,ewc,peak return - how much the arm learned,846.96
+piecewise,walker_stand,ewc,peak return - how much the arm learned,360.96
+piecewise,walker_stand,ewc,peak return - how much the arm learned,257.79
+piecewise,walker_walk,ewc,peak return - how much the arm learned,430.05
+piecewise,walker_walk,ewc,peak return - how much the arm learned,280.35
+piecewise,walker_walk,ewc,peak return - how much the arm learned,338.26
+piecewise,walker_walk,ewc,peak return - how much the arm learned,483.79
+piecewise,walker_walk,ewc,peak return - how much the arm learned,363.92
+piecewise,walker_walk,ewc,peak return - how much the arm learned,760.26
+piecewise,walker_walk,ewc,peak return - how much the arm learned,507.31
+piecewise,walker_walk,ewc,peak return - how much the arm learned,393.52
+piecewise,walker_walk,ewc,peak return - how much the arm learned,481.89
+piecewise,walker_walk,ewc,peak return - how much the arm learned,335.82
+piecewise,cartpole_swingup,pt,peak return - how much the arm learned,741.1
+piecewise,cartpole_swingup,pt,peak return - how much the arm learned,846.45
+piecewise,cartpole_swingup,pt,peak return - how much the arm learned,844.31
+piecewise,cartpole_swingup,pt,peak return - how much the arm learned,776.1
+piecewise,cartpole_swingup,pt,peak return - how much the arm learned,771.88
+piecewise,cartpole_swingup,pt,peak return - how much the arm learned,834.94
+piecewise,cartpole_swingup,pt,peak return - how much the arm learned,773.24
+piecewise,cartpole_swingup,pt,peak return - how much the arm learned,807.9
+piecewise,cartpole_swingup,pt,peak return - how much the arm learned,810.54
+piecewise,cartpole_swingup,pt,peak return - how much the arm learned,777.15
+piecewise,reacher_easy,pt,peak return - how much the arm learned,601.59
+piecewise,reacher_easy,pt,peak return - how much the arm learned,694.98
+piecewise,reacher_easy,pt,peak return - how much the arm learned,683.48
+piecewise,reacher_easy,pt,peak return - how much the arm learned,674.51
+piecewise,reacher_easy,pt,peak return - how much the arm learned,665.74
+piecewise,reacher_easy,pt,peak return - how much the arm learned,683.11
+piecewise,reacher_easy,pt,peak return - how much the arm learned,659.92
+piecewise,reacher_easy,pt,peak return - how much the arm learned,653.41
+piecewise,reacher_easy,pt,peak return - how much the arm learned,677.16
+piecewise,reacher_easy,pt,peak return - how much the arm learned,683.58
+piecewise,ball_in_cup_catch,pt,peak return - how much the arm learned,885.12
+piecewise,ball_in_cup_catch,pt,peak return - how much the arm learned,918.76
+piecewise,ball_in_cup_catch,pt,peak return - how much the arm learned,829.02
+piecewise,ball_in_cup_catch,pt,peak return - how much the arm learned,892.33
+piecewise,ball_in_cup_catch,pt,peak return - how much the arm learned,907.41
+piecewise,ball_in_cup_catch,pt,peak return - how much the arm learned,915.52
+piecewise,ball_in_cup_catch,pt,peak return - how much the arm learned,904.19
+piecewise,ball_in_cup_catch,pt,peak return - how much the arm learned,880.83
+piecewise,ball_in_cup_catch,pt,peak return - how much the arm learned,848.19
+piecewise,ball_in_cup_catch,pt,peak return - how much the arm learned,840.41
+piecewise,cheetah_run,pt,peak return - how much the arm learned,459.9
+piecewise,cheetah_run,pt,peak return - how much the arm learned,510.22
+piecewise,cheetah_run,pt,peak return - how much the arm learned,418.88
+piecewise,cheetah_run,pt,peak return - how much the arm learned,406.9
+piecewise,cheetah_run,pt,peak return - how much the arm learned,281.61
+piecewise,cheetah_run,pt,peak return - how much the arm learned,513.77
+piecewise,cheetah_run,pt,peak return - how much the arm learned,449.78
+piecewise,cheetah_run,pt,peak return - how much the arm learned,348.51
+piecewise,cheetah_run,pt,peak return - how much the arm learned,420.24
+piecewise,cheetah_run,pt,peak return - how much the arm learned,389.32
+piecewise,walker_stand,pt,peak return - how much the arm learned,499.4
+piecewise,walker_stand,pt,peak return - how much the arm learned,364.26
+piecewise,walker_stand,pt,peak return - how much the arm learned,841.59
+piecewise,walker_stand,pt,peak return - how much the arm learned,461.58
+piecewise,walker_stand,pt,peak return - how much the arm learned,881.71
+piecewise,walker_stand,pt,peak return - how much the arm learned,825.09
+piecewise,walker_stand,pt,peak return - how much the arm learned,306.05
+piecewise,walker_stand,pt,peak return - how much the arm learned,883.65
+piecewise,walker_stand,pt,peak return - how much the arm learned,399.64
+piecewise,walker_stand,pt,peak return - how much the arm learned,902.36
+piecewise,walker_walk,pt,peak return - how much the arm learned,321.0
+piecewise,walker_walk,pt,peak return - how much the arm learned,294.87
+piecewise,walker_walk,pt,peak return - how much the arm learned,363.4
+piecewise,walker_walk,pt,peak return - how much the arm learned,372.12
+piecewise,walker_walk,pt,peak return - how much the arm learned,566.63
+piecewise,walker_walk,pt,peak return - how much the arm learned,249.46
+piecewise,walker_walk,pt,peak return - how much the arm learned,242.73
+piecewise,walker_walk,pt,peak return - how much the arm learned,450.29
+piecewise,walker_walk,pt,peak return - how much the arm learned,432.13
+piecewise,walker_walk,pt,peak return - how much the arm learned,328.73

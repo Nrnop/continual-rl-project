@@ -1,0 +1,17 @@
+# Online EWC on cartpole-swingup with learned sigma starting at 1.0. Identical to cartpole_ewc.yaml
+# except for the two sigma keys. Check that log_std_mean tracks the other arms before comparing
+# returns.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+# Learned sigma, initialised at exp(0) = 1.0.
+freeze_log_std: false
+log_std_init: 0.0
+
+hidden_sizes: [64, 64]
+max_episode_steps: 1000

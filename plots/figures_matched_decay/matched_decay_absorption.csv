@@ -1,0 +1,15 @@
+environment,window,median_c,seeds
+cheetah-run,first 10,0.9436892867088318,10
+cheetah-run,last 10,0.5574014782905579,10
+walker-walk,first 10,0.9401982575654984,10
+walker-walk,last 10,0.6197317987680435,10
+HalfCheetah,first 10,0.9454518705606461,10
+HalfCheetah,last 10,0.6416118890047073,10
+cartpole-swingup,first 10,0.9655572026968002,10
+cartpole-swingup,last 10,0.6513132154941559,10
+walker-stand,first 10,0.9527274817228317,10
+walker-stand,last 10,0.6786960512399673,10
+ball_in_cup-catch,first 10,0.9886595755815506,10
+ball_in_cup-catch,last 10,0.8182602077722549,10
+reacher-easy,first 10,0.9877197593450546,10
+reacher-easy,last 10,0.8215419948101044,10

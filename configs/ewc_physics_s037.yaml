@@ -1,0 +1,12 @@
+# EWC on the four-parameter HalfCheetah physics benchmark (damping, friction, mass, armature),
+# sigma frozen at exp(-1) = 0.37 (log_std_init -1.0). One of van/pt/ewc_physics_s037, which share
+# the same fixed exploration.
+
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

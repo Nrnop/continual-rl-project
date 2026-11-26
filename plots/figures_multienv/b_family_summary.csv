@@ -1,0 +1,7 @@
+environment,vanilla_median,pt_median,pt_advantage_pct,p_exact
+cartpole_swingup,636.7,703.2,10.4,0.0052
+reacher_easy,501.2,392.3,-21.7,0.0433
+ball_in_cup_catch,838.8,852.1,1.6,0.6842
+walker_stand,269.7,512.3,90.0,0.063
+walker_walk,232.7,229.7,-1.3,0.6305
+cheetah_run,265.2,334.3,26.1,0.0115

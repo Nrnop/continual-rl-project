@@ -1,0 +1,17 @@
+# Vanilla on cartpole-swingup with standard PPO exploration: learned sigma starting at 1.0, as in
+# CleanRL's ppo_continuous_action. Identical to cartpole_van.yaml except for the two sigma keys.
+# Checks whether sigma collapses on cartpole (logged as log_std_mean and log_std_min).
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+# Learned sigma, initialised at exp(0) = 1.0.
+freeze_log_std: false
+log_std_init: 0.0
+
+hidden_sizes: [64, 64]
+max_episode_steps: 1000

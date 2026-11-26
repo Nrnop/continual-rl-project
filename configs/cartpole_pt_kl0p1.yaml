@@ -1,0 +1,24 @@
+# pt on cartpole-swingup with the KL anchor at 10x its default strength. Part of a three-point
+# sweep at fixed sigma 0.37: kl_prior_coef 0 (cartpole_pt_kl0.yaml), 0.01 (cartpole_pt.yaml), 0.1
+# (cartpole_pt_kl0p1.yaml). The KL between equal-sigma Gaussians grows as (delta mu)^2 / (2
+# sigma^2), so anchor strength and sigma act on the same quantity.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+freeze_log_std: true
+log_std_init: -1.0
+
+# pt widths for obs 5 / act 1: [55,55] permanent + [30,30] transient, 0.9996x parity.
+hidden_sizes: [55, 55]
+actor_trans_hidden_sizes: [30, 30]
+critic_hidden_sizes: [55, 55]
+critic_trans_hidden_sizes: [30, 30]
+
+max_episode_steps: 1000
+
+kl_prior_coef: 0.1

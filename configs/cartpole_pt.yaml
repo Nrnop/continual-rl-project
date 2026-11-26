@@ -1,0 +1,23 @@
+# pt on cartpole-swingup. Same environment and exploration keys as cartpole_van.yaml; only the
+# widths differ.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+freeze_log_std: true
+log_std_init: -1.0
+
+max_episode_steps: 1000
+
+# pt needs its own widths to reach parameter parity at obs 5 / act 1. The ppo_pt.yaml pair ([51,51]
+# + [32,32]) gives 0.931x the baseline here; [55,55] permanent + [30,30] transient gives 9,215
+# against 9,219 (0.9996x), with the transient at about half width. PPO trains only the transient;
+# `scripts/preflight.py --cartpole` prints total and PPO-trained counts.
+hidden_sizes: [55, 55]  # permanent actor
+actor_trans_hidden_sizes: [30, 30]  # transient actor
+critic_hidden_sizes: [55, 55]  # permanent critic
+critic_trans_hidden_sizes: [30, 30]  # transient critic

@@ -1,0 +1,18 @@
+# Diagnostic: pt on the four-parameter HalfCheetah physics benchmark (damping, friction, mass,
+# armature), sigma frozen at 0.37, with both transient nets widened from [32,32] to [64,64]. PPO
+# trains only the transients, so this gives pt as many PPO-trained parameters as vanilla. It breaks
+# total-parameter parity (~1.4x vanilla), so it is a diagnostic, not a headline arm. Controls:
+# pt_physics_s037.yaml and van_physics_s037.yaml.
+
+actor_trans_hidden_sizes: [64, 64]
+critic_trans_hidden_sizes: [64, 64]
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

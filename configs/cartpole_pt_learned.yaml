@@ -1,0 +1,22 @@
+# pt on cartpole-swingup with learned sigma starting at 1.0. Identical to cartpole_pt.yaml except
+# for the two sigma keys. Compare log_std_mean across arms: on HalfCheetah pt's learned sigma
+# collapsed fastest, leaving it less exploration than the baselines.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+# Learned sigma, initialised at exp(0) = 1.0.
+freeze_log_std: false
+log_std_init: 0.0
+
+# pt widths for obs 5 / act 1: [55,55] permanent + [30,30] transient, 0.9996x parity.
+hidden_sizes: [55, 55]
+actor_trans_hidden_sizes: [30, 30]
+critic_hidden_sizes: [55, 55]
+critic_trans_hidden_sizes: [30, 30]
+
+max_episode_steps: 1000

@@ -1,0 +1,13 @@
+environment,arm,k,rho,median_final20,n,minus_ewc,p_exact_ranksum
+cartpole_swingup,ewc,0,0.0,588.0,10,,
+cartpole_swingup,pt_k10_rho050,10,0.5,619.0,10,30.9,0.0753
+cartpole_swingup,pt_k20_rho050,20,0.5,607.4,10,19.4,0.2475
+cartpole_swingup,pt_k30_rho050,30,0.5,597.1,10,9.1,0.5288
+cartpole_swingup,pt_k60_rho050,60,0.5,570.1,10,-17.9,0.6305
+cartpole_swingup,pt_k20_rho100,20,1.0,536.6,10,-51.4,0.0355
+cheetah_run,ewc,0,0.0,417.5,10,,
+cheetah_run,pt_k10_rho050,10,0.5,409.9,10,-7.5,0.5787
+cheetah_run,pt_k20_rho050,20,0.5,426.9,10,9.4,1.0
+cheetah_run,pt_k30_rho050,30,0.5,460.4,10,42.9,0.1431
+cheetah_run,pt_k60_rho050,60,0.5,469.2,10,51.7,0.0232
+cheetah_run,pt_k20_rho100,20,1.0,368.2,10,-49.3,0.0147

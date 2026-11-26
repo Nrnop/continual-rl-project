@@ -1,0 +1,15 @@
+# pt_physics_s037.yaml with consolidation_shuffle: true. The consolidation buffer stores states in
+# visit order; walked sequentially, the newest states take the last gradient step of each epoch and
+# bias the permanent toward the current task. The default (false) walks it in order.
+
+consolidation_shuffle: true
+
+decay_gain_probe: false
+drift_targets:
+- damping
+- friction
+- mass
+- armature
+freeze_log_std: true
+log_std_init: -1.0
+transfer_eval_episodes: 0

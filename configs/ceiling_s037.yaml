@@ -1,0 +1,10 @@
+# Stationary ceiling on HalfCheetah with sigma frozen at exp(-1) = 0.37; the pair of
+# ceiling_learned.yaml. Together they show whether learned-sigma collapse costs return even without
+# task switches.
+
+disable_task_switch: true
+freeze_log_std: true
+log_std_init: -1.0
+
+transfer_eval_episodes: 0
+decay_gain_probe: false

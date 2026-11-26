@@ -1,0 +1,22 @@
+# Stationary ceiling on cartpole-swingup: vanilla PPO with task switching disabled, so the pole
+# stays at nominal physics (x1.0) for the whole run. Measures how much of the maximum return of
+# 1000 this PPO reaches, i.e. whether the benchmark has dynamic range. Otherwise identical to
+# cartpole_van.yaml.
+
+env_mode: "cartpole"
+cartpole_task: "swingup"
+
+drift_schedule: "step"
+drift_targets: ["pole_length", "pole_mass"]
+task_multipliers: [1.0, 1.6, 0.6, 1.6, 0.6]
+
+disable_task_switch: true
+
+freeze_log_std: true
+log_std_init: -1.0
+hidden_sizes: [64, 64]
+max_episode_steps: 1000
+
+# No boundaries, so no transfer matrix or decay probe.
+transfer_eval_episodes: 0
+decay_gain_probe: false

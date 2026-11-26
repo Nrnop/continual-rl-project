@@ -1,0 +1,50 @@
+# Boundary-free drift on HalfCheetah: damping and friction are rescaled every step by a sinusoidal
+# multiplier, with no task index or reset signal. The reward is fixed. Without boundaries EWC never
+# consolidates and matches vanilla; hcdrift_*.yaml add an EWC timer and turn anneal_lr off.
+#
+#  python -m src_continuous_control.train --agent vanilla --config drift --seed 0
+#  python -m src_continuous_control.train --agent pt      --config drift --seed 0
+#  python -m src_continuous_control.train --agent ewc     --config drift --seed 0
+
+agent: "vanilla"  # overridden by --agent
+
+env_mode: "drift"
+drift_targets: ["damping", "friction"]  # dof_damping (6 joints) + geom sliding friction
+
+# A sinusoid revisits earlier physics, so retention is measurable; period 1228800 over 3072000
+# steps gives 2.5 cycles. Lipschitz bound: max |d multiplier / dt| = 0.5 * 2*pi / 1228800 = 2.56e-6
+# per env step (printed at startup).
+drift_amplitude: 0.5  # multiplier swings over [0.5x, 1.5x] nominal
+drift_period: 1228800  # one full cycle, in global env steps
+drift_schedule: "sin"  # "linear" for a never-repeating ramp; "step" in default.yaml
+drift_phase: 0.0
+
+# PPO settings in full. anneal_lr is on here, unlike default.yaml.
+step_by_step: false
+normalize_obs: true
+normalize_reward: true
+clip_obs: 10.0
+clip_reward: 10.0
+anneal_lr: true
+hidden_sizes: [64, 64]
+adam_eps: 0.00001
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.0
+max_grad_norm: 0.5
+target_kl: null
+normalize_advantage: true
+lr_actor: 0.0003
+lr_critic: 0.0003
+epochs: 10
+minibatch_size: 64
+num_envs: 8
+async_envs: true
+n_steps: 256
+
+# No pt settings here: ppo_pt.yaml governs, so drift and boundary runs share hyper-parameters. Same
+# horizon as the main sweep.
+total_steps: 3072000
+tasks: [1, -1]  # unused under continuous drift
+switch: 614400  # unused: no boundaries with drift_schedule sin

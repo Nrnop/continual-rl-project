@@ -1,0 +1,16 @@
+# Ablation for phase2_hard: all four physics parameters change and the permanent is frozen. Only
+# one --config overlay is applied, so this merges phase2_hard.yaml and phase2_ablation_frozen.yaml;
+# keep it in sync with both.
+#
+#  python -m src_continuous_control.train --agent pt --config phase2_hard_ablation_frozen --seed 0 \
+#      --results-dir src_continuous_control/results/hard/ablation_frozen
+
+drift_targets: ["damping", "friction", "mass", "armature"]
+
+# lr_perm = 0 disables the permanent's learning, not the decay: the transient decay, the
+# consolidation cadence and the KL anchor still run. make_phase2_figures.py checks
+# actor_absorbed_frac.
+lr_perm: 0.0
+lr_perm_actor: 0.0
+rm_power: 0.0
+rm_power_actor: 0.0

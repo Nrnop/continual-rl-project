@@ -1,0 +1,29 @@
+# Boundary-free smooth drift on HalfCheetah, all three arms. Slow condition: one slow sine only,
+# where the drift env predicts pt ties the baseline. Damping and friction change every step; there
+# are no task boundaries, so set_task is never called. Run with --agent vanilla, ewc or pt; widths
+# come from ppo_<agent>.yaml.
+
+env_mode: "drift"
+drift_schedule: "sin"  # cyclic, so dynamics revisit and retention is measurable
+drift_targets: ["damping", "friction"]
+drift_amplitude: 0.5  # slow component
+drift_period: 1228800  # slow period in global env steps (~2.5 cycles per run)
+drift_amplitude2: 0.0  # fast fluctuation (off in this condition)
+drift_period2: 30720  # ~15 PPO updates per fast cycle
+drift_phase: 0.0
+
+# Standard PPO exploration: learned sigma.
+freeze_log_std: false
+log_std_init: 0.0
+
+# Off: anneal_lr would overwrite pt's Robbins-Monro schedule and decay every learning rate toward
+# zero.
+anneal_lr: false
+
+# With no boundaries EWC consolidates on a timer, the same cadence as pt's k.
+ewc_consolidate_every: 10
+
+# No boundaries means no task index, so no transfer matrix.
+transfer_eval_episodes: 0
+
+max_episode_steps: 1000
