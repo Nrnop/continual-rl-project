@@ -24,3 +24,6 @@ shimmy>=2.0.0
 # Imported indirectly by `import shimmy` (through gymnasium's MuJoCo rendering module). Without it
 # the shimmy import fails and the dm_control test modules are skipped.
 imageio>=2.30.0
+
+# Tests (python -m pytest src_continuous_control/tests)
+pytest>=7.0
